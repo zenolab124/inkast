@@ -1,0 +1,12 @@
+/*
+ * Glass theme — placeholder.
+ *
+ * Phase 1 does not implement this. Kept here so the theming pipeline supports
+ * the swap from day one. Concept: deep gradient background, backdrop-blur
+ * panels, 1px white-10% highlight borders, larger radii. Replace these tokens
+ * with the actual palette when the time comes.
+ */
+
+.theme-glass {
+  /* TODO: implement glass tokens */
+}

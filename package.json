@@ -1,0 +1,23 @@
+{
+  "name": "inkast",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "description": "Local-first AI image studio. Prose to structured JSON prompt to image. ClaudeCode-native.",
+  "packageManager": "pnpm@10.18.2",
+  "engines": {
+    "node": ">=24.10.0"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"pnpm api:dev\" \"pnpm web:dev\"",
+    "api:dev": "pnpm --filter @inkast/api dev",
+    "web:dev": "pnpm --filter @inkast/web dev",
+    "build": "pnpm --filter @inkast/shared build && pnpm --filter @inkast/web build && pnpm --filter @inkast/api build",
+    "typecheck": "pnpm --filter @inkast/shared typecheck && pnpm --filter @inkast/web typecheck && pnpm --filter @inkast/api typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.6.3"
+  }
+}

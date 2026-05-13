@@ -1,0 +1,119 @@
+/*
+ * Paper theme — warm cream cardstock, ink-on-paper, system fonts only.
+ *
+ * THIS FILE IS THE VISUAL TRUTH SOURCE. Before changing any value here,
+ * read CLAUDE.md → "视觉规范（PAPER 主题 · 已锁定）". Hard rules:
+ *
+ *   1. Chinese must NEVER fall to a serif (Songti / SimSun / etc.).
+ *   2. No webfonts (no @fontsource, no Google Fonts, no local ttf).
+ *   3. Shadows MUST be brown-biased, never neutral gray.
+ *   4. No pure #000 or #FFF anywhere.
+ *   5. Components consume tokens via CSS variables — never hardcode.
+ *
+ * Switching themes = swapping THIS FILE for another (e.g. glass.css).
+ * Do not modify component source to change visuals.
+ */
+
+:root,
+.theme-paper {
+  /* === shadcn semantic tokens === */
+  --background: oklch(0.935 0.020 80);          /* #F2EBDC deeper cream */
+  --foreground: oklch(0.265 0.020 50);          /* #2A2620 ink */
+
+  --card: oklch(0.965 0.014 80);                /* #FBF6EA lifted sheet */
+  --card-foreground: var(--foreground);
+
+  --popover: oklch(0.970 0.012 80);
+  --popover-foreground: var(--foreground);
+
+  --primary: oklch(0.43 0.06 145);              /* #3A5A40 ink green */
+  --primary-foreground: oklch(0.96 0.014 80);
+
+  --secondary: oklch(0.89 0.018 75);
+  --secondary-foreground: var(--foreground);
+
+  --muted: oklch(0.90 0.016 75);
+  --muted-foreground: oklch(0.48 0.022 55);
+
+  --accent: oklch(0.55 0.13 28);                /* #A4453B brick red */
+  --accent-foreground: oklch(0.97 0.012 80);
+
+  --destructive: oklch(0.52 0.16 25);
+  --destructive-foreground: oklch(0.97 0.012 80);
+
+  --border: oklch(0.82 0.018 70);
+  --input: oklch(0.85 0.014 72);
+  --ring: oklch(0.43 0.06 145);
+
+  /* === inkast extensions === */
+  /*
+   * Multi-layer paper shadow:
+   * - tight inner shadow simulates the sheet hugging the surface
+   * - outer soft shadow simulates the lift from the table
+   * Color biased brown rather than neutral gray.
+   */
+  --shadow-paper:
+    0 1px 0 rgba(255, 250, 235, 0.6) inset,
+    0 1px 2px rgba(70, 45, 20, 0.10),
+    0 2px 6px rgba(70, 45, 20, 0.06);
+
+  --shadow-paper-lifted:
+    0 1px 0 rgba(255, 250, 235, 0.6) inset,
+    0 4px 10px rgba(70, 45, 20, 0.14),
+    0 8px 24px rgba(70, 45, 20, 0.08);
+
+  /*
+   * System font stacks. PingFang SC handles Chinese; SF Pro / Segoe UI
+   * handle Latin. No webfont, no Songti fallback.
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+    "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+    system-ui, sans-serif;
+
+  /* Kept for backwards compatibility — points to the same stack. */
+  --font-serif: var(--font-sans);
+
+  --radius: 0.3rem;
+}
+
+.dark,
+.theme-paper.dark {
+  --background: oklch(0.175 0.014 50);          /* #1A1714 dark ink */
+  --foreground: oklch(0.89 0.014 80);
+
+  --card: oklch(0.215 0.016 50);                /* slightly lifted */
+  --card-foreground: var(--foreground);
+
+  --popover: oklch(0.215 0.016 50);
+  --popover-foreground: var(--foreground);
+
+  --primary: oklch(0.62 0.08 145);
+  --primary-foreground: oklch(0.18 0.012 50);
+
+  --secondary: oklch(0.26 0.014 50);
+  --secondary-foreground: var(--foreground);
+
+  --muted: oklch(0.24 0.012 50);
+  --muted-foreground: oklch(0.66 0.018 60);
+
+  --accent: oklch(0.65 0.13 28);
+  --accent-foreground: oklch(0.18 0.012 50);
+
+  --destructive: oklch(0.58 0.16 25);
+  --destructive-foreground: oklch(0.97 0.012 80);
+
+  --border: oklch(0.30 0.016 55);
+  --input: oklch(0.28 0.014 55);
+  --ring: oklch(0.62 0.08 145);
+
+  --shadow-paper:
+    0 1px 0 rgba(255, 245, 220, 0.04) inset,
+    0 1px 2px rgba(0, 0, 0, 0.40),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+
+  --shadow-paper-lifted:
+    0 1px 0 rgba(255, 245, 220, 0.04) inset,
+    0 4px 10px rgba(0, 0, 0, 0.50),
+    0 8px 24px rgba(0, 0, 0, 0.30);
+}
