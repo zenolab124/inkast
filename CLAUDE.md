@@ -169,3 +169,13 @@ LLM 备选通道（OpenAI 兼容 Chat）可以 Phase 1 一起做，也可以 Pha
 - imagegen 方法论：`~/workspace/cc-skills/imagegen/SKILL.md` + `reference/*.md`
 - imagegen 多 provider 池脚本（语义参考）：`~/workspace/cc-skills/imagegen/scripts/generate.py`
 - Claude Agent SDK：包名 `@anthropic-ai/claude-agent-sdk`
+
+<!-- codewise-claude-registry:start -->
+## 📚 知识库
+
+知识库由 **codewise** skill 生成,入口 [`docs/knowledge/INDEX.md`](docs/knowledge/INDEX.md)。
+
+**任务起手式(硬约束)**:每个新任务第一步 Read INDEX.md(本会话已读过则跳过)。**不读 = 默认从零摸索 = 重复踩前人已经记录过的坑**。
+
+维护:`/codewise update` 增量更新 | `/codewise rebuild` 强制重建 | `/codewise refresh-docs` 局部刷文档导航 | `/codewise refresh-interfaces` 局部刷接口速查。**禁止手编 `docs/knowledge/`**——它是 codewise 单源生成的领地。
+<!-- codewise-claude-registry:end -->
