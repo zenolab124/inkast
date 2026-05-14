@@ -1,19 +1,25 @@
 import { useCallback, useRef, useState } from "react";
-import { Feather, AlertCircle, Settings, CheckCircle2 } from "lucide-react";
-import type { GenerationRecord, PromptDraft } from "@inkast/shared";
-import { cn } from "./lib/utils.js";
+import { Feather, AlertCircle, Settings, CheckCircle2, X, Languages } from "lucide-react";
+import type {
+  GenerationRecord,
+  ImagePrompt,
+  JobRecord,
+  PromptDraft,
+  ReferenceImage,
+} from "@inkast/shared";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/i18n/LanguageContext";
+import { cn } from "@/lib/utils";
 import { PromptComposer } from "./features/prompt/PromptComposer.js";
-import { PromptDraftView } from "./features/prompt/PromptDraftView.js";
+import { PromptFieldEditor } from "./features/prompt/PromptFieldEditor.js";
 import { draftPrompt, type DraftPromptError } from "./features/prompt/api.js";
 import { ProviderConfigDialog } from "./features/config/ProviderConfigDialog.js";
 import { Gallery } from "./features/gallery/Gallery.js";
-import { generateImage, type GenerateError } from "./features/gallery/api.js";
+import { ActiveJobs } from "./features/jobs/ActiveJobs.js";
+import { useJobs } from "./features/jobs/useJobs.js";
 
-interface DraftState {
-  draft: PromptDraft;
-  meta?: { backend?: string; durationMs?: number };
-  adopted: Set<number>;
-}
+const EMPTY_PROMPT: ImagePrompt = { type: "", style: "", subject: "" };
 
 interface FlashMessage {
   kind: "success" | "error";
@@ -21,20 +27,70 @@ interface FlashMessage {
 }
 
 export function App() {
+  const { t, lang } = useLanguage();
   const [dark, setDark] = useState(false);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [state, setState] = useState<DraftState | null>(null);
-  const [appendNonce, setAppendNonce] = useState(0);
-  const [generating, setGenerating] = useState(false);
+  const [prompt, setPrompt] = useState<ImagePrompt>(EMPTY_PROMPT);
+  const [aiSuggested, setAiSuggested] = useState<Set<string>>(new Set());
+  const [meta, setMeta] = useState<
+    { backend?: string; durationMs?: number } | undefined
+  >();
   const [galleryKey, setGalleryKey] = useState(0);
   const [flash, setFlash] = useState<FlashMessage | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
+  const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const generateAbortRef = useRef<AbortController | null>(null);
 
-  const submit = useCallback(async () => {
+  const onJobSucceeded = useCallback(
+    (job: JobRecord) => {
+      const head = `${t.flash.generateDone} · ${(((job.completedAt ?? Date.now()) - (job.startedAt ?? job.createdAt)) / 1000).toFixed(1)}s`;
+      const fallbacks = job.attempts.filter(a => !a.ok);
+      const trail = fallbacks.length
+        ? "\n" + fallbacks
+            .map(a => `  · ${t.flash.skipped} ${a.providerName} (${a.errorCode ?? "?"})`)
+            .join("\n")
+        : "";
+      setFlash({ kind: "success", text: head + trail });
+      setGalleryKey(k => k + 1);
+    },
+    [t],
+  );
+
+  const onJobFailed = useCallback(
+    (job: JobRecord) => {
+      const isNoProvider = job.errorCode === "no_providers";
+      const attemptDetails = job.attempts.length
+        ? "\n" +
+          job.attempts
+            .map(
+              a =>
+                `  · ${a.providerName} (${a.errorCode ?? "?"}): ${
+                  a.errorMessage ?? "(no detail)"
+                }`,
+            )
+            .join("\n")
+        : "";
+      setFlash({
+        kind: "error",
+        text: isNoProvider
+          ? t.flash.noProvider
+          : `${job.errorMessage ?? job.errorCode ?? "unknown error"}${attemptDetails}`,
+      });
+      if (isNoProvider) setConfigOpen(true);
+    },
+    [t],
+  );
+
+  const { activeJobs, submitJob } = useJobs({
+    onSucceeded: onJobSucceeded,
+    onFailed: onJobFailed,
+  });
+
+  const hasFilled = !isEmptyPrompt(prompt);
+
+  const aiFill = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
 
@@ -45,11 +101,15 @@ export function App() {
     setError(null);
 
     try {
-      const resp = (await draftPrompt({ input: trimmed }, ac.signal)) as PromptDraft & {
+      const resp = (await draftPrompt(
+        { input: trimmed, lang },
+        ac.signal,
+      )) as PromptDraft & {
         _meta?: { backend?: string; durationMs?: number };
       };
-      const { _meta, ...draft } = resp;
-      setState({ draft, meta: _meta, adopted: new Set() });
+      setPrompt(resp.prompt);
+      setAiSuggested(computeAiFields(resp.prompt));
+      setMeta(resp._meta);
     } catch (err) {
       if (ac.signal.aborted) return;
       const e = err as DraftPromptError;
@@ -60,7 +120,7 @@ export function App() {
         setPending(false);
       }
     }
-  }, [input]);
+  }, [input, lang]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -68,81 +128,63 @@ export function App() {
     setPending(false);
   }, []);
 
-  const adoptHint = useCallback((index: number) => {
-    setState(prev => {
-      if (!prev) return prev;
-      if (prev.adopted.has(index)) return prev;
-      const hint = prev.draft.hints[index];
-      if (!hint) return prev;
-      setInput(prevInput => appendSuggestion(prevInput, hint.field, hint.suggestion));
-      setAppendNonce(n => n + 1);
-      const adopted = new Set(prev.adopted);
-      adopted.add(index);
-      return { ...prev, adopted };
-    });
-  }, []);
+  const handlePromptChange = useCallback(
+    (next: ImagePrompt) => {
+      if (aiSuggested.size > 0) {
+        const changedKeys = diffKeys(prompt, next);
+        if (changedKeys.length > 0) {
+          const updated = new Set(aiSuggested);
+          let mutated = false;
+          for (const k of changedKeys) {
+            if (updated.delete(k)) mutated = true;
+          }
+          if (mutated) setAiSuggested(updated);
+        }
+      }
+      setPrompt(next);
+    },
+    [aiSuggested, prompt],
+  );
 
   const generate = useCallback(async () => {
-    if (!state) return;
-    generateAbortRef.current?.abort();
-    const ac = new AbortController();
-    generateAbortRef.current = ac;
-    setGenerating(true);
     setFlash(null);
-
     try {
-      const resp = await generateImage({ prompt: state.draft.prompt }, ac.signal);
-      const fallbacks = resp.driver.attempts.filter(a => !a.ok);
-      const head = `生图完成 · ${resp.driver.providerName} · ${(resp.driver.totalDurationMs / 1000).toFixed(1)}s`;
-      const fallbackTrail = fallbacks.length
-        ? "\n" + fallbacks
-            .map(a => `  · 跳过 ${a.providerName} (${a.errorCode ?? "?"})`)
-            .join("\n")
-        : "";
-      setFlash({ kind: "success", text: head + fallbackTrail });
-      setGalleryKey(k => k + 1);
-    } catch (err) {
-      if (ac.signal.aborted) return;
-      const ge = err as GenerateError;
-      const message = ge.message;
-      const isNoProvider = message.includes("no_providers");
-      // Inline the first attempt's upstream summary if present — saves the
-      // user from having to grep API logs.
-      const attemptDetails = ge.attempts?.length
-        ? ge.attempts
-            .map(
-              a =>
-                `  · ${a.providerName} (${a.errorCode ?? "?"}): ${
-                  a.errorMessage ?? "(no detail)"
-                }`,
-            )
-            .join("\n")
-        : null;
-      setFlash({
-        kind: "error",
-        text: isNoProvider
-          ? "还没有 provider — 点右上角齿轮先配一个 OpenAI 兼容图像端点"
-          : attemptDetails
-            ? `${message}\n${attemptDetails}`
-            : message,
+      await submitJob({
+        prompt,
+        referenceImage: referenceImage ?? undefined,
       });
-      if (isNoProvider) setConfigOpen(true);
-    } finally {
-      if (generateAbortRef.current === ac) {
-        generateAbortRef.current = null;
-        setGenerating(false);
-      }
+    } catch (err) {
+      const e = err as { message?: string };
+      setFlash({ kind: "error", text: e?.message ?? String(err) });
     }
-  }, [state]);
+  }, [prompt, referenceImage, submitJob]);
 
-  const reuseFromHistory = useCallback((record: GenerationRecord) => {
-    setState({
-      draft: { prompt: record.promptSnapshot, hints: [] },
-      meta: { durationMs: record.durationMs ?? undefined },
-      adopted: new Set(),
-    });
-    setFlash({ kind: "success", text: "已载入历史 prompt,可调整后再生图" });
-  }, []);
+  const generateRaw = useCallback(async () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    setFlash(null);
+    const placeholder: ImagePrompt = { type: "raw", style: "", subject: trimmed };
+    try {
+      await submitJob({
+        prompt: placeholder,
+        rawPrompt: trimmed,
+        referenceImage: referenceImage ?? undefined,
+      });
+    } catch (err) {
+      const e = err as { message?: string };
+      setFlash({ kind: "error", text: e?.message ?? String(err) });
+    }
+  }, [input, referenceImage, submitJob]);
+
+  const reuseFromHistory = useCallback(
+    (record: GenerationRecord) => {
+      setPrompt(record.promptSnapshot);
+      setAiSuggested(new Set());
+      setMeta({ durationMs: record.durationMs ?? undefined });
+      setFlash({ kind: "success", text: t.flash.reuseLoaded });
+    },
+    [t],
+  );
 
   return (
     <div className={cn("theme-paper relative min-h-screen", dark && "dark")}>
@@ -158,17 +200,20 @@ export function App() {
             value={input}
             onChange={setInput}
             pending={pending}
-            hasDraft={!!state}
-            onSubmit={submit}
+            hasFilled={hasFilled}
+            onSubmit={aiFill}
             onCancel={cancel}
-            appendNonce={appendNonce}
+            onGenerateRaw={generateRaw}
+            generatingRaw={false}
+            referenceImage={referenceImage}
+            onReferenceImageChange={setReferenceImage}
           />
         </section>
 
         {error && (
           <Banner
             kind="error"
-            title="起草失败"
+            title={t.banner.aiFillFailed}
             message={error}
             onClose={() => setError(null)}
           />
@@ -176,25 +221,23 @@ export function App() {
         {flash && (
           <Banner
             kind={flash.kind}
-            title={flash.kind === "success" ? "OK" : "生图失败"}
+            title={flash.kind === "success" ? t.banner.ok : t.banner.generateFailed}
             message={flash.text}
             onClose={() => setFlash(null)}
           />
         )}
 
-        {state && (
-          <PromptDraftView
-            draft={state.draft}
-            meta={state.meta}
-            pending={pending}
-            adoptedHints={state.adopted}
-            onAdoptHint={adoptHint}
-            generating={generating}
-            onGenerate={generate}
-          />
-        )}
+        <ActiveJobs jobs={activeJobs} />
 
-        {!state && !error && !pending && <Intro />}
+        <PromptFieldEditor
+          value={prompt}
+          onChange={handlePromptChange}
+          aiSuggestedFields={aiSuggested}
+          meta={meta}
+          pending={pending}
+          generating={false}
+          onGenerate={generate}
+        />
 
         <Gallery refreshKey={galleryKey} onReuse={reuseFromHistory} />
 
@@ -209,11 +252,57 @@ export function App() {
   );
 }
 
-function appendSuggestion(current: string, field: string, suggestion: string): string {
-  const line = `补充·${field}: ${suggestion}`;
-  if (!current.trim()) return line;
-  if (current.includes(line)) return current;
-  return `${current.replace(/\s+$/, "")}\n${line}`;
+function isEmptyPrompt(p: ImagePrompt): boolean {
+  return !p.type && !p.style && !p.subject;
+}
+
+function computeAiFields(p: ImagePrompt): Set<string> {
+  const out = new Set<string>();
+  for (const [k, v] of Object.entries(p)) {
+    if (v == null) continue;
+    if (typeof v === "string" && v.length > 0) out.add(k);
+    else if (Array.isArray(v) && v.length > 0) out.add(k);
+    else if (typeof v === "number" || typeof v === "boolean") out.add(k);
+  }
+  return out;
+}
+
+function diffKeys(prev: ImagePrompt, next: ImagePrompt): string[] {
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  const changed: string[] = [];
+  for (const k of keys) {
+    const a = (prev as Record<string, unknown>)[k];
+    const b = (next as Record<string, unknown>)[k];
+    if (!shallowEqual(a, b)) changed.push(k);
+  }
+  return changed;
+}
+
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!shallowEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a as object);
+    const kb = Object.keys(b as object);
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) {
+      if (
+        !shallowEqual(
+          (a as Record<string, unknown>)[k],
+          (b as Record<string, unknown>)[k],
+        )
+      )
+        return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 function Banner({
@@ -227,32 +316,38 @@ function Banner({
   message: string;
   onClose?: () => void;
 }) {
+  const { t } = useLanguage();
   const Icon = kind === "success" ? CheckCircle2 : AlertCircle;
-  const palette =
-    kind === "success"
-      ? "border-primary/30 bg-primary/5 text-foreground/90"
-      : "border-destructive/40 bg-destructive/5 text-destructive";
   return (
-    <div className={cn("flex items-start gap-3 rounded-md border p-4 text-sm", palette)}>
+    <Alert
+      variant={kind === "error" ? "destructive" : "default"}
+      className={cn(
+        "relative rounded-md pr-10",
+        kind === "success" && "border-primary/30 bg-primary/5",
+      )}
+    >
       <Icon
-        className={cn("mt-0.5 size-4 shrink-0", kind === "success" ? "text-primary" : "text-destructive")}
+        className={kind === "success" ? "text-primary" : "text-destructive"}
         strokeWidth={1.75}
       />
-      <div className="flex-1">
-        <div className="font-medium">{title}</div>
-        <div className="mt-1 whitespace-pre-wrap font-mono text-xs leading-relaxed opacity-90">
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>
+        <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
           {message}
-        </div>
-      </div>
+        </pre>
+      </AlertDescription>
       {onClose && (
-        <button
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={onClose}
-          className="rounded-sm px-1 text-xs text-muted-foreground transition hover:text-foreground"
+          className="absolute right-2 top-2 text-muted-foreground"
+          aria-label={t.banner.close}
         >
-          ×
-        </button>
+          <X strokeWidth={1.75} />
+        </Button>
       )}
-    </div>
+    </Alert>
   );
 }
 
@@ -265,65 +360,47 @@ function Header({
   onToggleDark: () => void;
   onOpenConfig: () => void;
 }) {
+  const { t, lang, setLang } = useLanguage();
   return (
     <header className="flex items-center justify-between border-b border-border/60 pb-5">
       <div className="flex items-center gap-3">
         <Feather className="size-5 text-primary" strokeWidth={1.5} />
-        <span className="text-xl font-medium tracking-tight">Inkast</span>
+        <span className="text-xl font-medium tracking-tight">{t.app.title}</span>
         <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
-          local-first ai image studio
+          {t.app.tagline}
         </span>
       </div>
       <div className="flex items-center gap-2">
-        <button
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+          title={lang === "zh" ? "Switch to English" : "切换到中文"}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Languages strokeWidth={1.5} />
+          {lang === "zh" ? t.header.langEn : t.header.langZh}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={onOpenConfig}
-          title="Provider 配置"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground hover:shadow-(--shadow-paper)"
+          title={t.header.config}
+          className="text-muted-foreground hover:text-foreground"
         >
-          <Settings className="size-4" strokeWidth={1.5} />
-          配置
-        </button>
-        <button
+          <Settings strokeWidth={1.5} />
+          {t.header.config}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={onToggleDark}
-          className="rounded-md border border-border/60 bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground hover:shadow-(--shadow-paper)"
+          className="text-muted-foreground hover:text-foreground"
         >
-          {dark ? "Paper · Light" : "Paper · Dark"}
-        </button>
+          {dark ? t.header.light : t.header.dark}
+        </Button>
       </div>
     </header>
-  );
-}
-
-function Intro() {
-  const items = [
-    {
-      title: "散文 → JSON prompt",
-      body: "把模糊的描述拆成 type / style / subject / lighting … 让模型按字段处理,而不是猜散文。",
-    },
-    {
-      title: "ClaudeCode 一等公民",
-      body: "默认走本机已登录的 ClaudeCode,无需 API key。生成稳定的结构化 JSON。",
-    },
-    {
-      title: "OpenAI 兼容生图 + 池切换",
-      body: "在「配置」里加 provider,网络/5xx/配额自动切换。生成图本地落盘,完整可审计。",
-    },
-  ];
-
-  return (
-    <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
-      {items.map(it => (
-        <article
-          key={it.title}
-          className="rounded-md border border-border/60 bg-card p-5 shadow-(--shadow-paper) transition hover:shadow-(--shadow-paper-lifted)"
-        >
-          <h3 className="text-base font-medium text-foreground">{it.title}</h3>
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            {it.body}
-          </p>
-        </article>
-      ))}
-    </section>
   );
 }
 
@@ -331,7 +408,7 @@ function Footer() {
   return (
     <footer className="mt-auto border-t border-border/60 pt-5 text-xs text-muted-foreground">
       <div className="flex items-center justify-between">
-        <span>Phase 1 · MVP · 纸张主题</span>
+        <span>Phase 1 · MVP</span>
         <span>v0.0.1</span>
       </div>
     </footer>

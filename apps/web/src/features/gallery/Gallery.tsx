@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Download, ImageIcon, Loader2, RefreshCw } from "lucide-react";
 import type { GenerationRecord } from "@inkast/shared";
-import { cn } from "../../lib/utils.js";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/i18n/LanguageContext";
+import { cn } from "@/lib/utils";
 import { generationImageUrl, listGenerations } from "./api.js";
 import { GalleryDetailDialog } from "./GalleryDetailDialog.js";
 
@@ -11,6 +14,7 @@ interface GalleryProps {
 }
 
 export function Gallery({ refreshKey, onReuse }: GalleryProps) {
+  const { t } = useLanguage();
   const [items, setItems] = useState<GenerationRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openRecord, setOpenRecord] = useState<GenerationRecord | null>(null);
@@ -32,9 +36,10 @@ export function Gallery({ refreshKey, onReuse }: GalleryProps) {
 
   if (error) {
     return (
-      <section className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-        加载历史失败:{error}
-      </section>
+      <Alert variant="destructive" className="rounded-md">
+        <AlertTitle>{t.gallery.loadError}</AlertTitle>
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
     );
   }
 
@@ -42,7 +47,7 @@ export function Gallery({ refreshKey, onReuse }: GalleryProps) {
     return (
       <section className="flex items-center gap-2 rounded-md border border-border/60 bg-card p-5 text-sm text-muted-foreground shadow-(--shadow-paper)">
         <Loader2 className="size-4 animate-spin" strokeWidth={1.75} />
-        加载历史…
+        {t.gallery.loading}
       </section>
     );
   }
@@ -53,7 +58,7 @@ export function Gallery({ refreshKey, onReuse }: GalleryProps) {
     <section className="flex flex-col gap-3">
       <header className="flex items-center gap-2">
         <ImageIcon className="size-4 text-primary" strokeWidth={1.5} />
-        <h2 className="text-sm font-medium tracking-wide">作品</h2>
+        <h2 className="text-sm font-medium tracking-wide">{t.gallery.title}</h2>
         <span className="text-xs text-muted-foreground">· {items.length}</span>
       </header>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
@@ -84,6 +89,7 @@ function GalleryCard({
   onReuse?: (record: GenerationRecord) => void;
   onOpen: () => void;
 }) {
+  const { t } = useLanguage();
   const url = generationImageUrl(record.id);
   const subjectText = stringifyMaybeObject(record.promptSnapshot.subject);
   const typeLabel = String(record.promptSnapshot.type ?? "");
@@ -96,11 +102,12 @@ function GalleryCard({
         "transition hover:shadow-(--shadow-paper-lifted)",
       )}
     >
-      <button
+      <Button
         type="button"
+        variant="ghost"
         onClick={onOpen}
-        title="查看详情"
-        className="aspect-square overflow-hidden bg-background"
+        title={t.gallery.openDetail}
+        className="aspect-square h-auto w-full overflow-hidden rounded-none bg-background p-0 hover:bg-background"
       >
         <img
           src={url}
@@ -108,7 +115,7 @@ function GalleryCard({
           loading="lazy"
           className="size-full object-cover transition group-hover:scale-[1.02]"
         />
-      </button>
+      </Button>
       <div className="flex flex-col gap-1 px-3 py-2.5">
         {typeLabel && (
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -127,22 +134,30 @@ function GalleryCard({
         )}
         <div className="mt-1 flex items-center justify-end gap-1">
           {onReuse && (
-            <button
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={() => onReuse(record)}
-              title="复用这个 prompt"
-              className="rounded-sm p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+              title={t.gallery.reuse}
+              className="text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
-              <RefreshCw className="size-3.5" strokeWidth={1.75} />
-            </button>
+              <RefreshCw strokeWidth={1.75} />
+            </Button>
           )}
-          <a
-            href={url}
-            download={`inkast-${record.id}.${record.imageFormat}`}
-            title="下载"
-            className="rounded-sm p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+          <Button
+            asChild
+            variant="ghost"
+            size="icon-xs"
+            title={t.gallery.download}
+            className="text-muted-foreground hover:bg-secondary hover:text-foreground"
           >
-            <Download className="size-3.5" strokeWidth={1.75} />
-          </a>
+            <a
+              href={url}
+              download={`inkast-${record.id}.${record.imageFormat}`}
+            >
+              <Download strokeWidth={1.75} />
+            </a>
+          </Button>
         </div>
       </div>
     </article>

@@ -24,6 +24,18 @@ export interface ImageGenInput {
   n?: number;
   bypassModeration?: boolean;
   signal?: AbortSignal;
+  /**
+   * Optional reference image bytes. When present, the driver calls
+   * `images.edit` (image + text) instead of `images.generate` (text only).
+   * Buffer ownership: caller decodes from generation file or base64 upload.
+   */
+  referenceImage?: {
+    buffer: Buffer;
+    /** "image/png" | "image/jpeg" | "image/webp" */
+    mimeType: string;
+    /** Filename hint passed to OpenAI SDK toFile (extension matters). */
+    filename: string;
+  };
 }
 
 export type AttemptErrorCode =

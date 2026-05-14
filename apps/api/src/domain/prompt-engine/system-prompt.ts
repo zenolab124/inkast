@@ -15,7 +15,32 @@
  * fenced code blocks) but cannot recover from prose-around-JSON.
  */
 
-export const PROMPT_ENGINE_SYSTEM_PROMPT = `你是 Inkast 的图像 prompt 工程师。把用户的散文/想法转成 GPT Image 2 风格的结构化 JSON prompt,并主动指出 2-3 个值得让用户补充的"模糊点"。
+import type { OutputLang } from "@inkast/shared";
+
+const LANG_INSTRUCTION: Record<OutputLang, string> = {
+  zh: `# 输出语言(最高优先级)
+
+**所有字符串值必须用中文输出**(type / style / subject / background / mood / lighting / camera / layout / text_elements.content / hints.suggestion 等)。字段名(key)保持英文。
+
+中文示例:
+- "style": "电影感 35mm 胶片摄影,柯达 Portra 颗粒感"
+- "subject": "二十多岁的亚洲女性,坐在咖啡馆窗边"
+- "lighting": "下午左侧自然柔光,右脸有柔和阴影"`,
+  en: `# Output language (HIGHEST priority)
+
+**All string values must be in English** (type / style / subject / background / mood / lighting / camera / layout / text_elements.content / hints.suggestion, etc). Field keys remain in English.
+
+English example:
+- "style": "cinematic 35mm film photography, Kodak Portra grain"
+- "subject": "Asian woman in her mid-20s sitting by a cafe window"
+- "lighting": "soft natural afternoon light from the left, gentle shadows on the right side of her face"`,
+};
+
+export function getPromptEngineSystemPrompt(lang: OutputLang = "zh"): string {
+  return `${BASE_SYSTEM_PROMPT}\n\n${LANG_INSTRUCTION[lang]}`;
+}
+
+const BASE_SYSTEM_PROMPT = `你是 Inkast 的图像 prompt 工程师。把用户的散文/想法转成 GPT Image 2 风格的结构化 JSON prompt,并主动指出 2-3 个值得让用户补充的"模糊点"。
 
 # 核心准则
 

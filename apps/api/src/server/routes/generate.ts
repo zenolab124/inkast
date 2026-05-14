@@ -11,6 +11,7 @@ interface GenerateBody {
   size?: "1024x1024" | "1024x1536" | "1536x1024";
   quality?: "low" | "medium" | "high";
   bypassModeration?: boolean;
+  rawPrompt?: string;
 }
 
 generateRoutes.post("/generate-image", async c => {
@@ -23,6 +24,12 @@ generateRoutes.post("/generate-image", async c => {
   if (!body.prompt || typeof body.prompt !== "object") {
     throw new HTTPException(400, { message: "'prompt' must be an object" });
   }
+  if (body.rawPrompt !== undefined && (typeof body.rawPrompt !== "string" || !body.rawPrompt.trim())) {
+    throw new HTTPException(400, { message: "'rawPrompt' must be a non-empty string when provided" });
+  }
+
+  const routeStart = Date.now();
+  console.log(`[route] POST /api/generate-image received`);
 
   try {
     const outcome = await generate({
@@ -30,7 +37,9 @@ generateRoutes.post("/generate-image", async c => {
       size: body.size,
       quality: body.quality,
       bypassModeration: body.bypassModeration,
+      rawPrompt: body.rawPrompt,
     });
+    console.log(`[route] ◀ responding to client (route total=${Date.now() - routeStart}ms)`);
     return c.json({
       generation: outcome.generation,
       driver: {

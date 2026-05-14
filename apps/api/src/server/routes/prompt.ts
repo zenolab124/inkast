@@ -18,6 +18,10 @@ promptRoutes.post("/draft-prompt", async c => {
     throw new HTTPException(400, { message: "'input' must be a non-empty string" });
   }
 
+  if (body.lang !== undefined && body.lang !== "zh" && body.lang !== "en") {
+    throw new HTTPException(400, { message: "'lang' must be 'zh' or 'en'" });
+  }
+
   try {
     const outcome = await draftPrompt(body);
     return c.json({

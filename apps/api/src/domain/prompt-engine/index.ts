@@ -1,10 +1,11 @@
-import type { PromptDraft } from "@inkast/shared";
+import type { OutputLang, PromptDraft } from "@inkast/shared";
 import { getLlmDriver, type LlmBackend } from "../../drivers/llm/index.js";
-import { PROMPT_ENGINE_SYSTEM_PROMPT } from "./system-prompt.js";
+import { getPromptEngineSystemPrompt } from "./system-prompt.js";
 
 export interface DraftPromptInput {
   input: string;
   backend?: LlmBackend;
+  lang?: OutputLang;
 }
 
 export interface DraftPromptOutcome {
@@ -30,10 +31,11 @@ export async function draftPrompt(input: DraftPromptInput): Promise<DraftPromptO
   }
 
   const backend = input.backend ?? "claude-code";
+  const lang = input.lang ?? "zh";
   const driver = getLlmDriver(backend);
 
   const result = await driver.completeJson<PromptDraft>({
-    systemPrompt: PROMPT_ENGINE_SYSTEM_PROMPT,
+    systemPrompt: getPromptEngineSystemPrompt(lang),
     userPrompt: trimmed,
     timeoutMs: 60_000,
   });

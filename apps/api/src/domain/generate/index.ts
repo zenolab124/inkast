@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ImagePrompt } from "@inkast/shared";
+import type { ImagePrompt, ReferenceImage } from "@inkast/shared";
 import { generateImage as drive } from "../../drivers/image/openai-compatible.js";
 import {
   ImageGenError,
@@ -11,8 +11,15 @@ import {
 import { imagesDir } from "../../storage/runtime.js";
 import {
   createGeneration,
+  getGeneration,
   type Generation,
 } from "../../storage/generations.js";
+import {
+  markJobFailed,
+  markJobRunning,
+  markJobSucceeded,
+  updateJobAttempts,
+} from "../../storage/jobs.js";
 
 export interface GenerateInput {
   prompt: ImagePrompt;
@@ -20,6 +27,10 @@ export interface GenerateInput {
   quality?: ImageGenInput["quality"];
   bypassModeration?: boolean;
   signal?: AbortSignal;
+  /** Bypass the structured-prompt JSON.stringify path; feed this text directly. */
+  rawPrompt?: string;
+  /** Reference image (Gallery generation or fresh upload). */
+  referenceImage?: ReferenceImage;
 }
 
 export interface GenerateOutcome {
@@ -38,7 +49,14 @@ export interface GenerateOutcome {
  * adapter (Phase 2+) can mirror them unchanged.
  */
 export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
-  const promptText = JSON.stringify(input.prompt);
+  const promptText = input.rawPrompt ?? JSON.stringify(input.prompt);
+  const mode = input.rawPrompt ? "raw-prose" : "structured-json";
+  const referenceImage = input.referenceImage
+    ? await resolveReferenceImage(input.referenceImage)
+    : undefined;
+  console.log(
+    `[generate] ▶ start · mode=${mode} · prompt-bytes=${promptText.length}${referenceImage ? ` · with-reference` : ""}`,
+  );
 
   const outcome = await drive({
     promptText,
@@ -46,12 +64,15 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
     quality: input.quality,
     bypassModeration: input.bypassModeration,
     signal: input.signal,
+    referenceImage,
   });
 
   const { relativePath, absolutePath } = imagePathFor(outcome.format);
   const dir = absolutePath.slice(0, absolutePath.lastIndexOf("/"));
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const writeStart = Date.now();
   await writeFile(absolutePath, Buffer.from(outcome.imageB64, "base64"));
+  console.log(`[generate]   ✓ wrote ${relativePath} in ${Date.now() - writeStart}ms`);
 
   const generation = createGeneration({
     promptSnapshot: input.prompt,
@@ -63,8 +84,69 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
     providerId: outcome.providerId,
     durationMs: outcome.totalDurationMs,
   });
+  console.log(`[generate] ✓ done · id=${generation.id} · total=${outcome.totalDurationMs}ms`);
 
   return { generation, driver: outcome };
+}
+
+/**
+ * Wrap `generate` for async jobs: updates the jobs row through the lifecycle
+ * (running → succeeded/failed) and never throws — callers fire and forget.
+ */
+export async function runGenerationJob(
+  jobId: string,
+  input: GenerateInput,
+): Promise<void> {
+  markJobRunning(jobId);
+  console.log(`[job] ▶ running ${jobId}`);
+  try {
+    const outcome = await generate(input);
+    updateJobAttempts(jobId, outcome.driver.attempts);
+    markJobSucceeded(jobId, outcome.generation.id);
+    console.log(`[job] ✓ ${jobId} succeeded (generation=${outcome.generation.id})`);
+  } catch (err) {
+    if (err instanceof ImageGenError) {
+      markJobFailed(jobId, err.code, err.message, err.attempts ?? []);
+      console.log(`[job] ✗ ${jobId} failed: ${err.code} — ${err.message}`);
+    } else {
+      const msg = err instanceof Error ? err.message : String(err);
+      markJobFailed(jobId, "internal", msg);
+      console.log(`[job] ✗ ${jobId} failed: internal — ${msg}`);
+    }
+  }
+}
+
+/**
+ * Resolve a wire-format ReferenceImage into the buffer/mimetype shape the
+ * driver expects. For `generation` mode, reads the file from disk; for
+ * `upload` mode, base64-decodes the payload.
+ */
+async function resolveReferenceImage(
+  ref: ReferenceImage,
+): Promise<NonNullable<ImageGenInput["referenceImage"]>> {
+  if (ref.kind === "generation") {
+    const gen = getGeneration(ref.generationId);
+    if (!gen) {
+      throw new Error(`reference generation not found: ${ref.generationId}`);
+    }
+    const buffer = readImageBytes(gen.imagePath);
+    const mimeType =
+      gen.imageFormat === "jpeg"
+        ? "image/jpeg"
+        : gen.imageFormat === "webp"
+          ? "image/webp"
+          : "image/png";
+    return { buffer, mimeType, filename: `reference.${gen.imageFormat}` };
+  }
+  // upload
+  const buffer = Buffer.from(ref.dataBase64, "base64");
+  const ext =
+    ref.mimeType === "image/jpeg"
+      ? "jpg"
+      : ref.mimeType === "image/webp"
+        ? "webp"
+        : "png";
+  return { buffer, mimeType: ref.mimeType, filename: `reference.${ext}` };
 }
 
 export function readImageBytes(relativePath: string): Buffer {

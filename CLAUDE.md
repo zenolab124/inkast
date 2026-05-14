@@ -49,7 +49,7 @@ Node      : 24.10+ （原 gpt-image-canvas 锁 24.15，inkast 放宽）
 前端       : Vite + React + TypeScript
 LLM SDK   : @anthropic-ai/claude-agent-sdk (默认) + 自建 OpenAI 兼容 client (备选)
 生图       : OpenAI 兼容 /v1/images/generations，默认 gpt-image-2
-样式       : Tailwind CSS + shadcn/ui（组件源码 own 在 apps/web/src/components/ui）
+样式       : Tailwind CSS + shadcn/ui（**硬性规则**:UI 一律优先 shadcn,组件源码 own 在 apps/web/src/components/ui;细则见视觉规范 → "UI 组件库")
 图标       : lucide-react
 字体       : Source Serif（标题）+ Source Sans（正文），通过 fontsource 本地化
 ```
@@ -100,17 +100,28 @@ LLM SDK   : @anthropic-ai/claude-agent-sdk (默认) + 自建 OpenAI 兼容 clien
 - 不要拟物大渐变、不要 glassmorphism 模糊（那是 glass 主题的事，paper 主题禁用 `backdrop-blur`）
 - 不要"科技感"霓虹边、不要发光 `ring` 高饱和度
 
+### UI 组件库（红线 · 硬性规则）
+
+- ❌ **禁止手撸通用交互组件**（button / input / textarea / select / popover / dialog / dropdown / combobox / tooltip / tabs / alert / sheet / drawer / radio / checkbox 等）
+- ❌ **禁止用 `<div>` + Tailwind 模拟**上面这些(Phase 1 baseline 时期的做法,从今天起视为债务)
+- ✅ **第一动作**:打开 `apps/web/src/components/ui/`,有就直接 `import { ... } from "@/components/ui/..."`
+- ✅ 没有就先 own:`cd apps/web && pnpm dlx shadcn@latest add <name> --yes`,再用
+- ✅ 业务组件(Combobox、ColorPaletteEditor、PromptFieldEditor 等)放 `apps/web/src/components/`,**内部仍用 shadcn 原语**
+- ✅ 视觉细节(颜色 / 阴影 / 字体 / 圆角)依然走 paper token,通过 className 覆盖 shadcn 默认样式
+- 提示:`Combobox` 不是 shadcn 默认组件,而是 Popover + Command + Input 的组合模式——已 own 在 `@/components/combobox`,直接复用
+
 ### 组件新增/修改自检清单
 
 写或改任何 UI 组件前对照，每一条都过才能 merge：
 
-1. 颜色全走语义 token，无 hex/rgb 字面量？
-2. 字体未指定 `font-family`，继承系统栈？
-3. 阴影用了 paper 三层投影变量，没有用 Tailwind 默认灰阴影？
-4. 圆角 ≤ `rounded-md`？
-5. 没有引入新的 webfont？
-6. 中文文字在亮色和暗色下都是 PingFang（不是 Songti）？
-7. 没有破坏全站 noise + vignette 层（不要在子容器再叠一遍噪点）？
+1. **shadcn 优先**:是不是先查了 `components/ui/`?手撸的是 shadcn 没覆盖的业务组件吗?
+2. 颜色全走语义 token，无 hex/rgb 字面量？
+3. 字体未指定 `font-family`，继承系统栈？
+4. 阴影用了 paper 三层投影变量，没有用 Tailwind 默认灰阴影？
+5. 圆角 ≤ `rounded-md`？
+6. 没有引入新的 webfont？
+7. 中文文字在亮色和暗色下都是 PingFang（不是 Songti）？
+8. 没有破坏全站 noise + vignette 层（不要在子容器再叠一遍噪点）？
 
 ### 备选主题：玻璃质感（Glass）
 

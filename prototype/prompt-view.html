@@ -1,0 +1,877 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · prompt 字段编辑器原型 v2</title>
+  <style>
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+      z-index: 0;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 40px 24px 96px;
+    }
+
+    .page-title {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.012em;
+      margin: 0 0 4px;
+    }
+
+    .page-sub {
+      color: var(--muted-foreground);
+      font-size: 13px;
+      margin: 0 0 32px;
+    }
+
+    /* === input bar (prose + AI fill) === */
+
+    .prose-bar {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      padding: 14px 16px;
+      margin-bottom: 24px;
+    }
+
+    .prose-bar-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .prose-bar-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      color: var(--muted-foreground);
+    }
+
+    .prose-bar-title svg { width: 14px; height: 14px; color: var(--primary); }
+
+    .prose-bar-status {
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+    }
+
+    .prose-input {
+      width: 100%;
+      min-height: 56px;
+      padding: 8px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 13.5px;
+      color: var(--foreground);
+      resize: vertical;
+      outline: none;
+    }
+
+    .prose-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 18%, transparent);
+    }
+
+    .prose-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .prose-hint {
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      font-weight: 500;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: var(--secondary);
+      color: var(--foreground);
+      box-shadow: var(--shadow-paper);
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .btn:hover { box-shadow: var(--shadow-paper-lifted); }
+
+    .btn svg { width: 14px; height: 14px; }
+
+    .btn-primary {
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-color: transparent;
+    }
+
+    .btn-accent {
+      background: var(--accent);
+      color: var(--accent-foreground);
+      border-color: transparent;
+    }
+
+    /* === groups === */
+
+    .groups {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .group {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      padding: 18px 20px 20px;
+    }
+
+    .group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+
+    .group-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    .group-title svg { width: 16px; height: 16px; color: var(--primary); }
+
+    .group-hint {
+      font-size: 11px;
+      color: var(--muted-foreground);
+    }
+
+    /* === field grid === */
+
+    .fields {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+    }
+
+    .field-tag {
+      padding: 1px 6px;
+      border-radius: 9px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary);
+      font-size: 9.5px;
+      letter-spacing: 0.05em;
+      text-transform: none;
+    }
+
+    .col-2 { grid-column: span 2; }
+    .col-3 { grid-column: span 3; }
+    .col-4 { grid-column: span 4; }
+    .col-6 { grid-column: span 6; }
+
+    /* === inputs === */
+
+    input[type="text"], input[list], textarea, select {
+      width: 100%;
+      padding: 7px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 13.5px;
+      color: var(--foreground);
+      outline: none;
+      transition: box-shadow 0.12s, border-color 0.12s;
+    }
+
+    input[list] { padding-right: 26px; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a6f64' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; }
+
+    textarea {
+      resize: vertical;
+      min-height: 56px;
+      line-height: 1.55;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 18%, transparent);
+    }
+
+    /* === color palette === */
+
+    .palette {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 6px 8px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+    }
+
+    .swatch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px 4px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+    }
+
+    .swatch-color {
+      position: relative;
+      display: inline-flex;
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .swatch-color input[type="color"] {
+      position: absolute;
+      inset: -4px;
+      border: none;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+      opacity: 0;
+    }
+
+    .swatch-remove {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      margin-left: 2px;
+      border: none;
+      background: transparent;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      border-radius: 2px;
+    }
+
+    .swatch-remove:hover { color: var(--accent); background: color-mix(in oklch, var(--accent) 12%, transparent); }
+    .swatch-remove svg { width: 10px; height: 10px; }
+
+    .palette-preset-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      flex-wrap: wrap;
+    }
+
+    .preset-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px 3px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: 9px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .preset-chip:hover { box-shadow: var(--shadow-paper); }
+
+    .preset-chip-dots {
+      display: inline-flex;
+      gap: 1px;
+    }
+
+    .preset-chip-dots i {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+
+    .swatch-add {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: transparent;
+      border: 1px dashed color-mix(in oklch, var(--border) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .swatch-add:hover { color: var(--foreground); border-style: solid; }
+    .swatch-add svg { width: 12px; height: 12px; }
+
+    /* === text elements === */
+
+    .text-elem-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .text-elem {
+      padding: 12px;
+      background: color-mix(in oklch, var(--background) 60%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+      border-radius: var(--radius);
+    }
+
+    .text-elem-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .text-elem-idx {
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted-foreground);
+    }
+
+    .text-elem-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    .text-elem-grid .field.col-content { grid-column: span 4; }
+    .text-elem-grid .field.col-attr { grid-column: span 1; }
+
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: var(--radius);
+      border: none;
+      background: transparent;
+      color: var(--muted-foreground);
+      cursor: pointer;
+    }
+
+    .icon-btn:hover { background: color-mix(in oklch, var(--accent) 12%, transparent); color: var(--accent); }
+    .icon-btn svg { width: 14px; height: 14px; }
+
+    .add-text-elem {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 12px;
+      padding: 7px 12px;
+      background: transparent;
+      border: 1px dashed color-mix(in oklch, var(--border) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .add-text-elem:hover { color: var(--foreground); border-style: solid; }
+    .add-text-elem svg { width: 14px; height: 14px; }
+
+    /* === bottom bar === */
+
+    .bottom-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 24px;
+      padding-top: 18px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+
+    .bottom-meta {
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+    }
+
+    details summary {
+      cursor: pointer;
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      user-select: none;
+    }
+
+    details[open] summary { margin-bottom: 8px; }
+
+    details pre {
+      margin: 0;
+      padding: 12px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11.5px;
+      line-height: 1.55;
+      overflow: auto;
+      color: var(--muted-foreground);
+    }
+
+    @media (max-width: 720px) {
+      .fields { grid-template-columns: repeat(2, 1fr); }
+      .col-2, .col-3, .col-4, .col-6 { grid-column: span 2; }
+      .text-elem-grid { grid-template-columns: repeat(2, 1fr); }
+      .text-elem-grid .field.col-attr { grid-column: span 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="page-title">Inkast · prompt 字段编辑器</h1>
+    <p class="page-sub">字段编辑器永远在场。写散文 → 点 AI 预填(可选) → 字段被填好 → 用户改 → 生图。没接 LLM 也能直接填字段。</p>
+
+    <!-- prose input + AI fill -->
+    <div class="prose-bar">
+      <div class="prose-bar-head">
+        <div class="prose-bar-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7h18M3 12h18M3 17h12"/></svg>
+          散文输入 (可选)
+        </div>
+        <div class="prose-bar-status">未起草 · 也可直接编辑下方字段</div>
+      </div>
+      <textarea class="prose-input" placeholder="用一两句话说一下你想要的画面... 不写也行,可以直接填下方字段。">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</textarea>
+      <div class="prose-actions">
+        <span class="prose-hint">提示:写得越具体,AI 预填的字段越准</span>
+        <button class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v3M5 7l2 2M3 14h3M19 7l-2 2M21 14h-3M12 19v3M8 12l4-4 4 4-4 4z"/></svg>
+          AI 预填字段
+        </button>
+      </div>
+    </div>
+
+    <!-- field groups -->
+    <div class="groups">
+
+      <!-- group: 基本 -->
+      <section class="group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            基本
+          </div>
+          <span class="group-hint">类型 / 风格 · 必填</span>
+        </header>
+        <div class="fields">
+          <div class="field col-3">
+            <label class="field-label">Type<span class="field-tag">AI 推荐</span></label>
+            <input type="text" list="dict-type" value="海报" />
+          </div>
+          <div class="field col-3">
+            <label class="field-label">Style<span class="field-tag">AI 推荐</span></label>
+            <input type="text" list="dict-style" value="极简插画" />
+          </div>
+        </div>
+      </section>
+
+      <!-- group: 画面 -->
+      <section class="group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5L5 21"/></svg>
+            画面
+          </div>
+          <span class="group-hint">主体 / 背景 / 构图</span>
+        </header>
+        <div class="fields">
+          <div class="field col-6">
+            <label class="field-label">Subject<span class="field-tag">AI 推荐</span></label>
+            <textarea>橘色狐狸蜷缩在松树下,抬头望着月亮</textarea>
+          </div>
+          <div class="field col-4">
+            <label class="field-label">Background<span class="field-tag">AI 推荐</span></label>
+            <textarea>远山轮廓与渐变夜空,星点稀疏</textarea>
+          </div>
+          <div class="field col-2">
+            <label class="field-label">Layout</label>
+            <input type="text" list="dict-layout" value="居中构图,主体占 1/3" />
+          </div>
+        </div>
+      </section>
+
+      <!-- group: 氛围 -->
+      <section class="group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+            氛围
+          </div>
+          <span class="group-hint">情绪 / 光照 / 镜头</span>
+        </header>
+        <div class="fields">
+          <div class="field col-2">
+            <label class="field-label">Mood<span class="field-tag">AI 推荐</span></label>
+            <input type="text" list="dict-mood" value="宁静温暖" />
+          </div>
+          <div class="field col-2">
+            <label class="field-label">Lighting<span class="field-tag">AI 推荐</span></label>
+            <input type="text" list="dict-lighting" value="黄昏侧逆光" />
+          </div>
+          <div class="field col-2">
+            <label class="field-label">Camera</label>
+            <input type="text" list="dict-camera" value="中景" placeholder="留空交给模型决定" />
+          </div>
+        </div>
+      </section>
+
+      <!-- group: 色彩 -->
+      <section class="group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10z"/></svg>
+            色彩
+          </div>
+          <span class="group-hint">点色块改色 · 选预设套用 · 留空交给模型</span>
+        </header>
+        <div class="field col-6">
+          <label class="field-label">Color Palette<span class="field-tag">AI 推荐</span></label>
+          <div class="palette">
+            <span class="swatch">
+              <span class="swatch-color" style="background:#1a2b4c"><input type="color" value="#1a2b4c" /></span>
+              #1a2b4c
+              <button class="swatch-remove" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </span>
+            <span class="swatch">
+              <span class="swatch-color" style="background:#f5b942"><input type="color" value="#f5b942" /></span>
+              #f5b942
+              <button class="swatch-remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </span>
+            <span class="swatch">
+              <span class="swatch-color" style="background:#d4724a"><input type="color" value="#d4724a" /></span>
+              #d4724a
+              <button class="swatch-remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </span>
+            <button class="swatch-add">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              加颜色
+            </button>
+          </div>
+          <div class="palette-preset-row">
+            <span>预设套用 →</span>
+            <span class="preset-chip">
+              <span class="preset-chip-dots"><i style="background:#c8c2bd"></i><i style="background:#a89e95"></i><i style="background:#7a6f64"></i></span>
+              莫兰迪灰
+            </span>
+            <span class="preset-chip">
+              <span class="preset-chip-dots"><i style="background:#6b8db4"></i><i style="background:#8a7ca8"></i><i style="background:#b0a0c2"></i></span>
+              莫奈蓝紫
+            </span>
+            <span class="preset-chip">
+              <span class="preset-chip-dots"><i style="background:#3a5a40"></i><i style="background:#588157"></i><i style="background:#a3b18a"></i></span>
+              自然森林
+            </span>
+            <span class="preset-chip">
+              <span class="preset-chip-dots"><i style="background:#f5b942"></i><i style="background:#f08a5d"></i><i style="background:#d4724a"></i></span>
+              夕阳粉橙
+            </span>
+            <span class="preset-chip">
+              <span class="preset-chip-dots"><i style="background:#1a1a1a"></i><i style="background:#7a7a7a"></i><i style="background:#ededed"></i></span>
+              黑白灰
+            </span>
+            <span class="preset-chip">
+              <span class="preset-chip-dots"><i style="background:#c8163e"></i><i style="background:#f0c14b"></i><i style="background:#2a4d3a"></i></span>
+              中国朱砂
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- group: 文字 -->
+      <section class="group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7V5h16v2M9 5v14M15 5v14M7 19h4M13 19h4"/></svg>
+            文字元素
+          </div>
+          <span class="group-hint">画面上要出现的字 · 不需要可全部删除</span>
+        </header>
+
+        <div class="text-elem-list">
+          <div class="text-elem">
+            <div class="text-elem-head">
+              <span class="text-elem-idx">Text · 01</span>
+              <button class="icon-btn" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>
+            </div>
+            <div class="text-elem-grid">
+              <div class="field col-content">
+                <label class="field-label">Content</label>
+                <input type="text" value="晚安" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Position</label>
+                <input type="text" list="dict-text-position" value="右下" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Font</label>
+                <input type="text" list="dict-text-font" value="手写体" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Size</label>
+                <input type="text" list="dict-text-size" value="中" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Color</label>
+                <div class="palette" style="padding:4px 6px">
+                  <span class="swatch" style="padding:2px 6px 2px 2px">
+                    <span class="swatch-color" style="background:#2a2620;width:16px;height:16px"><input type="color" value="#2a2620" /></span>
+                    #2a2620
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-elem">
+            <div class="text-elem-head">
+              <span class="text-elem-idx">Text · 02</span>
+              <button class="icon-btn" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>
+            </div>
+            <div class="text-elem-grid">
+              <div class="field col-content">
+                <label class="field-label">Content</label>
+                <input type="text" value="Good night" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Position</label>
+                <input type="text" list="dict-text-position" value="右下小字" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Font</label>
+                <input type="text" list="dict-text-font" placeholder="留空" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Size</label>
+                <input type="text" list="dict-text-size" value="小" />
+              </div>
+              <div class="field col-attr">
+                <label class="field-label">Color</label>
+                <div class="palette" style="padding:4px 6px">
+                  <span class="swatch" style="padding:2px 6px 2px 2px">
+                    <span class="swatch-color" style="background:#f5b942;width:16px;height:16px"><input type="color" value="#f5b942" /></span>
+                    #f5b942
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button class="add-text-elem">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          添加一段文字
+        </button>
+      </section>
+    </div>
+
+    <!-- bottom bar -->
+    <div class="bottom-bar">
+      <details>
+        <summary>查看 JSON · 复制</summary>
+        <pre>{
+  "type": "海报",
+  "style": "极简插画",
+  "subject": "橘色狐狸蜷缩在松树下,抬头望着月亮",
+  "background": "远山轮廓与渐变夜空,星点稀疏",
+  "layout": "居中构图,主体占 1/3",
+  "lighting": "黄昏侧逆光",
+  "mood": "宁静温暖",
+  "camera": "中景",
+  "color_palette": ["#1a2b4c", "#f5b942", "#d4724a"],
+  "text_elements": [
+    { "content": "晚安", "position": "右下", "font": "手写体", "size": "中", "color": "#2a2620" },
+    { "content": "Good night", "position": "右下小字", "size": "小", "color": "#f5b942" }
+  ]
+}</pre>
+      </details>
+      <button class="btn btn-accent">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+        生图
+      </button>
+    </div>
+
+    <!-- dictionaries -->
+    <datalist id="dict-type">
+      <option value="海报"></option><option value="插画"></option><option value="摄影"></option>
+      <option value="矢量图标"></option><option value="头像"></option><option value="Logo"></option>
+      <option value="Banner / 横幅"></option><option value="信息图"></option><option value="产品图"></option>
+      <option value="角色立绘"></option><option value="场景概念图"></option><option value="漫画格"></option>
+      <option value="表情包"></option><option value="卡牌"></option><option value="封面图"></option>
+    </datalist>
+
+    <datalist id="dict-style">
+      <option value="写实摄影"></option><option value="极简插画"></option><option value="扁平插画"></option>
+      <option value="水彩"></option><option value="油画"></option><option value="国画水墨"></option>
+      <option value="像素艺术"></option><option value="3D 渲染"></option><option value="等距 isometric"></option>
+      <option value="赛博朋克"></option><option value="蒸汽波"></option><option value="复古胶片"></option>
+      <option value="吉卜力"></option><option value="厚涂"></option><option value="线稿"></option>
+      <option value="浮世绘"></option><option value="卡通"></option><option value="漫画"></option>
+      <option value="印象派"></option><option value="包豪斯"></option><option value="极简主义"></option>
+      <option value="故障艺术"></option><option value="新中式"></option><option value="蜡笔手绘"></option>
+    </datalist>
+
+    <datalist id="dict-mood">
+      <option value="宁静温暖"></option><option value="神秘梦幻"></option><option value="活泼明亮"></option>
+      <option value="忧郁阴沉"></option><option value="紧张悬疑"></option><option value="史诗壮丽"></option>
+      <option value="怀旧复古"></option><option value="童趣可爱"></option><option value="冷峻凛冽"></option>
+      <option value="庄严肃穆"></option><option value="浪漫柔美"></option><option value="戏剧张力"></option>
+      <option value="孤独寂寥"></option><option value="治愈"></option><option value="超现实"></option>
+    </datalist>
+
+    <datalist id="dict-lighting">
+      <option value="自然光"></option><option value="黄昏侧逆光"></option><option value="清晨柔光"></option>
+      <option value="顶光"></option><option value="顶光 + 长投影"></option><option value="体积光"></option>
+      <option value="边缘光"></option><option value="霓虹光"></option><option value="烛光"></option>
+      <option value="月光"></option><option value="工作室柔光箱"></option><option value="棚拍硬光"></option>
+      <option value="雾气漫射"></option><option value="窗光"></option><option value="戏剧聚光"></option>
+      <option value="黄金时刻"></option><option value="蓝调时刻"></option>
+    </datalist>
+
+    <datalist id="dict-camera">
+      <option value="近景特写"></option><option value="中景"></option><option value="远景"></option>
+      <option value="大全景"></option><option value="俯视"></option><option value="仰视"></option>
+      <option value="平视"></option><option value="鸟瞰"></option><option value="蠕虫视角"></option>
+      <option value="第一人称"></option><option value="长焦压缩"></option><option value="广角畸变"></option>
+      <option value="鱼眼"></option><option value="微距"></option>
+    </datalist>
+
+    <datalist id="dict-layout">
+      <option value="居中构图"></option><option value="三分法"></option><option value="对角线"></option>
+      <option value="框架式"></option><option value="引导线"></option><option value="对称"></option>
+      <option value="黄金分割"></option><option value="留白构图"></option><option value="满构图"></option>
+      <option value="主体占 1/3"></option><option value="横向铺陈"></option><option value="纵向堆叠"></option>
+      <option value="居中构图,主体占 1/3"></option>
+    </datalist>
+
+    <datalist id="dict-text-position">
+      <option value="上方居中"></option><option value="下方居中"></option><option value="中央"></option>
+      <option value="左上"></option><option value="右上"></option><option value="左下"></option>
+      <option value="右下"></option><option value="右下小字"></option><option value="底部居中"></option>
+      <option value="沿对角线"></option><option value="绕主体"></option><option value="沿底边"></option>
+    </datalist>
+
+    <datalist id="dict-text-font">
+      <option value="手写体"></option><option value="印刷体"></option><option value="无衬线"></option>
+      <option value="衬线"></option><option value="装饰字体"></option><option value="书法"></option>
+      <option value="像素字体"></option><option value="手绘"></option><option value="手书风"></option>
+    </datalist>
+
+    <datalist id="dict-text-size">
+      <option value="极大"></option><option value="大"></option><option value="中"></option>
+      <option value="小"></option><option value="极小"></option>
+    </datalist>
+  </div>
+</body>
+</html>

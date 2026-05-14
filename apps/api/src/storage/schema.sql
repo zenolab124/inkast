@@ -33,3 +33,29 @@ CREATE TABLE IF NOT EXISTS generations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_generations_created_at ON generations(created_at DESC);
+
+-- Async image-generation jobs. Each submission writes a row immediately;
+-- a background task progresses it through pending → running → succeeded /
+-- failed. The frontend polls /api/jobs to recover state across page refreshes
+-- and to display "in-flight" task cards while the upstream model is working.
+CREATE TABLE IF NOT EXISTS jobs (
+  id              TEXT PRIMARY KEY,
+  kind            TEXT NOT NULL DEFAULT 'image_generate',
+  status          TEXT NOT NULL,           -- pending / running / succeeded / failed
+  prompt_snapshot TEXT NOT NULL,
+  prompt_text     TEXT NOT NULL,
+  is_raw          INTEGER NOT NULL DEFAULT 0,
+  size            TEXT NOT NULL,
+  quality         TEXT NOT NULL,
+  generation_id   TEXT,
+  attempts        TEXT NOT NULL DEFAULT '[]',
+  error_code      TEXT,
+  error_message   TEXT,
+  created_at      INTEGER NOT NULL,
+  started_at      INTEGER,
+  completed_at    INTEGER,
+  FOREIGN KEY (generation_id) REFERENCES generations(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at DESC);

@@ -1,7 +1,18 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Pencil, X, Save, KeyRound, Loader2 } from "lucide-react";
+import { Plus, Trash2, Pencil, Save, KeyRound, Loader2 } from "lucide-react";
 import type { ProviderSummary } from "@inkast/shared";
-import { cn } from "../../lib/utils.js";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useLanguage } from "@/i18n/LanguageContext";
+import { cn } from "@/lib/utils";
 import {
   createProvider,
   deleteProvider,
@@ -34,6 +45,7 @@ const EMPTY_FORM: FormState = {
 };
 
 export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
+  const { t } = useLanguage();
   const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [pending, setPending] = useState(false);
@@ -90,7 +102,7 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
   }
 
   async function remove(id: string) {
-    if (!confirm("删除这个 provider?")) return;
+    if (!confirm(t.config.confirmDelete)) return;
     setError(null);
     try {
       await deleteProvider(id);
@@ -100,47 +112,33 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
     }
   }
 
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-6 backdrop-blur-[2px]"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-(--shadow-paper-lifted)"
-        onClick={e => e.stopPropagation()}
-      >
-        <header className="flex items-center justify-between border-b border-border/60 px-6 py-4">
-          <div className="flex items-center gap-2">
-            <KeyRound className="size-4 text-primary" strokeWidth={1.5} />
-            <h2 className="text-base font-medium">图像 provider 配置</h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-sm p-1 text-muted-foreground transition hover:text-foreground"
-          >
-            <X className="size-4" strokeWidth={1.75} />
-          </button>
+    <Dialog open={open} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="flex max-h-[80vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <header className="flex items-center gap-2 border-b border-border/60 px-6 py-4 pr-12">
+          <KeyRound className="size-4 text-primary" strokeWidth={1.5} />
+          <DialogTitle className="text-base font-medium">{t.config.title}</DialogTitle>
+          <DialogDescription className="sr-only">{t.config.description}</DialogDescription>
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {error && (
-            <div className="mb-4 rounded-sm border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
+            <Alert variant="destructive" className="mb-4 rounded-md">
+              <AlertTitle>{t.config.error}</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
 
           {providers === null ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" strokeWidth={1.75} />
-              加载中…
+              {t.config.loading}
             </div>
           ) : (
             <ul className="flex flex-col gap-2">
               {providers.length === 0 && !form && (
                 <li className="rounded-sm border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted-foreground">
-                  还没有 provider。点下方"添加 provider"配置一个 OpenAI 兼容图像端点。
+                  {t.config.none}
                 </li>
               )}
               {providers.map(p => (
@@ -163,7 +161,9 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                     </div>
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       onClick={() =>
                         setForm({
                           id: p.id,
@@ -174,16 +174,18 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                           priority: String(p.priority),
                         })
                       }
-                      className="rounded-sm p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                      className="text-muted-foreground hover:bg-secondary hover:text-foreground"
                     >
-                      <Pencil className="size-3.5" strokeWidth={1.75} />
-                    </button>
-                    <button
+                      <Pencil strokeWidth={1.75} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       onClick={() => remove(p.id)}
-                      className="rounded-sm p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
+                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     >
-                      <Trash2 className="size-3.5" strokeWidth={1.75} />
-                    </button>
+                      <Trash2 strokeWidth={1.75} />
+                    </Button>
                   </div>
                 </li>
               ))}
@@ -193,36 +195,36 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
           {form && (
             <div className="mt-4 rounded-sm border border-primary/30 bg-primary/5 p-4">
               <h3 className="mb-3 text-sm font-medium">
-                {form.id ? "编辑 provider" : "添加 provider"}
+                {form.id ? t.config.edit : t.config.addNew}
               </h3>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field
-                  label="名称"
+                  label={t.config.fields.name}
                   value={form.name}
                   onChange={v => setForm({ ...form, name: v })}
                   placeholder="OpenAI"
                 />
                 <Field
-                  label="优先级 (越小越先用)"
+                  label={t.config.fields.priority}
                   value={form.priority}
                   onChange={v => setForm({ ...form, priority: v })}
                   placeholder="100"
                 />
                 <Field
-                  label="Base URL"
+                  label={t.config.fields.baseUrl}
                   value={form.baseUrl}
                   onChange={v => setForm({ ...form, baseUrl: v })}
                   placeholder="https://api.openai.com/v1"
                   className="sm:col-span-2"
                 />
                 <Field
-                  label="模型"
+                  label={t.config.fields.model}
                   value={form.model}
                   onChange={v => setForm({ ...form, model: v })}
                   placeholder="gpt-image-2"
                 />
                 <Field
-                  label={form.id ? "API key (留空保持原值)" : "API key"}
+                  label={form.id ? t.config.fields.apiKeyEdit : t.config.fields.apiKey}
                   value={form.apiKey}
                   onChange={v => setForm({ ...form, apiKey: v })}
                   placeholder="sk-…"
@@ -230,29 +232,27 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                 />
               </div>
               <div className="mt-4 flex justify-end gap-2">
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setForm(null)}
                   disabled={pending}
-                  className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground"
+                  className="text-muted-foreground hover:text-foreground"
                 >
-                  取消
-                </button>
-                <button
+                  {t.config.cancel}
+                </Button>
+                <Button
+                  size="sm"
                   onClick={save}
                   disabled={pending || !form.name.trim() || !form.baseUrl.trim()}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-(--shadow-paper)",
-                    "hover:shadow-(--shadow-paper-lifted)",
-                    "disabled:cursor-not-allowed disabled:opacity-50",
-                  )}
                 >
                   {pending ? (
-                    <Loader2 className="size-3.5 animate-spin" strokeWidth={1.75} />
+                    <Loader2 className="animate-spin" strokeWidth={1.75} />
                   ) : (
-                    <Save className="size-3.5" strokeWidth={1.75} />
+                    <Save strokeWidth={1.75} />
                   )}
-                  保存
-                </button>
+                  {t.config.save}
+                </Button>
               </div>
             </div>
           )}
@@ -260,17 +260,14 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
 
         <footer className="border-t border-border/60 px-6 py-3">
           {!form && (
-            <button
-              onClick={() => setForm({ ...EMPTY_FORM })}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-(--shadow-paper) transition hover:shadow-(--shadow-paper-lifted)"
-            >
-              <Plus className="size-3.5" strokeWidth={1.75} />
-              添加 provider
-            </button>
+            <Button size="sm" onClick={() => setForm({ ...EMPTY_FORM })}>
+              <Plus strokeWidth={1.75} />
+              {t.config.addNew}
+            </Button>
           )}
         </footer>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -290,17 +287,16 @@ function Field({
   className?: string;
 }) {
   return (
-    <label className={cn("flex flex-col gap-1.5", className)}>
-      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
-      </span>
-      <input
+      </Label>
+      <Input
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="rounded-sm border border-input bg-background px-2.5 py-1.5 text-sm outline-none transition focus:border-ring"
       />
-    </label>
+    </div>
   );
 }

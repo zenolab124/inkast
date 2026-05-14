@@ -1,8 +1,15 @@
-import { X, Download, RefreshCw, Copy, Check } from "lucide-react";
+import { Download, RefreshCw, Copy, Check } from "lucide-react";
 import { useState } from "react";
-import type { GenerationRecord } from "@inkast/shared";
-import { cn } from "../../lib/utils.js";
-import { JsonTreeView } from "../prompt/JsonTreeView.js";
+import type { GenerationRecord, ImagePrompt } from "@inkast/shared";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { useLanguage } from "@/i18n/LanguageContext";
+import { PromptFieldEditor } from "../prompt/PromptFieldEditor.js";
 import { generationImageUrl } from "./api.js";
 
 interface Props {
@@ -12,14 +19,8 @@ interface Props {
 }
 
 export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
+  const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
-  if (!record) return null;
-
-  const url = generationImageUrl(record.id);
-  const createdAt = new Date(record.createdAt).toLocaleString();
-  const durationLabel = record.durationMs
-    ? `${(record.durationMs / 1000).toFixed(1)}s`
-    : "—";
 
   async function copyJson() {
     if (!record) return;
@@ -28,28 +29,26 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  if (!record) return null;
+
+  const url = generationImageUrl(record.id);
+  const createdAt = new Date(record.createdAt).toLocaleString();
+  const durationLabel = record.durationMs
+    ? `${(record.durationMs / 1000).toFixed(1)}s`
+    : "—";
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-6 backdrop-blur-[2px]"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-(--shadow-paper-lifted)"
-        onClick={e => e.stopPropagation()}
+    <Dialog open={!!record} onOpenChange={open => !open && onClose()}>
+      <DialogContent
+        className="flex max-h-[88vh] w-full max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
       >
-        <header className="flex items-center justify-between border-b border-border/60 px-6 py-3.5">
+        <header className="flex items-center justify-between border-b border-border/60 px-6 py-3.5 pr-12">
           <div className="flex items-baseline gap-3 text-sm">
-            <span className="font-medium">作品详情</span>
-            <span className="text-xs text-muted-foreground">
+            <DialogTitle className="text-sm font-medium">{t.detail.title}</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
               {createdAt} · {record.size} · {record.quality} · {durationLabel}
-            </span>
+            </DialogDescription>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-sm p-1 text-muted-foreground transition hover:text-foreground"
-          >
-            <X className="size-4" strokeWidth={1.75} />
-          </button>
         </header>
 
         <div className="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_360px]">
@@ -64,57 +63,63 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
           <aside className="flex flex-col border-t border-border/60 md:border-l md:border-t-0">
             <div className="flex items-center justify-between border-b border-border/60 px-5 py-3">
               <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                prompt
+                {t.detail.prompt}
               </h3>
-              <button
+              <Button
+                variant="outline"
+                size="xs"
                 onClick={copyJson}
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-sm border border-border/60 bg-background px-2 py-0.5 text-xs text-muted-foreground transition",
-                  "hover:text-foreground hover:shadow-(--shadow-paper)",
-                )}
+                className="text-muted-foreground hover:text-foreground"
               >
                 {copied ? (
                   <>
-                    <Check className="size-3" strokeWidth={2.5} />
-                    已复制
+                    <Check strokeWidth={2.5} />
+                    {t.detail.copied}
                   </>
                 ) : (
                   <>
-                    <Copy className="size-3" strokeWidth={1.75} />
-                    复制 JSON
+                    <Copy strokeWidth={1.75} />
+                    {t.detail.copyJson}
                   </>
                 )}
-              </button>
+              </Button>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              <JsonTreeView data={record.promptSnapshot} />
+              <PromptFieldEditor
+                value={record.promptSnapshot as ImagePrompt}
+                onChange={() => {}}
+                readOnly
+              />
             </div>
           </aside>
         </div>
 
         <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-border/60 px-6 py-3">
           {onReuse && (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => {
                 onReuse(record);
                 onClose();
               }}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground hover:shadow-(--shadow-paper)"
+              className="text-muted-foreground hover:text-foreground"
             >
-              <RefreshCw className="size-3.5" strokeWidth={1.75} />
-              复用 prompt
-            </button>
+              <RefreshCw strokeWidth={1.75} />
+              {t.detail.reuse}
+            </Button>
           )}
-          <a
-            href={url}
-            download={`inkast-${record.id}.${record.imageFormat}`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-(--shadow-paper) transition hover:shadow-(--shadow-paper-lifted)"
-          >
-            <Download className="size-3.5" strokeWidth={1.75} />
-            下载图片
-          </a>
+          <Button asChild size="sm">
+            <a
+              href={url}
+              download={`inkast-${record.id}.${record.imageFormat}`}
+            >
+              <Download strokeWidth={1.75} />
+              {t.detail.download}
+            </a>
+          </Button>
         </footer>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
