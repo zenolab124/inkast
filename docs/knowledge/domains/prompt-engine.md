@@ -69,10 +69,16 @@ HTTP 200 { ...draft, _meta: { backend, durationMs } }
 
 启用 `outputFormat: json_schema` 后,稳定性从 80% → 100%,但延迟翻倍(13s → 27-45s)——SDK 走多轮 schema validation 循环。Phase 1 选稳定性,延迟优化留给 Phase 1.5(流式 + early return)。
 
+## 输出语言注入
+
+`getPromptEngineSystemPrompt(lang)` 在 BASE_SYSTEM_PROMPT 末尾追加 `LANG_INSTRUCTION[lang]`(zh/en),作为**最高优先级约束**让模型按对应语言输出所有 string-valued 字段。字段名(key)保持英文。`DraftPromptInput.lang` 由前端透传(`useLanguage().lang`),路由 `routes/prompt.ts` 校验只接受 `"zh"` / `"en"`。详见 [i18n](./i18n.md)。
+
 ## 关联条目
 
-- [prompt-composer-loop](./prompt-composer-loop.md) — 前端如何驱动这个引擎
+- [field-editor](./field-editor.md) — 前端如何驱动这个引擎(取代 prompt-composer-loop)
+- [i18n](./i18n.md) — 输出语言怎么传到这里
 - [structured-output-json-schema](../decisions/structured-output-json-schema.md) — schema 强制 vs prompt 约束的取舍
 - [prompt-as-json-not-prose](../decisions/prompt-as-json-not-prose.md) — 为什么把 JSON 喂给生图模型
 - [claude-agent-sdk](../integrations/claude-agent-sdk.md) — SDK 集成细节
 - [llm-json-quote-escaping](../pitfalls/llm-json-quote-escaping.md) — 没有 schema 时模型 JSON 字符串引号未转义
+- [object-shaped-subject-stringify](../pitfalls/object-shaped-subject-stringify.md) — 主体允许 object 结构带来的前端渲染问题

@@ -54,8 +54,15 @@ items: GenerationRecord[]
 - ❌ 无搜索/过滤(数量多时再做)
 - ❌ 无虚拟滚动(性能假设 < 几百张,目前足够)
 
+## 改用 shadcn Dialog + 字段编辑器 readOnly
+
+`GalleryDetailDialog` 已经从手撸 backdrop 重写为 shadcn `<Dialog>`(见 [shadcn-primitives](../shared/shadcn-primitives.md)),内部用 `<PromptFieldEditor value={record.promptSnapshot} readOnly />` 替代旧 `<JsonTreeView>`,所以 Gallery 详情看到的是跟主编辑器同款的"5 分组卡片"只读视图,而不是 JSON 树。
+
+`Gallery` 卡片本身的 icon 按钮(下载 / 复用)也改用 shadcn `<Button variant="ghost" size="icon-xs">`。
+
 ## 关联条目
 
 - [image-generation](./image-generation.md) — 数据从哪儿来
-- [json-tree-view](../shared/json-tree-view.md) — JSON 树渲染组件
+- [field-editor](./field-editor.md) — `PromptFieldEditor readOnly` 复用
+- [shadcn-primitives](../shared/shadcn-primitives.md) — Dialog + Button
 - [shared-contracts](../shared/shared-contracts.md) — `GenerationRecord` 类型

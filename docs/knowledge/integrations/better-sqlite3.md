@@ -1,6 +1,6 @@
 # `better-sqlite3`
 
-同步 SQLite 绑定,inkast 用它存 providers 和 generations。同步 API 对 Hono 路由来说够用(SQLite 本地操作 < 1ms)。
+同步 SQLite 绑定,inkast 用它存 **providers、generations、jobs**(异步任务表)。同步 API 对 Hono 路由来说够用(SQLite 本地操作 < 1ms)。
 
 ## 使用方式
 
@@ -60,9 +60,17 @@ Run "pnpm approve-builds" to pick which dependencies should be allowed to run sc
 1. `INKAST_DATA_DIR` 环境变量(绝对或 cwd-相对)
 2. 默认 `<repo>/data`(从 apps/api/ cwd 看是 `../../data`)
 
+## jobs 表(异步任务流水线)
+
+新增的第三张表,见 [async-job-pipeline](../domains/async-job-pipeline.md) 和 [storage/jobs.ts](../../../apps/api/src/storage/jobs.ts)。列:`id / kind / status / prompt_snapshot / prompt_text / is_raw / size / quality / generation_id / attempts / error_code / error_message / created_at / started_at / completed_at`,带 `idx_jobs_status` + `idx_jobs_created_at` 索引。
+
+`generation_id` 是 FK 到 `generations.id`(ON DELETE SET NULL),任务成功时回填关联。
+
 ## 关联条目
 
 - [crypto-utils](../shared/crypto-utils.md) — BLOB 列存加密
 - [provider-pool](../domains/provider-pool.md)
 - [image-generation](../domains/image-generation.md)
+- [async-job-pipeline](../domains/async-job-pipeline.md) — jobs 表的消费方
+- [reaper-abandoned-jobs](../decisions/reaper-abandoned-jobs.md) — 启动时清理 pending/running
 - [schema-sql-path-resolution](../pitfalls/schema-sql-path-resolution.md) — schema.sql 加载坑

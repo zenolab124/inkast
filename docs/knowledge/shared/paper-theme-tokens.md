@@ -91,10 +91,16 @@ Tailwind v4 用 CSS-first 配置:
 
 `themes/glass.css` 目前空壳。届时实现时**只动 token 文件**,不改组件。glass 主题允许 `backdrop-blur` + 深色渐变背景,paper 主题禁用这两件。
 
+## shadcn Dialog 主题覆盖
+
+shadcn `<Dialog>` 默认 overlay 是 `bg-black/50`,违反 paper "禁纯黑" 红线。在 `apps/web/src/components/ui/dialog.tsx` 改成 `bg-foreground/30`;DialogContent 默认 `rounded-lg + shadow-lg + bg-background` 改成 `rounded-md + shadow-(--shadow-paper-lifted) + bg-card`,匹配 paper 风格。这两处是手动 own 后修改的,其他 shadcn primitives 自动通过 `@theme inline` 走 paper token。
+
 ## 关联条目
 
 - [tailwind-v4](../integrations/tailwind-v4.md) — Tailwind v4 配置全貌
 - [paper-theme-locked](../decisions/paper-theme-locked.md) — 为什么锁定这套
+- [shadcn-primitives](shadcn-primitives.md) — primitives 清单 + dialog 覆盖细节
+- [shadcn-ui-radix-cmdk](../integrations/shadcn-ui-radix-cmdk.md)
 - [chinese-fallback-songti](../pitfalls/chinese-fallback-songti.md) — 字体红线的起源
 - [dark-class-position-bug](../pitfalls/dark-class-position-bug.md) — 暗色 bug 根因
 - [update-paper-theme](../workflows/update-paper-theme.md) — 改 token 的步骤

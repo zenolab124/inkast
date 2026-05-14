@@ -70,11 +70,22 @@ URL 路径用 `sanitizeRelativePath()` 防止 `..` 越界。
 | `output_format` | `png` |
 | timeout | `600_000` ms (10 分钟) |
 
+## 异步化 + Reference Image 分支
+
+`generate()` 现在被 `runGenerationJob(jobId, input)` 包装(`domain/generate/index.ts`),前端通过 `POST /api/jobs/generate` 触发异步任务流水线,见 [async-job-pipeline](./async-job-pipeline.md)。同步路径 `POST /api/generate-image` 保留兜底但前端已不调用。
+
+driver 内部根据 `input.referenceImage` 是否存在,分流走 `client.images.edit`(图 + 文本)或 `client.images.generate`(纯文本),见 [reference-image](./reference-image.md)。
+
+`generate()` 也接受 `rawPrompt?: string` —— "直接生图"路径绕过 prompt engine,把散文文本直接喂给图像模型,见 [generate-now-raw-prompt-path](../decisions/generate-now-raw-prompt-path.md)。
+
 ## 关联条目
 
+- [async-job-pipeline](./async-job-pipeline.md) — 异步任务包装
+- [reference-image](./reference-image.md) — `images.edit` 分支
 - [provider-pool](./provider-pool.md) — 池切换语义
 - [gallery](./gallery.md) — 看图
 - [openai-sdk-images](../integrations/openai-sdk-images.md) — SDK 调用细节
 - [image-driver-timeout-chain](../pitfalls/image-driver-timeout-chain.md) — 超时设计
 - [sdk-output-format-missing](../pitfalls/sdk-output-format-missing.md) — output_format 字段的坑
-- [shared-contracts](../shared/shared-contracts.md) — `GenerateImageResponse` 字段
+- [browser-idle-timeout-long-http](../pitfalls/browser-idle-timeout-long-http.md) — 推动异步化的根因
+- [shared-contracts](../shared/shared-contracts.md) — `GenerateImageRequest` / `JobRecord` / `ReferenceImage` 字段

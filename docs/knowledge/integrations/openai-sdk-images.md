@@ -83,10 +83,28 @@ if (err instanceof APIError) {
 
 `^4.77.0`(实测 4.104.0 安装)。
 
+## `images.edit` 分支(reference image)
+
+`input.referenceImage` 存在时,driver 调 `client.images.edit({ image, prompt, model, size, n })` 而不是 `images.generate`。`image` 参数用 OpenAI SDK 的 `toFile(buffer, filename, { type: mimeType })` 包装成 Uploadable。
+
+```ts
+import { toFile } from "openai";
+const file = await toFile(buffer, filename, { type: mimeType });
+const response = await client.images.edit({
+  model: provider.model, image: file, prompt: input.promptText,
+  size: input.size ?? "1024x1024", n: input.n ?? 1,
+});
+```
+
+注意 `images.edit` 不接 `quality` / `output_format` 参数;第三方代理也不一定实现,见 [reference-edit-endpoint-not-universal](../pitfalls/reference-edit-endpoint-not-universal.md)。
+
 ## 关联条目
 
 - [openai-sdk-over-fetch](../decisions/openai-sdk-over-fetch.md) — 选型故事
 - [image-generation](../domains/image-generation.md) — 调用方
+- [reference-image](../domains/reference-image.md) — `images.edit` 的消费方
+- [reference-image-via-edit](../decisions/reference-image-via-edit.md)
 - [cdn-edge-403-without-ua](../pitfalls/cdn-edge-403-without-ua.md)
 - [sdk-output-format-missing](../pitfalls/sdk-output-format-missing.md)
 - [image-driver-timeout-chain](../pitfalls/image-driver-timeout-chain.md)
+- [reference-edit-endpoint-not-universal](../pitfalls/reference-edit-endpoint-not-universal.md)
