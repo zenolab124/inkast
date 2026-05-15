@@ -15,11 +15,15 @@
 
 ```
 app          : title / tagline
+tabs         : draft / gallery                              ← 主入口 Tab(起草 / 作品)
 header       : config / dark / light / langZh / langEn
 banner       : aiFillFailed / generateFailed / ok / close
-composer     : label / optional / hint / placeholder / sample / cancel
-               aiFill / aiFillAgain / aiFilling / titleHintFresh / titleHintOverride
-               samples (string[]) / generateRaw / generateRawHint / generateRawPending
+composer     : label / placeholder / cancel
+               aiFill / aiFilling                           ← AI 扩充到字段(M3 主入口)
+               generateNow / generateNowHint / generateNowPending  ← 直接生图(M1)
+               skipText / skipTextKbd                       ← 跳过文本(M2 入口) + ⌘E
+               locked / lockedNoProse / unlock / backToDraft  ← 手风琴锁定态
+               m2Hint / reExpand / rawAfterLock             ← 锁定后子操作
                reference / referenceAdd / referenceRemove
                referenceFromGallery / referenceUpload
                referenceSourceGallery / referenceSourceUpload
@@ -29,6 +33,10 @@ editor       : aiBadge / groups{basic,scene,mood,colors,text,others}
                       colorPalette,textElements}
                placeholders{type,style,subject,background,layout,empty}
                json{show,hide,copy,copied} / generate{ready,pending}
+               collapsed{title, tipExpand, tipSkipRaw, groupNames[5]}  ← 中栏折叠态文案
+workspace    : title / refreshNote / empty / emptyTip / emptyAdjust   ← 右栏本次工作区
+               countSuffix / completedLabel / activeLabel
+galleryPage  : searchPlaceholder / filterAll / empty       ← [作品] Tab 工具栏
 palette      : emptyEditable / emptyReadonly / add / delete / presetLabel
 textElems    : emptyEditable / emptyReadonly / content / position / font / size /
                color / contentPlaceholder / add / itemPrefix
@@ -41,6 +49,8 @@ picker       : titlePrefix / search / clear / noMatch / customLabel /
 flash        : generateDone / skipped / noProvider / reuseLoaded
 jobs         : statusPending / statusRunning
 ```
+
+**注**:`composer.samples`(示例 1/2/3 起草文本)和 `composer.aiFillAgain` / `titleHintFresh` / `titleHintOverride` 已在三栏手风琴重构中删除——示例区从左栏移除,简化主入口。`composer.optional` / `hint` 也已移除。
 
 ## 使用
 

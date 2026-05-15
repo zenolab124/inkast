@@ -66,8 +66,9 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 | 条目 | 一句话 |
 | --- | --- |
-| [architecture-overview](domains/architecture-overview.md) | 整体架构 + 数据流全景(**新人第一站**) |
-| [field-editor](domains/field-editor.md) | 字段编辑器(核心交互,取代 hint 采纳循环) |
+| [architecture-overview](domains/architecture-overview.md) | 整体架构 + 数据流全景 · Tab+三栏+手风琴主壳(**新人第一站**) |
+| [field-editor](domains/field-editor.md) | 字段编辑器中栏(collapsed/expanded 两态,lockMode 驱动) |
+| [session-workspace](domains/session-workspace.md) | 起草 Tab 右栏 · 本次会话作品 + jobs 占位 tile · 刷新清空 |
 | [async-job-pipeline](domains/async-job-pipeline.md) | 异步生图任务流水线 + polling + 重启 reaper |
 | [reference-image](domains/reference-image.md) | 参考图生图(`images.edit` 路径) |
 | [sprite-previews](domains/sprite-previews.md) | 字段选项真实预览图(14 张 sprite sheet) |
@@ -75,7 +76,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [prompt-engine](domains/prompt-engine.md) | 散文 → JSON prompt 引擎(imagegen 方法论的实现) |
 | [provider-pool](domains/provider-pool.md) | OpenAI 兼容 provider 池 + 故障切换语义 |
 | [image-generation](domains/image-generation.md) | 生图端到端(driver → 落盘 → 入库) |
-| [gallery](domains/gallery.md) | 历史网格 + 详情弹窗(用 PromptFieldEditor readOnly) |
+| [gallery](domains/gallery.md) | [作品] Tab 历史 · 搜索+type filter + 详情弹窗(readOnly 字段编辑器) |
 
 ## 按技术层
 
@@ -93,11 +94,15 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 | 条目 | 一句话 |
 | --- | --- |
+| [three-column-accordion-layout](decisions/three-column-accordion-layout.md) | 主页三栏 + 左+中手风琴 · h-screen 锁视口 · 只列内滚动 |
+| [three-modes-progressive-disclosure](decisions/three-modes-progressive-disclosure.md) | M1 直接生图 / M2 字段精修 / M3 AI 扩充 三种模式渐进披露 |
+| [m2-entry-textless-only](decisions/m2-entry-textless-only.md) | M2 入口必须从无文本出发(语义解析依赖 LLM) |
+| [jobs-as-placeholder-tiles](decisions/jobs-as-placeholder-tiles.md) | 进行中任务作为占位 tile 进 grid,删 ActiveJobs 独立卡 |
 | [llm-as-accelerator-not-requirement](decisions/llm-as-accelerator-not-requirement.md) | 字段编辑器是核心,LLM 只是加速器 |
 | [shadcn-first-rule](decisions/shadcn-first-rule.md) | UI 一律优先 shadcn,禁止手撸通用交互组件 |
 | [async-jobs-over-sync-http](decisions/async-jobs-over-sync-http.md) | 异步 jobs 取代同步 HTTP(浏览器 idle timeout) |
 | [reaper-abandoned-jobs](decisions/reaper-abandoned-jobs.md) | API 启动时 reap 残留 pending/running jobs |
-| [generate-now-raw-prompt-path](decisions/generate-now-raw-prompt-path.md) | "直接生图"绕过 prompt engine |
+| [generate-now-raw-prompt-path](decisions/generate-now-raw-prompt-path.md) | "直接生图"绕过 prompt engine(M1 后端实现) |
 | [reference-image-via-edit](decisions/reference-image-via-edit.md) | Reference image 走 `images.edit` 端点 |
 | [sprite-sheets-over-per-option-images](decisions/sprite-sheets-over-per-option-images.md) | Sprite 大图分格 vs 每选项独立图 |
 | [edge-to-edge-no-border-prompts](decisions/edge-to-edge-no-border-prompts.md) | Sprite 提示词:严格边对边,无外框无 gridline |
@@ -137,6 +142,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 | 条目 | 一句话 |
 | --- | --- |
+| [dialog-grid-min-h-0](pitfalls/dialog-grid-min-h-0.md) | grid/flex 嵌套缺 min-h-0 → img max-h 失效 + overflow-y-auto 不滚 |
 | [hmr-restart-aborts-jobs](pitfalls/hmr-restart-aborts-jobs.md) | tsx watch 重启会丢 in-flight jobs,reaper 兜底 |
 | [browser-idle-timeout-long-http](pitfalls/browser-idle-timeout-long-http.md) | 浏览器 4-5min idle 断 fetch,后端实际成功 |
 | [asymmetric-cell-descriptions](pitfalls/asymmetric-cell-descriptions.md) | Sprite cells 描述长度不均 → 行高/列宽不等 |
@@ -162,54 +168,55 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 ## 数据流全景
 
 ```
-散文输入(浏览器 5173,LanguageProvider zh/en)
-  │
-  │ POST /api/draft-prompt { input, lang }
-  ▼
-Hono(8787) → routes/prompt → domain/prompt-engine
-  │
-  │ getPromptEngineSystemPrompt(lang) → ClaudeCode driver(JSON schema)
-  ▼
-本机 ClaudeCode(子进程 cli.js + Keychain OAuth)
-  │
-  │ structured_output: { prompt: ImagePrompt, hints: AmbiguityHint[] }
-  ▼
-浏览器:PromptFieldEditor 5 分组卡片 + AI 推荐 Badge
-  │
-  │ 用户改任一字段 → Badge 消失;可以从零编辑;不接 LLM 也能用
-  │
-  │ ───── 三条入口生图 ─────
-  │ (A) 编辑器底部"生图"          → submitJob({ prompt })
-  │ (B) 散文区"直接生图"          → submitJob({ prompt:placeholder, rawPrompt:prose })
-  │ (C) 任一入口 + 选 ReferenceImage → submitJob({ ..., referenceImage })
-  │
-  ▼ POST /api/jobs/generate
-  │
-  │ routes/jobs createJob → markJobRunning → runGenerationJob (fire-and-forget)
-  │ ← 立即返回 { jobId, status: "pending" }
-  │
-  ▼ domain/generate
-  │   有 ref → resolveReferenceImage(ref) → Buffer → driver.image.edit
-  │   无 ref → driver.image.generate
-  │
-  ▼ provider 池 walk:listProviderKeys() ORDER BY priority ASC
-  │   try provider[0] → fail(non-moderation) → continue
-  │   try provider[1] → openai SDK → b64_json
-  ▼
-data/images/YYYY/MM/<uuid>.png 落盘 + INSERT generations row
-+ markJobSucceeded(generationId)
-  │
-  ▼ 前端 useJobs 2s polling
-  │ list active → diff → 完成的调 getJob → onSucceeded → galleryKey++
-  │ Banner: "生图完成 · provider · 47.3s"
-  │
-  ▼ Gallery refreshKey++ → GET /api/generations → 网格刷新
-  │ 点卡片 → 详情弹窗(shadcn Dialog + PromptFieldEditor readOnly + 复制 JSON + 下载 + 复用)
-  ▼
-复用 → 把历史 promptSnapshot 注回主编辑器 → 调整 → 再生图
+顶部 Tab:[起草] [作品]  ← 进门默认起草
 
-刷新页面?  useJobs 启动 listJobs({status:["pending","running"]}) → ActiveJobs 卡片重显
-重启 API?  reaperAbandonedJobs() 把 pending/running 标 failed → 前端看到 onFailed 提示
+起草 Tab(三栏 + 手风琴):
+
+  ┌─────────────────┬──────────────────┬──────────────────┐
+  │ 左:PromptComposer│ 中:PromptFieldEd │ 右:SessionWorkspc│
+  │  (default 1.4fr)│  (default 0.42fr)│  (always 0.6fr)  │
+  │                  │                  │                  │
+  │ textarea + 按钮  │  collapsed stub  │  jobs(loading)   │
+  │   [▶ 直接生图 M1]│  (5 个数字编号)  │  + records(完成) │
+  │   [✦ AI 扩充 M3] │                  │  grid-cols-3     │
+  │   ⊞ 跳过文本 M2  │                  │                  │
+  └─────────────────┴──────────────────┴──────────────────┘
+              │
+              │ 三种模式触发条件:
+              │ M1 直接生图 → 不动布局,POST /api/jobs/generate {rawPrompt}
+              │ M2 跳过文本 → setLockMode("m2") + 清空 prompt → 手风琴翻转
+              │ M3 AI 扩充 → POST /api/draft-prompt → setLockMode("ai-filled") → 手风琴翻转
+              ▼
+  ┌────────────────┬───────────────────────────┬───────────┐
+  │ 左:locked      │ 中:expanded(主区 1.4fr) │ 右:同上   │
+  │  锁定散文 + 解锁│  5 分组卡片(基本+氛围   │           │
+  │  / 重新预填    │  同行 2:3,画面/色彩/文字)│           │
+  └────────────────┴───────────────────────────┴───────────┘
+
+  生图触发(M1/M2/M3 任一)→ submitJob:
+    POST /api/jobs/generate {prompt, rawPrompt?, referenceImage?, size, quality}
+    ← 立即返回 {jobId, status:"pending"}
+    routes/jobs createJob → markJobRunning → runGenerationJob (fire-and-forget)
+      域逻辑 domain/generate:
+        有 ref → resolveReferenceImage(ref) → Buffer → driver.image.edit
+        无 ref → driver.image.generate
+        provider 池 walk: ORDER BY priority ASC, 失败切换(非 moderation)
+        b64_json → data/images/YYYY/MM/<uuid>.png 落盘 + INSERT generations
+        markJobSucceeded(generationId) 或 markJobFailed(code, message)
+
+    前端 useJobs 2s polling:
+      list active jobs → diff → 完成的 getJob → onSucceeded
+        sessionGenerationIds = [generationId, ...prev]  ← 右栏立即新 tile
+        galleryKey += 1                                 ← [作品] Tab 刷新
+
+[作品] Tab(独立全屏):
+  GalleryPage → listGenerations(200) → 6 列 grid + 搜索 + Type filter chips
+    点卡片 → GalleryDetailDialog → PromptFieldEditor readOnly + 复用/下载
+    复用 → 注回起草 Tab(setLockMode="ai-filled" → 字段已展开 + setTab("draft"))
+
+刷新页面? 起草 Tab 右栏清空(sessionGenerationIds=[])
+        但 useJobs 启动 listJobs(active) → 残留任务 LoadingTile 复现
+重启 API? reaperAbandonedJobs() 把 pending/running 标 failed → 前端 onFailed Banner
 ```
 
 ---
@@ -218,8 +225,8 @@ data/images/YYYY/MM/<uuid>.png 落盘 + INSERT generations row
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `73db628bb3f0d016f8c1756bdf53b9cf67b383d1`
-- **synced_at**: `2026-05-14T23:46:56+08:00`
+- **baseline_commit**: `cf94fa004a026cad5550193cf7a3092f9612d00b`
+- **synced_at**: `2026-05-15T21:02:29+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
 

@@ -9,22 +9,34 @@ inkast 是本地优先的 AI 生图工具:把散文 → 结构化 JSON prompt �
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ 浏览器(5173) — Vite + React 18 + Tailwind v4 + paper 主题 + shadcn/ui   │
+│ 视口锁定 h-screen overflow-hidden,只允许列内滚动                          │
 │                                                                          │
 │   ┌─ LanguageProvider (zh/en, localStorage)                              │
 │   │                                                                      │
+│   ├─ App.tsx — Tab 切换 [起草|作品] + 三栏 grid 手风琴 + ⌘E 全局快捷键  │
+│   │     [起草] Tab 内三栏:左 prose | 中 fields | 右 session workspace    │
+│   │       手风琴: 1.4fr/0.42fr/0.6fr ⇄ 0.42fr/1.4fr/0.6fr (0.3s)         │
+│   │       lockMode: null(默认) | "ai-filled"(AI 扩充后) | "m2"(跳过文本)│
+│   │                                                                      │
 │   ├─ features/prompt                                                     │
-│   │    PromptComposer (散文输入 + AI 预填 + 直接生图 + ReferencePicker)  │
-│   │    PromptFieldEditor (5 分组卡片:basic/scene/mood/colors/text)      │
-│   │    FieldPicker → OptionPicker (Dialog 弹窗 + 真实预览图)             │
-│   │    FieldCombobox → Combobox (Popover + Command,text_elements 用)    │
-│   │    ColorPaletteEditor / TextElementsEditor                           │
+│   │    PromptComposer (左栏,有 locked / unlocked 两态)                  │
+│   │      默认: textarea + [直接生图] [AI 扩充] + 底部"跳过文本"小链接    │
+│   │      locked: 只读 prose 文本 + Lock bar + 解锁/回到起草链接           │
+│   │    PromptFieldEditor (中栏,collapsed/expanded 两态)                  │
+│   │      collapsed: 窄列 stub(5 个分组数字编号 + 提示展开)              │
+│   │      expanded:  5 分组卡片(基本+氛围同行 2:3, 画面/色彩/文字 独占) │
+│   │                                                                      │
+│   ├─ features/workspace                                                  │
+│   │    SessionWorkspace (右栏,本次会话作品,刷新清空)                  │
+│   │      grid-cols-3 ; jobs 渲染为转圈 placeholder tile (而非独立卡片)   │
 │   │                                                                      │
 │   ├─ features/jobs                                                       │
 │   │    useJobs hook (启动恢复 + 2s polling)                              │
-│   │    ActiveJobs cards (进行中任务可见)                                 │
+│   │    ActiveJobs.tsx 已删除 — jobs 直接进 SessionWorkspace grid 占位    │
 │   │                                                                      │
 │   ├─ features/config — ProviderConfigDialog(shadcn Dialog)               │
-│   └─ features/gallery — Gallery 网格 + GalleryDetailDialog               │
+│   └─ features/gallery — GalleryPage (独立 [作品] Tab,搜索+type filter)  │
+│        + GalleryDetailDialog (复用历史 prompt 注入回起草)                │
 │                                                                          │
 │   公共原语:components/ui/* (11 个 shadcn primitives)                     │
 │            components/{combobox, option-picker} (业务包装)               │
@@ -79,15 +91,20 @@ session 历史               凭据/历史/jobs row       图片落盘
 
 ## 核心数据流
 
-**起草 prompt**: 浏览器输入散文 → POST `/api/draft-prompt` `{input, lang}` → ClaudeCode driver(structured output JSON schema)→ 返回 `{ prompt, hints }`。
+**三模式渐进披露 (M1 / M2 / M3)**: 见 [three-modes-progressive-disclosure](../decisions/three-modes-progressive-disclosure.md)。
+- **M1 直接生图**: 散文 → "直接生图" → 后端走 raw 路径绕 prompt-engine。**不触发手风琴**——保留"轻盈起草"轮回(改文本→再来一张)
+- **M2 字段精修**: 初始态点"跳过文本"或按 ⌘E → 触发手风琴 + lockMode="m2",左栏标"已锁定·无散文",中栏字段空白等用户填。**M2 入口只在初始态出现**——一旦写了文本就消失,见 [m2-entry-textless-only](../decisions/m2-entry-textless-only.md)
+- **M3 AI 扩充**: 散文 → "AI 扩充到字段" → `/api/draft-prompt` 拆解 → 触发手风琴 + lockMode="ai-filled",左栏锁定显示文本 + 重新预填/解锁链接,中栏字段已被 AI 填好,挂 "AI 推荐" Badge
 
-**字段编辑**: prompt 进入 `<PromptFieldEditor>`,5 分组卡片渲染,AI 推荐字段挂 Badge。用户改任一字段移除该字段的 Badge。也可不点 AI 预填,**从零直接填字段 → 生图**。
+**手风琴布局切换**: 左栏 grid 从 `1.4fr` 缩到 `0.42fr`,中栏从 `0.42fr` 扩到 `1.4fr`,右栏始终 `0.6fr`。CSS `transition: grid-template-columns 0.3s`。M1 不触发,M2/M3 都触发。见 [three-column-accordion-layout](../decisions/three-column-accordion-layout.md)。
 
-**生图(异步)**: 用户点"生图" / "直接生图" → submitJob → POST `/api/jobs/generate` 立即返回 `jobId`。后端 `runGenerationJob` fire-and-forget:`markJobRunning` → provider 池故障切换调 `images.generate` 或 `images.edit`(有 reference 时)→ 图字节落盘 → `markJobSucceeded(generationId)` 或 `markJobFailed(code, message)`。前端 `useJobs` 2s polling 看到状态变化 → `onSucceeded` 触发 Gallery 刷新 + 成功 Banner / `onFailed` 弹错。
+**生图(异步)**: 用户点"生图"或"直接生图" → submitJob → POST `/api/jobs/generate` 立即返回 `jobId`。后端 `runGenerationJob` fire-and-forget:`markJobRunning` → provider 池故障切换调 `images.generate` 或 `images.edit`(有 reference 时)→ 图字节落盘 → `markJobSucceeded(generationId)` 或 `markJobFailed`。前端 `useJobs` 2s polling 看到任务从 active 移除 → `onSucceeded` 调用,把 `generationId` push 到 `sessionGenerationIds` state → SessionWorkspace 右栏立即出现新 tile / `onFailed` 弹错。
+
+**本次工作区(右栏)**: jobs 直接渲染为 spinning placeholder tile 进 grid(不再有独立 ActiveJobs 卡片),完成后被实际图片 tile 替换。`sessionGenerationIds` 是 React state,**刷新清空**——历史看 [作品] Tab。见 [session-workspace](./session-workspace.md) 和 [jobs-as-placeholder-tiles](../decisions/jobs-as-placeholder-tiles.md)。
 
 **参考图链**: ReferencePicker 选 Gallery 历史图(`{kind:"generation", generationId}`)或上传新图(`{kind:"upload", mimeType, dataBase64}`)。后端 `resolveReferenceImage` 转 Buffer,driver 走 `images.edit`,模型保留视觉风格 + 主体形态。
 
-**Gallery**: 主页加载时 GET `/api/generations` → 网格渲染 → 图片 URL 直指 GET `/api/generations/:id/image`(Hono 直接返字节)→ 点击打开详情弹窗(`PromptFieldEditor readOnly` 展示完整字段 + 复制 JSON + 下载 + 复用)。
+**[作品] Tab**: 全屏页面(`<GalleryPage>`),顶部 toolbar 含搜索框(模糊匹配 type/style/subject)+ Type filter chips(取数据里最高频 8 种 type)。点击卡片打开 `<GalleryDetailDialog>` → `PromptFieldEditor readOnly` 展示完整字段 + 复制 JSON + 下载 + 复用(注回起草 Tab 字段 + 切回 [起草])。
 
 ## 三个代码树
 
@@ -107,7 +124,8 @@ session 历史               凭据/历史/jobs row       图片落盘
 
 ## 关联条目
 
-- [field-editor](./field-editor.md) — 字段编辑器(核心交互)
+- [field-editor](./field-editor.md) — 字段编辑器(中栏,核心交互)
+- [session-workspace](./session-workspace.md) — 右栏本次工作区
 - [async-job-pipeline](./async-job-pipeline.md) — 异步任务流水线
 - [reference-image](./reference-image.md) — 参考图生图
 - [sprite-previews](./sprite-previews.md) — 真实预览图
@@ -115,8 +133,12 @@ session 历史               凭据/历史/jobs row       图片落盘
 - [prompt-engine](./prompt-engine.md) — 散文 → JSON
 - [provider-pool](./provider-pool.md) — 故障切换语义
 - [image-generation](./image-generation.md) — 生图端到端
-- [gallery](./gallery.md) — 历史展示
+- [gallery](./gallery.md) — [作品] Tab 历史
 - [shared-contracts](../shared/shared-contracts.md) — 类型契约
+- [three-column-accordion-layout](../decisions/three-column-accordion-layout.md) — 主页面布局决策
+- [three-modes-progressive-disclosure](../decisions/three-modes-progressive-disclosure.md) — M1/M2/M3 渐进披露
+- [m2-entry-textless-only](../decisions/m2-entry-textless-only.md) — M2 入口只在初始态
+- [jobs-as-placeholder-tiles](../decisions/jobs-as-placeholder-tiles.md) — Jobs 占位 tile
 - [llm-as-accelerator-not-requirement](../decisions/llm-as-accelerator-not-requirement.md)
 - [shadcn-first-rule](../decisions/shadcn-first-rule.md)
 - [async-jobs-over-sync-http](../decisions/async-jobs-over-sync-http.md)
