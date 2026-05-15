@@ -1,5 +1,14 @@
-import { useCallback, useRef, useState } from "react";
-import { Feather, AlertCircle, Settings, CheckCircle2, X, Languages } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Feather,
+  ImageIcon,
+  Languages,
+  Settings,
+  Sparkles,
+  X,
+} from "lucide-react";
 import type {
   GenerationRecord,
   ImagePrompt,
@@ -11,15 +20,17 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { cn } from "@/lib/utils";
-import { PromptComposer } from "./features/prompt/PromptComposer.js";
+import { PromptComposer, type LockMode } from "./features/prompt/PromptComposer.js";
 import { PromptFieldEditor } from "./features/prompt/PromptFieldEditor.js";
 import { draftPrompt, type DraftPromptError } from "./features/prompt/api.js";
 import { ProviderConfigDialog } from "./features/config/ProviderConfigDialog.js";
-import { Gallery } from "./features/gallery/Gallery.js";
-import { ActiveJobs } from "./features/jobs/ActiveJobs.js";
+import { GalleryPage } from "./features/gallery/GalleryPage.js";
+import { SessionWorkspace } from "./features/workspace/SessionWorkspace.js";
 import { useJobs } from "./features/jobs/useJobs.js";
 
 const EMPTY_PROMPT: ImagePrompt = { type: "", style: "", subject: "" };
+
+type AppTab = "draft" | "gallery";
 
 interface FlashMessage {
   kind: "success" | "error";
@@ -29,6 +40,8 @@ interface FlashMessage {
 export function App() {
   const { t, lang } = useLanguage();
   const [dark, setDark] = useState(false);
+  const [tab, setTab] = useState<AppTab>("draft");
+
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +50,12 @@ export function App() {
   const [meta, setMeta] = useState<
     { backend?: string; durationMs?: number } | undefined
   >();
-  const [galleryKey, setGalleryKey] = useState(0);
   const [flash, setFlash] = useState<FlashMessage | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
+  const [lockMode, setLockMode] = useState<LockMode>(null);
+  const [sessionGenerationIds, setSessionGenerationIds] = useState<string[]>([]);
+  const [galleryKey, setGalleryKey] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
   const onJobSucceeded = useCallback(
@@ -53,6 +68,11 @@ export function App() {
             .join("\n")
         : "";
       setFlash({ kind: "success", text: head + trail });
+      if (job.generationId) {
+        setSessionGenerationIds(prev =>
+          prev.includes(job.generationId!) ? prev : [job.generationId!, ...prev],
+        );
+      }
       setGalleryKey(k => k + 1);
     },
     [t],
@@ -88,7 +108,7 @@ export function App() {
     onFailed: onJobFailed,
   });
 
-  const hasFilled = !isEmptyPrompt(prompt);
+  const expanded = lockMode !== null;
 
   const aiFill = useCallback(async () => {
     const trimmed = input.trim();
@@ -110,6 +130,7 @@ export function App() {
       setPrompt(resp.prompt);
       setAiSuggested(computeAiFields(resp.prompt));
       setMeta(resp._meta);
+      setLockMode("ai-filled");
     } catch (err) {
       if (ac.signal.aborted) return;
       const e = err as DraftPromptError;
@@ -176,70 +197,133 @@ export function App() {
     }
   }, [input, referenceImage, submitJob]);
 
+  const skipText = useCallback(() => {
+    setPrompt(EMPTY_PROMPT);
+    setAiSuggested(new Set());
+    setMeta(undefined);
+    setLockMode("m2");
+  }, []);
+
+  const unlock = useCallback(() => {
+    setLockMode(null);
+  }, []);
+
   const reuseFromHistory = useCallback(
     (record: GenerationRecord) => {
       setPrompt(record.promptSnapshot);
       setAiSuggested(new Set());
       setMeta({ durationMs: record.durationMs ?? undefined });
+      setLockMode("ai-filled");
       setFlash({ kind: "success", text: t.flash.reuseLoaded });
+      setTab("draft");
     },
     [t],
   );
 
+  // ⌘E / Ctrl+E to enter M2 (skip text)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        if (tab === "draft" && !expanded) skipText();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab, expanded, skipText]);
+
   return (
-    <div className={cn("theme-paper relative min-h-screen", dark && "dark")}>
-      <div className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-8 py-10">
+    <div
+      className={cn(
+        "theme-paper relative flex h-screen flex-col overflow-hidden",
+        dark && "dark",
+      )}
+    >
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1500px] flex-col gap-3 px-6 py-4">
         <Header
+          tab={tab}
+          onTab={setTab}
           dark={dark}
           onToggleDark={() => setDark(d => !d)}
           onOpenConfig={() => setConfigOpen(true)}
+          backToDraft={tab === "draft" && lockMode === "m2" ? unlock : undefined}
         />
 
-        <section className="rounded-md border border-border/60 bg-card p-6 shadow-(--shadow-paper)">
-          <PromptComposer
-            value={input}
-            onChange={setInput}
-            pending={pending}
-            hasFilled={hasFilled}
-            onSubmit={aiFill}
-            onCancel={cancel}
-            onGenerateRaw={generateRaw}
-            generatingRaw={false}
-            referenceImage={referenceImage}
-            onReferenceImageChange={setReferenceImage}
-          />
-        </section>
-
-        {error && (
-          <Banner
-            kind="error"
-            title={t.banner.aiFillFailed}
-            message={error}
-            onClose={() => setError(null)}
-          />
-        )}
-        {flash && (
-          <Banner
-            kind={flash.kind}
-            title={flash.kind === "success" ? t.banner.ok : t.banner.generateFailed}
-            message={flash.text}
-            onClose={() => setFlash(null)}
-          />
+        {(error || flash) && tab === "draft" && (
+          <div className="flex flex-col gap-2">
+            {error && (
+              <Banner
+                kind="error"
+                title={t.banner.aiFillFailed}
+                message={error}
+                onClose={() => setError(null)}
+              />
+            )}
+            {flash && (
+              <Banner
+                kind={flash.kind}
+                title={flash.kind === "success" ? t.banner.ok : t.banner.generateFailed}
+                message={flash.text}
+                onClose={() => setFlash(null)}
+              />
+            )}
+          </div>
         )}
 
-        <ActiveJobs jobs={activeJobs} />
+        {tab === "draft" && (
+          <div
+            className={cn(
+              "grid min-h-0 flex-1 gap-3 transition-[grid-template-columns] duration-300 ease-out",
+              expanded
+                ? "grid-cols-[0.42fr_1.4fr_0.6fr]"
+                : "grid-cols-[1.4fr_0.42fr_0.6fr]",
+            )}
+          >
+            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+              <PromptComposer
+                value={input}
+                onChange={setInput}
+                pending={pending}
+                onExpand={aiFill}
+                onCancel={cancel}
+                onGenerateRaw={generateRaw}
+                generatingRaw={false}
+                onSkipText={skipText}
+                lockMode={lockMode}
+                onUnlock={unlock}
+                referenceImage={referenceImage}
+                onReferenceImageChange={setReferenceImage}
+              />
+            </section>
 
-        <PromptFieldEditor
-          value={prompt}
-          onChange={handlePromptChange}
-          aiSuggestedFields={aiSuggested}
-          meta={meta}
-          pending={pending}
-          generating={false}
-          onGenerate={generate}
-        />
+            <section className="flex min-h-0 flex-col overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+              <PromptFieldEditor
+                value={prompt}
+                onChange={handlePromptChange}
+                aiSuggestedFields={aiSuggested}
+                meta={meta}
+                pending={pending}
+                generating={false}
+                onGenerate={expanded ? generate : undefined}
+                collapsed={!expanded}
+              />
+            </section>
 
-        <Gallery refreshKey={galleryKey} onReuse={reuseFromHistory} />
+            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+              <SessionWorkspace
+                sessionGenerationIds={sessionGenerationIds}
+                activeJobs={activeJobs}
+                onReuse={reuseFromHistory}
+              />
+            </section>
+          </div>
+        )}
+
+        {tab === "gallery" && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <GalleryPage refreshKey={galleryKey} onReuse={reuseFromHistory} />
+          </div>
+        )}
 
         <Footer />
       </div>
@@ -250,10 +334,6 @@ export function App() {
       />
     </div>
   );
-}
-
-function isEmptyPrompt(p: ImagePrompt): boolean {
-  return !p.type && !p.style && !p.subject;
 }
 
 function computeAiFields(p: ImagePrompt): Set<string> {
@@ -352,25 +432,58 @@ function Banner({
 }
 
 function Header({
+  tab,
+  onTab,
   dark,
   onToggleDark,
   onOpenConfig,
+  backToDraft,
 }: {
+  tab: AppTab;
+  onTab: (t: AppTab) => void;
   dark: boolean;
   onToggleDark: () => void;
   onOpenConfig: () => void;
+  backToDraft?: () => void;
 }) {
   const { t, lang, setLang } = useLanguage();
   return (
-    <header className="flex items-center justify-between border-b border-border/60 pb-5">
+    <header className="flex items-center justify-between border-b border-border/60 pb-4">
       <div className="flex items-center gap-3">
         <Feather className="size-5 text-primary" strokeWidth={1.5} />
         <span className="text-xl font-medium tracking-tight">{t.app.title}</span>
         <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
           {t.app.tagline}
         </span>
+
+        <nav className="ml-6 flex items-center gap-1">
+          <TabButton
+            active={tab === "draft"}
+            onClick={() => onTab("draft")}
+            icon={<Sparkles className="size-3.5" strokeWidth={1.5} />}
+          >
+            {t.tabs.draft}
+          </TabButton>
+          <TabButton
+            active={tab === "gallery"}
+            onClick={() => onTab("gallery")}
+            icon={<ImageIcon className="size-3.5" strokeWidth={1.5} />}
+          >
+            {t.tabs.gallery}
+          </TabButton>
+        </nav>
       </div>
       <div className="flex items-center gap-2">
+        {backToDraft && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={backToDraft}
+            className="border-accent/40 text-accent hover:bg-accent/10 hover:text-accent"
+          >
+            {t.composer.backToDraft}
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -404,9 +517,37 @@ function Header({
   );
 }
 
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+        active
+          ? "bg-card text-foreground shadow-(--shadow-paper) border border-border/60"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+      )}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
 function Footer() {
   return (
-    <footer className="mt-auto border-t border-border/60 pt-5 text-xs text-muted-foreground">
+    <footer className="mt-auto border-t border-border/60 pt-4 text-xs text-muted-foreground">
       <div className="flex items-center justify-between">
         <span>Phase 1 · MVP</span>
         <span>v0.0.1</span>

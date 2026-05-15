@@ -1,0 +1,1269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · 当前版本交互镜像 v3</title>
+  <style>
+    /* ============================================================
+       PAPER TOKEN（与 apps/web/src/styles/themes/paper.css 对齐）
+       ============================================================ */
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --destructive: oklch(0.55 0.20 25);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --ring: oklch(0.50 0.05 150);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    html.dark {
+      --background: oklch(0.18 0.012 60);
+      --foreground: oklch(0.94 0.012 80);
+      --card: oklch(0.22 0.012 60);
+      --primary: oklch(0.65 0.08 145);
+      --primary-foreground: oklch(0.18 0.012 60);
+      --accent: oklch(0.72 0.13 30);
+      --accent-foreground: oklch(0.18 0.012 60);
+      --muted: oklch(0.28 0.012 60);
+      --muted-foreground: oklch(0.70 0.012 70);
+      --border: oklch(0.36 0.012 60);
+      --secondary: oklch(0.28 0.012 60);
+      --input: oklch(0.32 0.012 60);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* 全站颗粒 + vignette（模拟 globals.css 的 body::before / ::after） */
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' /></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.07'/></svg>");
+      mix-blend-mode: multiply;
+    }
+    body::after {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 40px 32px 96px;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    /* ============================================================
+       PRIMITIVES（shadcn 原语的样式镜像）
+       ============================================================ */
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: var(--secondary);
+      color: var(--foreground);
+      box-shadow: var(--shadow-paper);
+      cursor: pointer;
+      font-family: inherit;
+      transition: box-shadow 0.12s, background-color 0.12s, color 0.12s;
+    }
+    .btn:hover { box-shadow: var(--shadow-paper-lifted); }
+    .btn svg { width: 14px; height: 14px; stroke-width: 1.5; }
+
+    .btn-primary {
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-color: transparent;
+    }
+    .btn-primary:hover { background: color-mix(in oklch, var(--primary) 90%, black); }
+
+    .btn-accent {
+      background: var(--accent);
+      color: var(--accent-foreground);
+      border-color: transparent;
+    }
+    .btn-accent:hover { background: color-mix(in oklch, var(--accent) 90%, black); }
+
+    .btn-outline {
+      background: transparent;
+      box-shadow: none;
+    }
+    .btn-outline:hover { background: var(--secondary); }
+
+    .btn-ghost {
+      background: transparent;
+      border-color: transparent;
+      box-shadow: none;
+      color: var(--muted-foreground);
+    }
+    .btn-ghost:hover { color: var(--foreground); background: var(--secondary); }
+
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn-xs { padding: 3px 8px; font-size: 11.5px; }
+    .btn-icon-xs {
+      padding: 0; width: 22px; height: 22px; justify-content: center;
+    }
+
+    .input, textarea, select {
+      width: 100%;
+      padding: 7px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 13px;
+      color: var(--foreground);
+      outline: none;
+      transition: box-shadow 0.12s, border-color 0.12s;
+    }
+    .input:focus, textarea:focus, select:focus {
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
+    }
+    textarea { resize: vertical; min-height: 56px; line-height: 1.55; }
+
+    .label {
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 9px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary);
+      font-size: 9.5px;
+      letter-spacing: 0.04em;
+      font-weight: 500;
+    }
+
+    /* ============================================================
+       HEADER
+       ============================================================ */
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 20px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .brand {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .brand-icon { width: 20px; height: 20px; color: var(--primary); }
+    .brand-title { font-size: 20px; font-weight: 500; letter-spacing: -0.012em; }
+    .brand-tagline { font-size: 12px; color: var(--muted-foreground); margin-left: 8px; }
+
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .header-actions .btn { color: var(--muted-foreground); }
+    .header-actions .btn:hover { color: var(--foreground); }
+
+    /* ============================================================
+       SECTION-CARD（PromptComposer 的外壳与字段编辑器的分组卡片复用）
+       ============================================================ */
+
+    .section-card {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      padding: 20px 24px;
+    }
+
+    /* ============================================================
+       PROMPT COMPOSER (散文区)
+       ============================================================ */
+
+    .composer-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .composer-head .label { font-size: 11.5px; }
+    .composer-hint { font-size: 11px; color: var(--muted-foreground); }
+
+    .composer-reference {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .reference-card {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 6px 6px 6px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+    }
+    .reference-thumb {
+      width: 40px; height: 40px;
+      background:
+        linear-gradient(135deg, #d4724a 0%, #f5b942 60%, #6b8db4 100%);
+      border-radius: 2px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .reference-meta {
+      display: flex; flex-direction: column; font-size: 11px; line-height: 1.3;
+      padding-right: 6px;
+    }
+    .reference-meta-label {
+      font-weight: 500; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted-foreground); font-size: 10px;
+    }
+    .reference-meta-source { color: var(--foreground); opacity: 0.85; }
+
+    .composer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .composer-actions .samples {
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .composer-actions .right-group {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* ============================================================
+       BANNER
+       ============================================================ */
+
+    .banner {
+      display: flex; gap: 12px;
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: var(--card);
+      position: relative;
+    }
+    .banner-success {
+      background: color-mix(in oklch, var(--primary) 5%, var(--card));
+      border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+    }
+    .banner-error {
+      background: color-mix(in oklch, var(--destructive) 8%, var(--card));
+      border-color: color-mix(in oklch, var(--destructive) 35%, transparent);
+    }
+    .banner-icon { width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px; }
+    .banner-success .banner-icon { color: var(--primary); }
+    .banner-error .banner-icon { color: var(--destructive); }
+    .banner-body { flex: 1; }
+    .banner-title { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    .banner-message {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      white-space: pre-wrap;
+      line-height: 1.55;
+    }
+    .banner-close {
+      position: absolute; right: 8px; top: 8px;
+      background: transparent; border: none; padding: 4px; cursor: pointer;
+      color: var(--muted-foreground); border-radius: var(--radius);
+    }
+    .banner-close:hover { background: var(--secondary); color: var(--foreground); }
+    .banner-close svg { width: 14px; height: 14px; }
+
+    /* ============================================================
+       ACTIVE JOBS (任务卡片)
+       ============================================================ */
+
+    .jobs { display: flex; flex-direction: column; gap: 8px; }
+    .job-card {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+    }
+    .job-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--primary); }
+    .job-icon-pending { color: var(--muted-foreground); }
+    .job-body { min-width: 0; flex: 1; }
+    .job-meta {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted-foreground);
+      margin-bottom: 2px;
+    }
+    .job-meta svg { width: 10px; height: 10px; }
+    .job-prompt {
+      font-size: 13px; color: var(--foreground); opacity: 0.9;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+    .spin { animation: spin 1.1s linear infinite; }
+
+    /* ============================================================
+       PROMPT FIELD EDITOR (5 分组)
+       ============================================================ */
+
+    .editor { display: flex; flex-direction: column; gap: 16px; }
+
+    .group { padding: 18px 20px; }
+
+    .group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .group-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
+    }
+    .group-title svg { width: 16px; height: 16px; color: var(--primary); stroke-width: 1.5; }
+    .group-hint { font-size: 11px; color: var(--muted-foreground); }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field-label {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em;
+      color: var(--muted-foreground); text-transform: uppercase;
+    }
+
+    /* === FieldPicker（伪 combobox 触发器） === */
+    .picker-trigger {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%;
+      padding: 7px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 13px; color: var(--foreground);
+      cursor: pointer; font-family: inherit;
+      text-align: left;
+      gap: 8px;
+    }
+    .picker-trigger:hover { border-color: color-mix(in oklch, var(--ring) 50%, var(--input)); }
+    .picker-trigger.empty { color: var(--muted-foreground); }
+    .picker-trigger .chev { width: 12px; height: 12px; color: var(--muted-foreground); flex-shrink: 0; }
+    .picker-trigger .preview-dot {
+      width: 18px; height: 18px; border-radius: 2px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--muted) 0%, var(--secondary) 100%);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+
+    /* === 5 个分组的 grid === */
+    .grid-basic { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-scene {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 12px;
+    }
+    .grid-scene .subject  { grid-column: 1; grid-row: 1; }
+    .grid-scene .layout   { grid-column: 2; grid-row: 1; }
+    .grid-scene .bg       { grid-column: 1 / 3; grid-row: 2; }
+    .grid-mood { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+    /* === Color Palette === */
+    .palette {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      padding: 8px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+    }
+    .swatch {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 8px 3px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+    }
+    .swatch-color { width: 18px; height: 18px; border-radius: 3px; border: 1px solid color-mix(in oklch, var(--border) 60%, transparent); cursor: pointer; }
+    .swatch-remove { width: 14px; height: 14px; border: none; background: transparent; cursor: pointer; color: var(--muted-foreground); padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+    .swatch-remove:hover { color: var(--accent); }
+    .swatch-remove svg { width: 10px; height: 10px; }
+    .swatch-add {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px;
+      background: transparent;
+      border: 1px dashed color-mix(in oklch, var(--border) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px; color: var(--muted-foreground); cursor: pointer;
+      font-family: inherit;
+    }
+    .swatch-add:hover { color: var(--foreground); border-style: solid; }
+    .swatch-add svg { width: 11px; height: 11px; }
+
+    .palette-presets {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      margin-top: 8px; font-size: 11px; color: var(--muted-foreground);
+    }
+    .preset-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 2px 8px 2px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: 9px;
+      font-size: 11px; cursor: pointer;
+    }
+    .preset-chip:hover { box-shadow: var(--shadow-paper); }
+    .preset-dots { display: inline-flex; gap: 1px; }
+    .preset-dots i {
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      display: inline-block;
+    }
+
+    /* === Text Elements === */
+    .text-elem {
+      padding: 12px;
+      background: color-mix(in oklch, var(--background) 60%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+      border-radius: var(--radius);
+    }
+    .text-elem + .text-elem { margin-top: 10px; }
+    .text-elem-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .text-elem-idx {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted-foreground);
+    }
+    .text-elem-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    .text-elem-grid .content { grid-column: 1 / -1; }
+
+    .add-text {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 10px;
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px dashed color-mix(in oklch, var(--border) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px; color: var(--muted-foreground);
+      cursor: pointer; font-family: inherit;
+    }
+    .add-text:hover { color: var(--foreground); border-style: solid; }
+    .add-text svg { width: 12px; height: 12px; }
+
+    /* === 底部 JSON + 生图按钮 === */
+    .editor-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; flex-wrap: wrap;
+      padding-top: 16px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .json-preview { flex: 1; min-width: 0; }
+    .json-toggle {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: transparent; border: none; padding: 0;
+      font-family: inherit; font-size: 11.5px; color: var(--muted-foreground);
+      cursor: pointer;
+    }
+    .json-toggle:hover { color: var(--foreground); }
+    .json-toggle svg { width: 12px; height: 12px; transition: transform 0.15s; }
+    .json-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+    .json-meta { margin-left: 12px; font-size: 11px; color: var(--muted-foreground); }
+    .json-body {
+      margin-top: 8px;
+      position: relative;
+      display: none;
+    }
+    .json-body.open { display: block; }
+    .json-body pre {
+      max-height: 220px;
+      overflow: auto;
+      padding: 12px;
+      margin: 0;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
+      color: var(--muted-foreground);
+    }
+
+    /* ============================================================
+       GALLERY
+       ============================================================ */
+
+    .gallery-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 12px;
+    }
+    .gallery-head svg { width: 16px; height: 16px; color: var(--primary); stroke-width: 1.5; }
+    .gallery-title { font-size: 14px; font-weight: 500; letter-spacing: 0.02em; }
+    .gallery-count { font-size: 12px; color: var(--muted-foreground); }
+
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .gallery-card {
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      transition: box-shadow 0.15s;
+    }
+    .gallery-card:hover { box-shadow: var(--shadow-paper-lifted); }
+    .gallery-card-img {
+      aspect-ratio: 1 / 1;
+      width: 100%;
+      background: linear-gradient(135deg, #d4724a 0%, #f5b942 50%, #3a5a40 100%);
+      cursor: pointer;
+    }
+    .gallery-card:nth-child(2) .gallery-card-img { background: linear-gradient(135deg, #1a2b4c 0%, #6b8db4 100%); }
+    .gallery-card:nth-child(3) .gallery-card-img { background: linear-gradient(135deg, #c8c2bd 0%, #a89e95 50%, #7a6f64 100%); }
+    .gallery-card:nth-child(4) .gallery-card-img { background: linear-gradient(135deg, #c8163e 0%, #f0c14b 100%); }
+    .gallery-card:nth-child(5) .gallery-card-img { background: linear-gradient(135deg, #3a5a40 0%, #588157 50%, #a3b18a 100%); }
+    .gallery-card:nth-child(6) .gallery-card-img { background: linear-gradient(135deg, #ededed 0%, #7a7a7a 50%, #1a1a1a 100%); }
+    .gallery-card:nth-child(7) .gallery-card-img { background: linear-gradient(135deg, #f5b942 0%, #f08a5d 50%, #d4724a 100%); }
+    .gallery-card:nth-child(8) .gallery-card-img { background: linear-gradient(135deg, #6b8db4 0%, #8a7ca8 50%, #b0a0c2 100%); }
+
+    .gallery-card-body {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 10px 12px;
+    }
+    .gallery-card-type {
+      font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted-foreground);
+    }
+    .gallery-card-style {
+      font-size: 12px; color: var(--foreground); opacity: 0.85;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .gallery-card-subject {
+      font-size: 12px; color: var(--muted-foreground); line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .gallery-card-actions {
+      display: flex; justify-content: flex-end; gap: 2px; margin-top: 2px;
+    }
+
+    /* ============================================================
+       FOOTER
+       ============================================================ */
+
+    .footer {
+      margin-top: 24px;
+      display: flex; justify-content: space-between;
+      padding-top: 18px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      font-size: 11px; color: var(--muted-foreground);
+    }
+
+    /* ============================================================
+       弹窗状态参考区（折叠在最底部）
+       ============================================================ */
+
+    .dialog-ref {
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px dashed color-mix(in oklch, var(--border) 80%, transparent);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .dialog-ref details summary {
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--muted-foreground);
+      letter-spacing: 0.04em;
+      user-select: none;
+    }
+    .dialog-ref details[open] summary { margin-bottom: 14px; color: var(--foreground); }
+    .dialog-block + .dialog-block { margin-top: 18px; }
+    .dialog-shell {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper-lifted);
+      overflow: hidden;
+      max-width: 720px;
+    }
+    .dialog-shell-head {
+      padding: 14px 18px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .dialog-shell-title { font-size: 13px; font-weight: 500; }
+    .dialog-shell-tabs { margin-left: auto; display: flex; gap: 4px; }
+    .dialog-shell-body { padding: 16px 18px; font-size: 12.5px; color: var(--muted-foreground); }
+
+    .ref-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+    .ref-grid div {
+      aspect-ratio: 1 / 1;
+      background: linear-gradient(135deg, #d4724a 0%, #f5b942 50%, #3a5a40 100%);
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .ref-grid div:nth-child(2) { background: linear-gradient(135deg, #1a2b4c 0%, #6b8db4 100%); }
+    .ref-grid div:nth-child(3) { background: linear-gradient(135deg, #c8c2bd 0%, #7a6f64 100%); }
+    .ref-grid div:nth-child(4) { background: linear-gradient(135deg, #c8163e 0%, #f0c14b 100%); }
+    .ref-grid div:nth-child(5) { background: linear-gradient(135deg, #3a5a40 0%, #a3b18a 100%); }
+
+    /* ============================================================
+       响应式
+       ============================================================ */
+    @media (max-width: 720px) {
+      .grid-basic, .grid-mood { grid-template-columns: 1fr; }
+      .grid-scene { grid-template-columns: 1fr; }
+      .grid-scene .subject, .grid-scene .layout, .grid-scene .bg { grid-column: 1; grid-row: auto; }
+      .text-elem-grid { grid-template-columns: repeat(2, 1fr); }
+      .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <!-- ============================================================
+         HEADER
+         ============================================================ -->
+    <header class="header">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M20 5c-3 0-6 1-8 4-2 3-4 6-8 9 4 0 8-1 11-4 3-3 4-6 5-9z" />
+          <path d="M4 18l4-4" />
+        </svg>
+        <span class="brand-title">Inkast</span>
+        <span class="brand-tagline">local-first ai image studio</span>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-outline btn-sm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 8h14M5 13h7M14 19l-2-2 2-2M14 19l7-7-7-7"/></svg>
+          EN
+        </button>
+        <button class="btn btn-outline btn-sm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          配置
+        </button>
+        <button class="btn btn-outline btn-sm" id="dark-toggle">Paper · Dark</button>
+      </div>
+    </header>
+
+    <!-- ============================================================
+         散文区 (PromptComposer)
+         ============================================================ -->
+    <section class="section-card">
+      <div class="composer-head">
+        <span class="label">散文输入 · 可选</span>
+        <span class="composer-hint">不写也行,可以直接编辑下方字段</span>
+      </div>
+      <textarea rows="4" placeholder="一两句话说一下你想要的画面…写得越具体,AI 预填的字段越准。">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</textarea>
+
+      <div class="composer-reference">
+        <div class="reference-card" id="ref-attached">
+          <span class="reference-thumb"></span>
+          <span class="reference-meta">
+            <span class="reference-meta-label">参考图</span>
+            <span class="reference-meta-source">作品库</span>
+          </span>
+          <button class="btn btn-ghost btn-icon-xs" title="移除" onclick="document.getElementById('ref-attached').style.display='none';document.getElementById('ref-add').style.display='inline-flex';">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+        <button class="btn btn-outline btn-sm" id="ref-add" style="display:none" onclick="document.getElementById('ref-attached').style.display='flex';this.style.display='none';">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5L5 21"/></svg>
+          添加参考图
+        </button>
+      </div>
+
+      <div class="composer-actions">
+        <div class="samples">
+          <button class="btn btn-outline btn-xs">示例 1</button>
+          <button class="btn btn-outline btn-xs">示例 2</button>
+          <button class="btn btn-outline btn-xs">示例 3</button>
+        </div>
+        <div class="right-group">
+          <button class="btn btn-outline" title="按散文原文直接生图,跳过 AI 字段优化" style="color:var(--accent);border-color:color-mix(in oklch, var(--accent) 40%, transparent);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            直接生图
+          </button>
+          <button class="btn btn-primary" title="调用 AI 把字段填好">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v3M5 7l2 2M3 14h3M19 7l-2 2M21 14h-3M12 19v3M8 12l4-4 4 4-4 4z"/></svg>
+            AI 预填字段
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         BANNER (示例:成功)
+         ============================================================ -->
+    <div class="banner banner-success">
+      <svg class="banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/><path d="m9 12 2 2 4-4"/></svg>
+      <div class="banner-body">
+        <div class="banner-title">OK</div>
+        <div class="banner-message">生图完成 · 47.3s</div>
+      </div>
+      <button class="banner-close" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+
+    <!-- ============================================================
+         ACTIVE JOBS (任务卡片)
+         ============================================================ -->
+    <section class="jobs">
+      <div class="job-card">
+        <svg class="job-icon spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+          <path d="M21 12a9 9 0 1 1-6.22-8.56" />
+        </svg>
+        <div class="job-body">
+          <div class="job-meta">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v3M5 7l2 2M3 14h3M19 7l-2 2M21 14h-3M12 19v3M8 12l4-4 4 4-4 4z"/></svg>
+            <span>生成中</span>
+            <span>·</span>
+            <span>12s</span>
+            <span>·</span>
+            <span>1024x1024</span>
+          </div>
+          <div class="job-prompt">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         PROMPT FIELD EDITOR
+         ============================================================ -->
+    <div class="editor">
+
+      <!-- 基本 -->
+      <section class="section-card group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+            基本
+          </div>
+          <span class="group-hint">类型 / 风格 · 必填</span>
+        </header>
+        <div class="grid-basic">
+          <div class="field">
+            <div class="field-label"><span>Type</span><span class="badge">AI 推荐</span></div>
+            <button class="picker-trigger">
+              <span class="preview-dot" style="background:linear-gradient(135deg,#d4724a,#f5b942)"></span>
+              <span style="flex:1">海报</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+          <div class="field">
+            <div class="field-label"><span>Style</span><span class="badge">AI 推荐</span></div>
+            <button class="picker-trigger">
+              <span class="preview-dot" style="background:linear-gradient(135deg,#3a5a40,#a3b18a)"></span>
+              <span style="flex:1">极简插画</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 画面 -->
+      <section class="section-card group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5L5 21"/></svg>
+            画面
+          </div>
+          <span class="group-hint">主体 / 背景 / 构图</span>
+        </header>
+        <div class="grid-scene">
+          <div class="field subject">
+            <div class="field-label"><span>Subject</span><span class="badge">AI 推荐</span></div>
+            <textarea rows="2">橘色狐狸蜷缩在松树下,抬头望着月亮</textarea>
+          </div>
+          <div class="field layout">
+            <div class="field-label"><span>Layout</span></div>
+            <button class="picker-trigger empty">
+              <span style="flex:1">留空交给模型决定</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+          <div class="field bg">
+            <div class="field-label"><span>Background</span><span class="badge">AI 推荐</span></div>
+            <textarea rows="2">远山轮廓与渐变夜空,星点稀疏</textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- 氛围 -->
+      <section class="section-card group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+            氛围
+          </div>
+          <span class="group-hint">情绪 / 光照 / 镜头</span>
+        </header>
+        <div class="grid-mood">
+          <div class="field">
+            <div class="field-label"><span>Mood</span><span class="badge">AI 推荐</span></div>
+            <button class="picker-trigger">
+              <span class="preview-dot" style="background:linear-gradient(135deg,#f5b942,#d4724a)"></span>
+              <span style="flex:1">宁静温暖</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+          <div class="field">
+            <div class="field-label"><span>Lighting</span><span class="badge">AI 推荐</span></div>
+            <button class="picker-trigger">
+              <span class="preview-dot" style="background:linear-gradient(135deg,#1a2b4c,#f5b942)"></span>
+              <span style="flex:1">黄昏侧逆光</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+          <div class="field">
+            <div class="field-label"><span>Camera</span></div>
+            <button class="picker-trigger empty">
+              <span style="flex:1">留空</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 色彩 -->
+      <section class="section-card group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10z"/></svg>
+            色彩
+          </div>
+          <span class="group-hint">点色块改色 · 选预设套用 · 留空交给模型</span>
+        </header>
+        <div class="field">
+          <div class="field-label"><span>Color Palette</span><span class="badge">AI 推荐</span></div>
+          <div class="palette">
+            <span class="swatch">
+              <span class="swatch-color" style="background:#1a2b4c"></span>
+              #1a2b4c
+              <button class="swatch-remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </span>
+            <span class="swatch">
+              <span class="swatch-color" style="background:#f5b942"></span>
+              #f5b942
+              <button class="swatch-remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </span>
+            <span class="swatch">
+              <span class="swatch-color" style="background:#d4724a"></span>
+              #d4724a
+              <button class="swatch-remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </span>
+            <button class="swatch-add">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              加颜色
+            </button>
+          </div>
+          <div class="palette-presets">
+            <span>预设套用 →</span>
+            <span class="preset-chip"><span class="preset-dots"><i style="background:#c8c2bd"></i><i style="background:#a89e95"></i><i style="background:#7a6f64"></i></span>莫兰迪灰</span>
+            <span class="preset-chip"><span class="preset-dots"><i style="background:#6b8db4"></i><i style="background:#8a7ca8"></i><i style="background:#b0a0c2"></i></span>莫奈蓝紫</span>
+            <span class="preset-chip"><span class="preset-dots"><i style="background:#3a5a40"></i><i style="background:#588157"></i><i style="background:#a3b18a"></i></span>自然森林</span>
+            <span class="preset-chip"><span class="preset-dots"><i style="background:#f5b942"></i><i style="background:#f08a5d"></i><i style="background:#d4724a"></i></span>夕阳粉橙</span>
+            <span class="preset-chip"><span class="preset-dots"><i style="background:#1a1a1a"></i><i style="background:#7a7a7a"></i><i style="background:#ededed"></i></span>黑白灰</span>
+            <span class="preset-chip"><span class="preset-dots"><i style="background:#c8163e"></i><i style="background:#f0c14b"></i><i style="background:#2a4d3a"></i></span>中国朱砂</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 文字元素 -->
+      <section class="section-card group">
+        <header class="group-head">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7V5h16v2M9 5v14M15 5v14M7 19h4M13 19h4"/></svg>
+            文字元素
+          </div>
+          <span class="group-hint">画面上要出现的字 · 不需要可以全部留空</span>
+        </header>
+
+        <div class="text-elem">
+          <div class="text-elem-head">
+            <span class="text-elem-idx">Text · 01</span>
+            <button class="btn btn-ghost btn-icon-xs" title="删除">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+            </button>
+          </div>
+          <div class="text-elem-grid">
+            <div class="field content">
+              <div class="field-label"><span>Content</span></div>
+              <input class="input" value="晚安" />
+            </div>
+            <div class="field">
+              <div class="field-label"><span>Position</span></div>
+              <button class="picker-trigger">
+                <span style="flex:1">右下</span>
+                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
+            <div class="field">
+              <div class="field-label"><span>Font</span></div>
+              <button class="picker-trigger">
+                <span style="flex:1">手写体</span>
+                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
+            <div class="field">
+              <div class="field-label"><span>Size</span></div>
+              <button class="picker-trigger">
+                <span style="flex:1">中</span>
+                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
+            <div class="field" style="grid-column:1 / -1">
+              <div class="field-label"><span>Color</span></div>
+              <div class="palette" style="padding:6px 8px">
+                <span class="swatch" style="padding:2px 6px 2px 3px">
+                  <span class="swatch-color" style="width:16px;height:16px;background:#2a2620"></span>
+                  #2a2620
+                </span>
+                <button class="swatch-add">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                  加颜色
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button class="add-text">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          添加一段文字
+        </button>
+      </section>
+
+      <!-- 底部 JSON + 生图按钮 -->
+      <div class="editor-footer">
+        <div class="json-preview">
+          <button class="json-toggle" id="json-toggle" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            <span id="json-toggle-label">查看 JSON</span>
+          </button>
+          <span class="json-meta">claude-code · 4.2s</span>
+          <div class="json-body" id="json-body">
+<pre>{
+  "type": "海报",
+  "style": "极简插画",
+  "subject": "橘色狐狸蜷缩在松树下,抬头望着月亮",
+  "background": "远山轮廓与渐变夜空,星点稀疏",
+  "mood": "宁静温暖",
+  "lighting": "黄昏侧逆光",
+  "color_palette": ["#1a2b4c", "#f5b942", "#d4724a"],
+  "text_elements": [
+    { "content": "晚安", "position": "右下", "font": "手写体", "size": "中", "color": "#2a2620" }
+  ]
+}</pre>
+          </div>
+        </div>
+        <button class="btn btn-accent">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+          生图
+        </button>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         GALLERY
+         ============================================================ -->
+    <section>
+      <header class="gallery-head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5L5 21"/></svg>
+        <span class="gallery-title">作品</span>
+        <span class="gallery-count">· 8</span>
+      </header>
+      <div class="gallery-grid">
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">海报</span>
+            <span class="gallery-card-style">极简插画</span>
+            <span class="gallery-card-subject">橘色狐狸蜷缩在松树下,抬头望着月亮</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs" title="复用 prompt">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg>
+              </button>
+              <button class="btn btn-ghost btn-icon-xs" title="下载">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+              </button>
+            </div>
+          </div>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">摄影</span>
+            <span class="gallery-card-style">电影感</span>
+            <span class="gallery-card-subject">咖啡馆窗边的女子,午后柔光从左侧洒入</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg></button>
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+            </div>
+          </div>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">信息图</span>
+            <span class="gallery-card-style">扁平插画</span>
+            <span class="gallery-card-subject">6 种常见鸟类的喙形与对应食物</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg></button>
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+            </div>
+          </div>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">海报</span>
+            <span class="gallery-card-style">复古美漫</span>
+            <span class="gallery-card-subject">戴眼镜的橘猫坐在打字机前,1950 风</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg></button>
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+            </div>
+          </div>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">插画</span>
+            <span class="gallery-card-style">水彩</span>
+            <span class="gallery-card-subject">林间晨雾,光柱穿过松林</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg></button>
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+            </div>
+          </div>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">头像</span>
+            <span class="gallery-card-style">黑白线稿</span>
+            <span class="gallery-card-subject">侧脸轮廓,简洁笔触</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg></button>
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+            </div>
+          </div>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">封面图</span>
+            <span class="gallery-card-style">夕阳粉橙</span>
+            <span class="gallery-card-subject">海面长焦,飞鸟剪影</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg></button>
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+            </div>
+          </div>
+        </article>
+        <article class="gallery-card">
+          <div class="gallery-card-img"></div>
+          <div class="gallery-card-body">
+            <span class="gallery-card-type">卡牌</span>
+            <span class="gallery-card-style">莫奈蓝紫</span>
+            <span class="gallery-card-subject">星图卡背,纹饰对称</span>
+            <div class="gallery-card-actions">
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 12a9 9 0 0 1 15-6.7L21 7"/><path d="M21 3v4h-4"/><path d="M21 12a9 9 0 0 1-15 6.7L3 17"/><path d="M3 21v-4h4"/></svg></button>
+              <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         FOOTER
+         ============================================================ -->
+    <footer class="footer">
+      <span>Phase 1 · MVP</span>
+      <span>v0.0.1</span>
+    </footer>
+
+    <!-- ============================================================
+         弹窗状态参考(折叠)
+         ============================================================ -->
+    <section class="dialog-ref">
+      <details>
+        <summary>▸ 弹窗状态参考(主页之外的 3 个 Dialog)</summary>
+
+        <div class="dialog-block">
+          <div class="label" style="margin-bottom:8px">1. 选择参考图 Dialog</div>
+          <div class="dialog-shell">
+            <div class="dialog-shell-head">
+              <span class="dialog-shell-title">选择参考图</span>
+              <div class="dialog-shell-tabs">
+                <button class="btn btn-sm" style="background:var(--secondary)">从作品库选</button>
+                <button class="btn btn-ghost btn-sm">上传图片</button>
+              </div>
+            </div>
+            <div class="dialog-shell-body">
+              <div class="ref-grid">
+                <div></div><div></div><div></div><div></div><div></div>
+                <div></div><div></div><div></div><div></div><div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-block">
+          <div class="label" style="margin-bottom:8px">2. 图像 provider 配置 Dialog</div>
+          <div class="dialog-shell">
+            <div class="dialog-shell-head">
+              <span class="dialog-shell-title">图像 provider 配置</span>
+            </div>
+            <div class="dialog-shell-body">
+              <p style="margin:0 0 12px">管理 OpenAI 兼容图像端点的凭据(本地加密存储,按优先级故障切换)</p>
+              <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px">
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:color-mix(in oklch, var(--background) 70%, var(--card)); border-radius:var(--radius); border:1px solid color-mix(in oklch, var(--border) 50%, transparent);">
+                  <span style="font-size:13px; color:var(--foreground)">openai-primary <span style="opacity:0.6">· priority 10</span></span>
+                  <div style="display:flex; gap:4px">
+                    <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 17.5V21h3.5l11-11L14 6.5l-11 11z"/><path d="m14 6.5 3.5-3.5L21 6.5l-3.5 3.5"/></svg></button>
+                    <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:color-mix(in oklch, var(--background) 70%, var(--card)); border-radius:var(--radius); border:1px solid color-mix(in oklch, var(--border) 50%, transparent);">
+                  <span style="font-size:13px; color:var(--foreground)">backup-pool <span style="opacity:0.6">· priority 50</span></span>
+                  <div style="display:flex; gap:4px">
+                    <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 17.5V21h3.5l11-11L14 6.5l-11 11z"/></svg></button>
+                    <button class="btn btn-ghost btn-icon-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>
+                  </div>
+                </div>
+              </div>
+              <button class="btn btn-primary btn-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>添加 provider</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-block">
+          <div class="label" style="margin-bottom:8px">3. 作品详情 Dialog</div>
+          <div class="dialog-shell">
+            <div class="dialog-shell-head">
+              <span class="dialog-shell-title">作品详情</span>
+              <div class="dialog-shell-tabs">
+                <button class="btn btn-ghost btn-sm">复制 JSON</button>
+                <button class="btn btn-outline btn-sm">复用 prompt</button>
+                <button class="btn btn-accent btn-sm">下载图片</button>
+              </div>
+            </div>
+            <div class="dialog-shell-body">
+              <div style="display:grid; grid-template-columns:240px 1fr; gap:18px">
+                <div style="aspect-ratio:1/1; background:linear-gradient(135deg,#d4724a,#f5b942,#3a5a40); border-radius:var(--radius); border:1px solid color-mix(in oklch, var(--border) 60%, transparent);"></div>
+                <div style="font-size:11.5px; line-height:1.6;">
+                  <div style="margin-bottom:6px"><span style="text-transform:uppercase; font-weight:600; letter-spacing:0.08em; opacity:0.7">Type</span> &nbsp; 海报</div>
+                  <div style="margin-bottom:6px"><span style="text-transform:uppercase; font-weight:600; letter-spacing:0.08em; opacity:0.7">Style</span> &nbsp; 极简插画</div>
+                  <div style="margin-bottom:6px"><span style="text-transform:uppercase; font-weight:600; letter-spacing:0.08em; opacity:0.7">Subject</span> &nbsp; 橘色狐狸蜷缩在松树下,抬头望着月亮</div>
+                  <div style="margin-bottom:6px"><span style="text-transform:uppercase; font-weight:600; letter-spacing:0.08em; opacity:0.7">Mood</span> &nbsp; 宁静温暖</div>
+                  <div><span style="text-transform:uppercase; font-weight:600; letter-spacing:0.08em; opacity:0.7">Palette</span> &nbsp;
+                    <span style="display:inline-block; width:12px; height:12px; background:#1a2b4c; border-radius:2px; vertical-align:middle"></span>
+                    <span style="display:inline-block; width:12px; height:12px; background:#f5b942; border-radius:2px; vertical-align:middle"></span>
+                    <span style="display:inline-block; width:12px; height:12px; background:#d4724a; border-radius:2px; vertical-align:middle"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+  </div>
+
+  <script>
+    // 暗色切换
+    document.getElementById("dark-toggle").addEventListener("click", () => {
+      const html = document.documentElement;
+      html.classList.toggle("dark");
+      const btn = document.getElementById("dark-toggle");
+      btn.textContent = html.classList.contains("dark") ? "Paper · Light" : "Paper · Dark";
+    });
+    // JSON 折叠
+    document.getElementById("json-toggle").addEventListener("click", function () {
+      const open = this.getAttribute("aria-expanded") === "true";
+      this.setAttribute("aria-expanded", String(!open));
+      document.getElementById("json-body").classList.toggle("open", !open);
+      document.getElementById("json-toggle-label").textContent = open ? "查看 JSON" : "收起 JSON";
+    });
+    // Banner 关闭
+    document.querySelectorAll(".banner-close").forEach(b => {
+      b.addEventListener("click", e => e.currentTarget.closest(".banner").style.display = "none");
+    });
+  </script>
+</body>
+</html>

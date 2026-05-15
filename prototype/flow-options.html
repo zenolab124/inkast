@@ -1,0 +1,1314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · 流程交互方案对比</title>
+  <style>
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+    }
+
+    /* ============================================================
+       顶部 Tab(切方案 A/B/C/D/E)
+       ============================================================ */
+    input[type="radio"][name="plan"] { display: none; }
+
+    .plan-bar {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; gap: 4px; align-items: center;
+      padding: 12px 24px;
+      background: color-mix(in oklch, var(--background) 96%, var(--card));
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      backdrop-filter: blur(6px);
+    }
+    .plan-bar h1 {
+      margin: 0 24px 0 0;
+      font-size: 13.5px; font-weight: 500;
+    }
+    .plan-bar h1 small {
+      color: var(--muted-foreground); font-weight: 400; margin-left: 6px;
+    }
+    .plan-bar label {
+      padding: 6px 12px;
+      font-size: 12px; font-weight: 500;
+      cursor: pointer;
+      color: var(--muted-foreground);
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+    }
+    .plan-bar label:hover { color: var(--foreground); background: var(--secondary); }
+
+    #plan-a:checked ~ .plan-bar label[for="plan-a"],
+    #plan-b:checked ~ .plan-bar label[for="plan-b"],
+    #plan-c:checked ~ .plan-bar label[for="plan-c"],
+    #plan-d:checked ~ .plan-bar label[for="plan-d"],
+    #plan-e:checked ~ .plan-bar label[for="plan-e"] {
+      background: var(--card); color: var(--foreground);
+      border-color: color-mix(in oklch, var(--border) 60%, transparent);
+      box-shadow: var(--shadow-paper);
+    }
+
+    .plan { display: none; }
+    #plan-a:checked ~ .panes > .plan-a,
+    #plan-b:checked ~ .panes > .plan-b,
+    #plan-c:checked ~ .panes > .plan-c,
+    #plan-d:checked ~ .panes > .plan-d,
+    #plan-e:checked ~ .panes > .plan-e { display: block; }
+
+    /* ============================================================
+       页面骨架
+       ============================================================ */
+    .panes { position: relative; z-index: 1; }
+    .canvas {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 20px 24px 60px;
+    }
+    .meta {
+      padding: 14px 18px;
+      background: color-mix(in oklch, var(--card) 70%, var(--background));
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .meta h2 {
+      margin: 0 0 4px;
+      font-size: 14.5px;
+      font-weight: 500;
+    }
+    .meta .belief { color: var(--primary); font-weight: 500; }
+    .meta .tradeoff { color: var(--muted-foreground); }
+
+    /* 状态序列容器(横向) */
+    .flow-row {
+      display: grid;
+      gap: 16px;
+      align-items: start;
+    }
+    .flow-2 { grid-template-columns: repeat(2, 1fr); }
+    .flow-3 { grid-template-columns: repeat(3, 1fr); }
+    .flow-4 { grid-template-columns: repeat(4, 1fr); }
+
+    @media (max-width: 1280px) {
+      .flow-3, .flow-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 760px) {
+      .flow-2, .flow-3, .flow-4 { grid-template-columns: 1fr; }
+    }
+
+    .flow-step { display: flex; flex-direction: column; gap: 10px; }
+    .step-label {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 11.5px; font-weight: 500;
+      color: var(--foreground);
+    }
+    .step-label .step-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-radius: 50%;
+      font-size: 10.5px; font-weight: 600;
+    }
+    .step-label .step-num.alt {
+      background: var(--accent);
+    }
+    .step-label .step-num.muted {
+      background: var(--muted); color: var(--muted-foreground);
+    }
+    .step-note {
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      line-height: 1.5;
+      padding: 8px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border-left: 2px solid color-mix(in oklch, var(--primary) 40%, transparent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+
+    /* mini frame(模拟整个 app) */
+    .frame {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      min-height: 520px;
+    }
+    .frame-tall { min-height: 620px; }
+
+    .mini-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+    }
+    .mini-header .brand { font-size: 12px; font-weight: 500; }
+    .mini-header .brand i {
+      display: inline-block; width: 8px; height: 8px; background: var(--primary);
+      border-radius: 50%; margin-right: 6px; vertical-align: middle;
+    }
+    .mini-header .actions {
+      display: flex; gap: 4px; font-size: 10.5px; color: var(--muted-foreground);
+    }
+    .mini-header .actions span {
+      padding: 2px 8px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      background: var(--secondary);
+    }
+
+    .body {
+      flex: 1;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    /* 占位元素 */
+    .label {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted-foreground);
+    }
+    .text-mock {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px;
+      color: color-mix(in oklch, var(--foreground) 70%, var(--background));
+    }
+    .text-mock.empty {
+      color: var(--muted-foreground); font-style: italic; min-height: 60px;
+    }
+    .text-mock.big { min-height: 140px; }
+    .text-mock.mid { min-height: 80px; }
+    .text-mock.compact { min-height: 32px; padding: 6px 10px; font-size: 11px; }
+
+    .btn-mock {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 5px;
+      padding: 7px 14px;
+      border-radius: var(--radius);
+      font-size: 12px; font-weight: 500;
+      cursor: pointer;
+      box-shadow: var(--shadow-paper);
+    }
+    .btn-accent { background: var(--accent); color: var(--accent-foreground); }
+    .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      color: var(--foreground);
+      box-shadow: none;
+      background: var(--secondary);
+    }
+    .btn-outline-accent {
+      background: transparent;
+      border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+      color: var(--accent);
+      box-shadow: none;
+    }
+    .btn-ghost {
+      background: transparent; border: 1px solid transparent;
+      color: var(--muted-foreground); box-shadow: none; padding: 5px 10px;
+    }
+    .btn-disabled {
+      background: color-mix(in oklch, var(--muted) 60%, var(--background));
+      color: var(--muted-foreground);
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+    .btn-row {
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+
+    /* 字段卡片(紧凑版) */
+    .field-group {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--background) 40%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+    }
+    .field-group .grp-head {
+      font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em;
+      margin-bottom: 6px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+      display: flex; justify-content: space-between;
+    }
+    .field-group .grp-head .ai-badge {
+      font-size: 8.5px; padding: 1px 5px; border-radius: 8px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary); letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .field-group .grp-fields {
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .field-pill {
+      flex: 1; min-width: 90px;
+      padding: 4px 8px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 10.5px;
+      color: color-mix(in oklch, var(--foreground) 70%, var(--background));
+    }
+    .field-pill .pill-k {
+      font-size: 8.5px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .field-pill .pill-v { font-size: 11px; }
+
+    /* AI 建议侧栏 */
+    .ai-side {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--primary) 5%, var(--card));
+      border: 1px dashed color-mix(in oklch, var(--primary) 35%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .ai-side h4 {
+      margin: 0; font-size: 11px; font-weight: 500;
+      color: var(--primary);
+      display: flex; align-items: center; gap: 5px;
+    }
+    .ai-suggestion {
+      padding: 6px 8px;
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      font-size: 10.5px;
+      cursor: pointer;
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 6px;
+    }
+    .ai-suggestion .s-key { color: var(--muted-foreground); }
+    .ai-suggestion .s-val { color: var(--foreground); flex: 1; }
+    .ai-suggestion .accept {
+      font-size: 9.5px; color: var(--primary);
+      padding: 1px 5px; border-radius: 8px;
+      background: color-mix(in oklch, var(--primary) 12%, transparent);
+    }
+
+    /* 分割线 */
+    .or-divider {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 10.5px; color: var(--muted-foreground);
+      letter-spacing: 0.1em; text-transform: uppercase;
+      margin: 4px 0;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ""; flex: 1; height: 1px;
+      background: color-mix(in oklch, var(--border) 50%, transparent);
+    }
+
+    .small-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      text-decoration: none;
+      padding: 4px 0;
+    }
+    .small-link:hover { color: var(--foreground); }
+    .small-link .kbd {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px;
+      padding: 1px 5px;
+      background: var(--secondary);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: 3px;
+      margin-left: 4px;
+    }
+
+    /* Gallery 缩略条 */
+    .mini-gallery {
+      display: flex; gap: 6px;
+      padding-top: 8px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .mini-tile {
+      width: 40px; height: 40px;
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, #d4724a, #f5b942);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .mini-tile:nth-child(2) { background: linear-gradient(135deg, #1a2b4c, #6b8db4); }
+    .mini-tile:nth-child(3) { background: linear-gradient(135deg, #c8c2bd, #7a6f64); }
+    .mini-tile:nth-child(4) { background: linear-gradient(135deg, #c8163e, #f0c14b); }
+    .mini-tile:nth-child(5) { background: linear-gradient(135deg, #3a5a40, #a3b18a); }
+    .mini-tile:nth-child(6) { background: linear-gradient(135deg, #ededed, #1a1a1a); }
+
+    /* ============================================================
+       方案 B: 阶梯指示器专用
+       ============================================================ */
+    .stepper {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px;
+    }
+    .step-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 9px;
+      border-radius: 12px;
+      background: color-mix(in oklch, var(--muted) 60%, transparent);
+      color: var(--muted-foreground);
+      font-weight: 500;
+    }
+    .step-pill .num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px;
+      background: color-mix(in oklch, var(--muted) 80%, transparent);
+      color: var(--muted-foreground);
+      border-radius: 50%; font-size: 9.5px; font-weight: 600;
+    }
+    .step-pill.active {
+      background: color-mix(in oklch, var(--primary) 18%, transparent);
+      color: var(--primary);
+    }
+    .step-pill.active .num {
+      background: var(--primary); color: var(--primary-foreground);
+    }
+    .step-pill.done {
+      background: color-mix(in oklch, var(--primary) 8%, transparent);
+      color: color-mix(in oklch, var(--primary) 70%, var(--muted-foreground));
+    }
+    .step-pill.done .num {
+      background: color-mix(in oklch, var(--primary) 50%, var(--muted));
+      color: var(--primary-foreground);
+    }
+    .step-arrow {
+      color: var(--muted-foreground); font-size: 12px;
+    }
+
+    /* ============================================================
+       方案 C: 模式 Tab 专用
+       ============================================================ */
+    .mode-tabs {
+      display: flex; gap: 2px;
+      padding: 6px 10px 0;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .mode-tab {
+      padding: 7px 14px;
+      font-size: 11.5px; font-weight: 500;
+      border-radius: var(--radius) var(--radius) 0 0;
+      color: var(--muted-foreground);
+      border: 1px solid transparent;
+      border-bottom: none;
+      margin-bottom: -1px;
+    }
+    .mode-tab .small {
+      font-size: 9.5px; color: var(--muted-foreground);
+      font-weight: 400; margin-left: 4px;
+    }
+    .mode-tab.active {
+      background: var(--card);
+      color: var(--foreground);
+      border-color: color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .mode-tab.active .small { color: var(--primary); }
+
+    /* ============================================================
+       方案 D: 左右分裂专用
+       ============================================================ */
+    .split {
+      flex: 1;
+      display: grid;
+      gap: 0;
+      min-height: 0;
+    }
+    .split-60-40 { grid-template-columns: 60% 40%; }
+    .split-30-70 { grid-template-columns: 30% 70%; }
+    .split .left, .split .right {
+      padding: 14px;
+      display: flex; flex-direction: column; gap: 10px;
+      overflow: hidden;
+    }
+    .split .right {
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .placeholder {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 6px;
+      padding: 20px;
+      border: 2px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      color: var(--muted-foreground);
+      font-size: 11.5px;
+      text-align: center;
+    }
+    .placeholder svg { width: 24px; height: 24px; stroke-width: 1.5; opacity: 0.5; }
+
+    /* ============================================================
+       方案 E: 双入口
+       ============================================================ */
+    .entry-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      align-items: stretch;
+      padding: 16px 12px;
+    }
+    .entry-card {
+      display: flex; flex-direction: column; gap: 10px;
+      padding: 24px 20px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      cursor: pointer;
+      text-align: center;
+      align-items: center;
+      justify-content: center;
+      min-height: 200px;
+      transition: box-shadow 0.15s, transform 0.15s;
+    }
+    .entry-card:hover {
+      box-shadow: var(--shadow-paper-lifted);
+      transform: translateY(-1px);
+    }
+    .entry-card .ico {
+      font-size: 28px;
+      color: var(--primary);
+    }
+    .entry-card.alt .ico {
+      color: var(--accent);
+    }
+    .entry-card h3 { margin: 0; font-size: 13.5px; font-weight: 500; }
+    .entry-card p {
+      margin: 0;
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      line-height: 1.5;
+    }
+    .entry-card .extra {
+      font-size: 10px; color: var(--muted-foreground);
+      letter-spacing: 0.04em; text-transform: uppercase;
+      margin-top: auto;
+    }
+
+    /* 共用:箭头 */
+    .step-arrow-big {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; color: var(--muted-foreground);
+      margin: 0 8px;
+    }
+
+    /* 注释标签 */
+    .annot {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: color-mix(in oklch, var(--accent) 14%, transparent);
+      color: var(--accent);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .annot.primary {
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary);
+    }
+
+    /* 行底总线 */
+    .editor-foot {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-top: 8px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      margin-top: auto;
+      font-size: 11px; color: var(--muted-foreground);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 5 个 radio -->
+  <input type="radio" name="plan" id="plan-a" checked />
+  <input type="radio" name="plan" id="plan-b" />
+  <input type="radio" name="plan" id="plan-c" />
+  <input type="radio" name="plan" id="plan-d" />
+  <input type="radio" name="plan" id="plan-e" />
+
+  <nav class="plan-bar">
+    <h1>流程交互方案<small>5 个变体 · 每个画多个状态截图</small></h1>
+    <label for="plan-a">A · 渐进画布</label>
+    <label for="plan-b">B · 阶梯指示器</label>
+    <label for="plan-c">C · 模式 Tab</label>
+    <label for="plan-d">D · 左右分裂</label>
+    <label for="plan-e">E · 双入口卡片</label>
+  </nav>
+
+  <div class="panes">
+
+    <!-- ============================================================
+         方案 A · 渐进画布
+         ============================================================ -->
+    <div class="plan plan-a">
+      <div class="canvas">
+        <div class="meta">
+          <h2>A · 渐进画布(修正版)</h2>
+          <p class="belief">信念:页面从极简起步,只看到一个 textarea。用户写完文本后,M1 / M3 入口才出现。M2(无 AI 字段精修)是独立路径,首屏底部小链接 + ⌘E 快捷键。</p>
+          <p class="tradeoff">取舍:新手 0 认知负担,首屏只一个输入框。M3 是默认展开路径(写完文本 → AI 细化 → 字段编辑器膨胀)。M2 老用户走"跳过文本"小链接,或键盘 ⌘E 一键到位。代价:M2 入口在视觉上是次要的(但合理——字段精修本来就是高级用法)。</p>
+        </div>
+
+        <div class="flow-row flow-4">
+
+          <!-- A1 初始态 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">1</span>初始态</span>
+            <div class="frame">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body" style="justify-content: center;">
+                <span class="label" style="text-align:center">起草</span>
+                <div class="text-mock empty big">一两句话说一下你想要的画面…</div>
+                <div class="btn-row" style="justify-content:center">
+                  <span class="btn-mock btn-disabled">▶ 生图</span>
+                </div>
+                <div class="or-divider">或</div>
+                <div style="text-align:center">
+                  <a class="small-link" href="#">⊞ 跳过文本,直接编辑字段 <span class="kbd">⌘E</span></a>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">页面只有 textarea。新手第一眼明白:写文字,然后生图。M2 入口低调放在底部,不抢视觉。</div>
+          </div>
+
+          <!-- A2 已写文本 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">2</span>写完文本</span>
+            <div class="frame">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body" style="justify-content: center;">
+                <span class="label" style="text-align:center">起草</span>
+                <div class="text-mock big">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+                <div class="btn-row" style="justify-content:center">
+                  <span class="btn-mock btn-outline-accent">▶ 直接生图</span>
+                  <span class="btn-mock btn-primary">✦ 让 AI 细化</span>
+                </div>
+                <p style="font-size:10.5px; color:var(--muted-foreground); text-align:center; margin:0">
+                  <span class="annot">M2 入口消失</span> 一旦有文本,只剩 M1 / M3 两条路
+                </p>
+              </div>
+            </div>
+            <div class="step-note">写完文本,M2 入口消失。两个明确的分叉:直接生图(M1)或 AI 细化(M3)。新用户一目了然。</div>
+          </div>
+
+          <!-- A3 M3 展开 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">3</span>AI 细化后(M3)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body" style="padding: 12px; gap: 8px;">
+                <div class="text-mock compact" style="font-size:11px">▾ 散文 · 一只橘色的狐狸蜷在松树下…</div>
+                <div style="display:grid; grid-template-columns: 1fr 140px; gap: 8px; flex:1; min-height:0">
+                  <div style="display:flex; flex-direction:column; gap: 6px; overflow:hidden">
+                    <div class="field-group">
+                      <div class="grp-head">● 基本<span class="ai-badge">AI 填</span></div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v">海报</div></span>
+                        <span class="field-pill"><div class="pill-k">Style</div><div class="pill-v">极简插画</div></span>
+                      </div>
+                    </div>
+                    <div class="field-group">
+                      <div class="grp-head">● 画面<span class="ai-badge">AI 填</span></div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v">橘色狐狸…</div></span>
+                        <span class="field-pill"><div class="pill-k">Bg</div><div class="pill-v">远山夜空…</div></span>
+                      </div>
+                    </div>
+                    <div class="field-group">
+                      <div class="grp-head">● 氛围 · 色彩 · 文字</div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-v">▸ 折叠</div></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ai-side">
+                    <h4>💡 AI 建议</h4>
+                    <div class="ai-suggestion">
+                      <span class="s-val">+ Camera: 中景</span>
+                      <span class="accept">✓</span>
+                    </div>
+                    <div class="ai-suggestion">
+                      <span class="s-val">+ 文字: "晚安"</span>
+                      <span class="accept">✓</span>
+                    </div>
+                    <div class="ai-suggestion">
+                      <span class="s-val">改 Style: 厚涂?</span>
+                      <span class="accept">✓</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span>▾ JSON · 4.2s</span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">点 "AI 细化" → 字段被填,散文区折叠成一行(可点开)。右侧 AI 建议持续给(可一键采纳)。用户可改字段。</div>
+          </div>
+
+          <!-- A4 M2 路径 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num alt">2′</span>M2 路径(单独)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body" style="padding: 12px; gap: 8px;">
+                <a class="small-link" href="#" style="font-size: 11px">⌫ 回到散文输入</a>
+                <div class="field-group">
+                  <div class="grp-head">● 基本</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                    <span class="field-pill"><div class="pill-k">Style</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 画面</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                    <span class="field-pill"><div class="pill-k">Layout</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 氛围 · 色彩 · 文字</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-v">▸ 折叠</div></span>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span>无 AI 介入</span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">从 1 态点小链接或按 ⌘E 进 M2:字段编辑器主舞台,无 AI、无散文。左上"回到散文输入"可逃逸。</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         方案 B · 阶梯指示器
+         ============================================================ -->
+    <div class="plan plan-b">
+      <div class="canvas">
+        <div class="meta">
+          <h2>B · 阶梯指示器</h2>
+          <p class="belief">信念:把"散文 → AI 润色 → 字段微调 → 生图"做成显式三步路径。用户随时能看到自己在哪、能跳到哪。M1 = 停在 ①;M2 = 跳到 ③ 清空状态;M3 = 走完 ①②③。</p>
+          <p class="tradeoff">教学性强,新用户看着指示器就知道工作流。代价:对老用户重复(每次都要看那个进度条);"阶梯"暗示有先后,但用户可能跳跃式工作;指示器占顶部一整条,挤压主区。</p>
+        </div>
+
+        <div class="flow-row flow-3">
+
+          <!-- B1 初始 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">1</span>初始(在 ①)</span>
+            <div class="frame">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body">
+                <div class="stepper">
+                  <span class="step-pill active"><span class="num">1</span>散文</span>
+                  <span class="step-arrow">→</span>
+                  <span class="step-pill"><span class="num">2</span>AI 润色</span>
+                  <span class="step-arrow">→</span>
+                  <span class="step-pill"><span class="num">3</span>微调</span>
+                  <span class="step-arrow">→</span>
+                  <span class="step-pill"><span class="num">▶</span>生图</span>
+                </div>
+                <div class="text-mock empty big">写一段...</div>
+                <div class="btn-row">
+                  <span class="btn-mock btn-disabled">▶ 直接生图</span>
+                  <span class="btn-mock btn-primary" style="margin-left:auto">→ 继续:让 AI 润色</span>
+                </div>
+                <p style="font-size:10.5px; color:var(--muted-foreground); text-align:center; margin:0">
+                  或 <a class="small-link" href="#" style="display:inline; padding:0">直接跳到 ③ 自己填字段</a>
+                </p>
+              </div>
+            </div>
+            <div class="step-note">顶部进度条永远可见。① 高亮表示当前位置。用户可以选择继续到 ② 或跳到 ③(M2 入口)。</div>
+          </div>
+
+          <!-- B2 走到 ③ M3 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">2</span>AI 润色完(在 ③)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body">
+                <div class="stepper">
+                  <span class="step-pill done"><span class="num">✓</span>散文</span>
+                  <span class="step-arrow">→</span>
+                  <span class="step-pill done"><span class="num">✓</span>AI 润色</span>
+                  <span class="step-arrow">→</span>
+                  <span class="step-pill active"><span class="num">3</span>微调</span>
+                  <span class="step-arrow">→</span>
+                  <span class="step-pill"><span class="num">▶</span>生图</span>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 140px; gap: 8px; flex:1; min-height:0">
+                  <div style="display:flex; flex-direction:column; gap: 6px">
+                    <div class="field-group">
+                      <div class="grp-head">● 基本<span class="ai-badge">AI 填</span></div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v">海报</div></span>
+                        <span class="field-pill"><div class="pill-k">Style</div><div class="pill-v">极简插画</div></span>
+                      </div>
+                    </div>
+                    <div class="field-group">
+                      <div class="grp-head">● 画面</div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v">橘色狐狸…</div></span>
+                      </div>
+                    </div>
+                    <div class="field-group">
+                      <div class="grp-head">● 氛围 · 色彩 · 文字</div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-v">▸ 折叠</div></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ai-side">
+                    <h4>💡 建议</h4>
+                    <div class="ai-suggestion">
+                      <span class="s-val">+ Camera</span>
+                      <span class="accept">✓</span>
+                    </div>
+                    <div class="ai-suggestion">
+                      <span class="s-val">+ 文字</span>
+                      <span class="accept">✓</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span>已走 ①②</span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">①② 标 ✓,③ 高亮。字段已被 AI 填,用户可改 / 接 AI 建议 / 直接生图(走到 ▶)。</div>
+          </div>
+
+          <!-- B3 直接跳 M2 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num alt">2′</span>跳到 ③(M2)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body">
+                <div class="stepper">
+                  <span class="step-pill" style="opacity:0.4"><span class="num">1</span>散文</span>
+                  <span class="step-arrow" style="opacity:0.4">→</span>
+                  <span class="step-pill" style="opacity:0.4"><span class="num">2</span>AI 润色</span>
+                  <span class="step-arrow" style="opacity:0.4">→</span>
+                  <span class="step-pill active"><span class="num">3</span>微调</span>
+                  <span class="step-arrow">→</span>
+                  <span class="step-pill"><span class="num">▶</span>生图</span>
+                </div>
+                <p style="font-size:10.5px; color:var(--muted-foreground); margin: 0; padding-left:4px">已跳过 ①②,直接编辑字段</p>
+                <div class="field-group">
+                  <div class="grp-head">● 基本</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                    <span class="field-pill"><div class="pill-k">Style</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 画面</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 氛围 · 色彩 · 文字</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-v">▸ 折叠</div></span>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span style="font-size:10px"><a class="small-link" href="#" style="display:inline; padding:0">← 回到 ①</a></span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">①② 灰掉表示"跳过",③ 高亮。字段空白等用户填。左下可"回到 ①"重新走流程。</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         方案 C · 模式 Tab
+         ============================================================ -->
+    <div class="plan plan-c">
+      <div class="canvas">
+        <div class="meta">
+          <h2>C · 模式 Tab</h2>
+          <p class="belief">信念:三种模式是三种独立工作流,顶部 Tab 切换。每个 Tab 的视图针对该模式优化,没有视觉干扰。底层 prompt 状态在 Tab 间共享(切换不丢数据)。</p>
+          <p class="tradeoff">视图最干净——每个模式只显示自己需要的元素。代价:用户得理解三个 Tab 的语义("快速""助手""精修"——开发者命名,用户可能不懂);切 Tab 有切换成本;Tab 切换时另一模式的细节不可见。</p>
+        </div>
+
+        <div class="flow-row flow-3">
+
+          <!-- C1 快速 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">1</span>快速 Tab(M1)</span>
+            <div class="frame">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="mode-tabs">
+                <span class="mode-tab active">▢ 快速<span class="small">一句话生图</span></span>
+                <span class="mode-tab">✦ 助手<span class="small">AI 帮你拆字段</span></span>
+                <span class="mode-tab">⊞ 精修<span class="small">手动字段</span></span>
+              </div>
+              <div class="body" style="justify-content: center;">
+                <div class="text-mock big">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+                <div class="btn-row" style="justify-content:flex-end">
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">只有 textarea 和生图按钮。最简约,适合"我就想快快生图"的场景。</div>
+          </div>
+
+          <!-- C2 助手 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">2</span>助手 Tab(M3)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="mode-tabs">
+                <span class="mode-tab">▢ 快速</span>
+                <span class="mode-tab active">✦ 助手<span class="small">AI + 字段</span></span>
+                <span class="mode-tab">⊞ 精修</span>
+              </div>
+              <div class="body">
+                <div class="text-mock mid">橘色的狐狸蜷在松树下...</div>
+                <div class="btn-row">
+                  <span class="btn-mock btn-primary" style="font-size:11px">✦ AI 预填字段</span>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 130px; gap: 8px; flex:1; min-height:0">
+                  <div style="display:flex; flex-direction:column; gap: 5px">
+                    <div class="field-group">
+                      <div class="grp-head">● 基本<span class="ai-badge">AI</span></div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v">海报</div></span>
+                      </div>
+                    </div>
+                    <div class="field-group">
+                      <div class="grp-head">● 画面<span class="ai-badge">AI</span></div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v">狐狸...</div></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ai-side">
+                    <h4>💡 建议</h4>
+                    <div class="ai-suggestion">
+                      <span class="s-val">+ Camera</span>
+                      <span class="accept">✓</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span>▾ JSON</span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">散文上方,字段下方,AI 建议右侧。完整 M3 流程在一个 Tab 内闭环。</div>
+          </div>
+
+          <!-- C3 精修 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">3</span>精修 Tab(M2)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="mode-tabs">
+                <span class="mode-tab">▢ 快速</span>
+                <span class="mode-tab">✦ 助手</span>
+                <span class="mode-tab active">⊞ 精修<span class="small">无 AI</span></span>
+              </div>
+              <div class="body">
+                <p style="font-size:10.5px; color:var(--muted-foreground); margin:0; padding-left:4px">散文区隐藏 · 完全手动控制</p>
+                <div class="field-group">
+                  <div class="grp-head">● 基本</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                    <span class="field-pill"><div class="pill-k">Style</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 画面</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 氛围 · 色彩 · 文字</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-v">▸ 折叠</div></span>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span>无 AI 介入</span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">字段编辑器全宽,无散文、无 AI 建议。点切 Tab 就能回到助手或快速。</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         方案 D · 左右分裂渐进
+         ============================================================ -->
+    <div class="plan plan-d">
+      <div class="canvas">
+        <div class="meta">
+          <h2>D · 左右分裂渐进</h2>
+          <p class="belief">信念:左半永远是散文区,右半是字段编辑器。初始字段编辑器折叠成提示("写完文本展开")。用户可以同时看到两边——不强迫切换模式。</p>
+          <p class="tradeoff">用户始终知道两种工作模式的存在,M1/M2/M3 都在视野内。代价:屏幕分两半,各边都不够宽;移动端必须折叠成单列;空字段编辑器占大块空间但没内容,有点浪费;M2 入口是右上角"清空文本进字段"——隐式。</p>
+        </div>
+
+        <div class="flow-row flow-3">
+
+          <!-- D1 初始 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">1</span>初始</span>
+            <div class="frame">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="split split-60-40">
+                <div class="left">
+                  <span class="label">散文输入</span>
+                  <div class="text-mock empty big" style="flex:1">一两句话说画面…</div>
+                  <div class="btn-row">
+                    <span class="btn-mock btn-disabled">▶ 生图</span>
+                  </div>
+                </div>
+                <div class="right">
+                  <div class="placeholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h18M3 15h18"/></svg>
+                    字段编辑器<br/>(写完文本展开,或<br/><a href="#" style="color:var(--accent)">直接编辑字段 →</a>)
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">左:散文区。右:字段编辑器折叠成提示。"直接编辑字段"链接是 M2 入口。两种工作流都可见但不抢权重。</div>
+          </div>
+
+          <!-- D2 已写文本 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">2</span>已写文本</span>
+            <div class="frame">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="split split-60-40">
+                <div class="left">
+                  <span class="label">散文输入</span>
+                  <div class="text-mock big" style="flex:1">一只橘色的狐狸蜷在松树下,抬头望着月亮…</div>
+                  <div class="btn-row">
+                    <span class="btn-mock btn-outline-accent">▶ 直接生图</span>
+                    <span class="btn-mock btn-primary">✦ AI 帮我填字段</span>
+                  </div>
+                </div>
+                <div class="right">
+                  <div class="placeholder" style="background: color-mix(in oklch, var(--primary) 5%, transparent);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                    <span style="color:var(--primary)">点 "AI 帮我填" 字段会展现这里</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">左:写完文本,出现 [直接生图][AI 填字段]。右:仍是占位,但视觉提示"AI 填会展现这里",给用户预期。</div>
+          </div>
+
+          <!-- D3 展开 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">3</span>AI 填字段后</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="split split-30-70">
+                <div class="left">
+                  <span class="label">散文</span>
+                  <div class="text-mock mid" style="font-size:11px">橘色的狐狸蜷在松树下...</div>
+                  <a class="small-link" href="#" style="font-size:10.5px">✦ 重新 AI 填</a>
+                  <a class="small-link" href="#" style="font-size:10.5px">▶ 直接生图(忽略字段)</a>
+                </div>
+                <div class="right" style="padding: 14px; gap: 8px">
+                  <div style="display:grid; grid-template-columns: 1fr 120px; gap: 6px; flex:1; min-height:0">
+                    <div style="display:flex; flex-direction:column; gap: 6px">
+                      <div class="field-group">
+                        <div class="grp-head">● 基本<span class="ai-badge">AI</span></div>
+                        <div class="grp-fields">
+                          <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v">海报</div></span>
+                          <span class="field-pill"><div class="pill-k">Style</div><div class="pill-v">极简插画</div></span>
+                        </div>
+                      </div>
+                      <div class="field-group">
+                        <div class="grp-head">● 画面<span class="ai-badge">AI</span></div>
+                        <div class="grp-fields">
+                          <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v">狐狸...</div></span>
+                          <span class="field-pill"><div class="pill-k">Bg</div><div class="pill-v">夜空...</div></span>
+                        </div>
+                      </div>
+                      <div class="field-group">
+                        <div class="grp-head">● 其他</div>
+                        <div class="grp-fields">
+                          <span class="field-pill"><div class="pill-v">▸ 折叠</div></span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="ai-side">
+                      <h4>💡 建议</h4>
+                      <div class="ai-suggestion">
+                        <span class="s-val">+ Camera</span>
+                        <span class="accept">✓</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="editor-foot">
+                    <span>▾ JSON</span>
+                    <span class="btn-mock btn-accent">▶ 生图</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">左侧散文区压缩到 30%(可继续改),右侧字段编辑器占主区 70%。两边数据双向绑定。</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         方案 E · 双入口卡片
+         ============================================================ -->
+    <div class="plan plan-e">
+      <div class="canvas">
+        <div class="meta">
+          <h2>E · 双入口卡片</h2>
+          <p class="belief">信念:进门就让用户在两条路径中选——"写散文"(M1/M3) 或 "直接字段"(M2)。两条路径在物理上分开,各自有独立流程。</p>
+          <p class="tradeoff">认知最清晰——用户进门就知道自己在做哪种。代价:每次进来都要选(对回访用户摩擦);两条路径独立维护,代码复杂度高;切换路径(从字段路径切回散文)需要明显的"返回入口"按钮。</p>
+        </div>
+
+        <div class="flow-row flow-3">
+
+          <!-- E1 入口 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">1</span>入口选择</span>
+            <div class="frame">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span>EN</span><span>配置</span></div>
+              </div>
+              <div class="body" style="justify-content:center; padding-top:24px">
+                <p style="text-align:center; margin:0 0 4px; font-size:13px; font-weight:500">你想怎么开始?</p>
+                <p style="text-align:center; margin:0 0 8px; font-size:11px; color:var(--muted-foreground)">两条路都能生图,选你最熟悉的</p>
+                <div class="entry-grid">
+                  <div class="entry-card">
+                    <span class="ico">✦</span>
+                    <h3>写一段散文</h3>
+                    <p>写一两句话,可以直接生图,也可以让 AI 帮你拆解到字段</p>
+                    <span class="extra">M1 + M3</span>
+                  </div>
+                  <div class="entry-card alt">
+                    <span class="ico">⊞</span>
+                    <h3>直接编辑字段</h3>
+                    <p>精确控制每个字段,无 AI 介入。适合明确知道想要什么的用户</p>
+                    <span class="extra">M2</span>
+                  </div>
+                </div>
+                <p style="text-align:center; margin:8px 0 0; font-size:10.5px; color:var(--muted-foreground)">
+                  ⌨ 也可以按 <span style="font-family:ui-monospace; padding:1px 5px; background:var(--secondary); border-radius:3px">⌘1</span> / <span style="font-family:ui-monospace; padding:1px 5px; background:var(--secondary); border-radius:3px">⌘2</span>
+                </p>
+              </div>
+            </div>
+            <div class="step-note">进门两个大卡片。摩擦最大但认知最清晰。新用户读两段描述就知道自己要哪条路。</div>
+          </div>
+
+          <!-- E2 选了散文 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num">2</span>选了散文(M3 流程)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span style="background: color-mix(in oklch, var(--accent) 14%, transparent); color: var(--accent); border-color: color-mix(in oklch, var(--accent) 35%, transparent)">⌫ 回到入口</span><span>配置</span></div>
+              </div>
+              <div class="body">
+                <div class="text-mock mid">橘色的狐狸蜷在松树下...</div>
+                <div class="btn-row">
+                  <span class="btn-mock btn-outline-accent" style="font-size:11px">▶ 直接生图</span>
+                  <span class="btn-mock btn-primary" style="font-size:11px">✦ AI 细化</span>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 130px; gap: 8px; flex:1; min-height:0">
+                  <div style="display:flex; flex-direction:column; gap: 6px">
+                    <div class="field-group">
+                      <div class="grp-head">● 基本<span class="ai-badge">AI</span></div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v">海报</div></span>
+                      </div>
+                    </div>
+                    <div class="field-group">
+                      <div class="grp-head">● 画面<span class="ai-badge">AI</span></div>
+                      <div class="grp-fields">
+                        <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v">狐狸...</div></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ai-side">
+                    <h4>💡 建议</h4>
+                    <div class="ai-suggestion">
+                      <span class="s-val">+ Camera</span>
+                      <span class="accept">✓</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span>▾ JSON</span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">右上角"⌫ 回到入口"是切换路径的唯一出口(高亮以提示)。中间流程跟方案 A 的 M3 一致。</div>
+          </div>
+
+          <!-- E3 选了字段 -->
+          <div class="flow-step">
+            <span class="step-label"><span class="step-num alt">2′</span>选了字段(M2)</span>
+            <div class="frame frame-tall">
+              <div class="mini-header">
+                <span class="brand"><i></i>Inkast</span>
+                <div class="actions"><span style="background: color-mix(in oklch, var(--accent) 14%, transparent); color: var(--accent); border-color: color-mix(in oklch, var(--accent) 35%, transparent)">⌫ 回到入口</span><span>配置</span></div>
+              </div>
+              <div class="body">
+                <p style="font-size:10.5px; color:var(--muted-foreground); margin:0">字段精修 · 无 AI 介入</p>
+                <div class="field-group">
+                  <div class="grp-head">● 基本</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Type</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                    <span class="field-pill"><div class="pill-k">Style</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 画面</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-k">Subject</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                    <span class="field-pill"><div class="pill-k">Layout</div><div class="pill-v" style="color:var(--muted-foreground)">— 留空 —</div></span>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <div class="grp-head">● 氛围 · 色彩 · 文字</div>
+                  <div class="grp-fields">
+                    <span class="field-pill"><div class="pill-v">▸ 折叠</div></span>
+                  </div>
+                </div>
+                <div class="editor-foot">
+                  <span>纯手动</span>
+                  <span class="btn-mock btn-accent">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+            <div class="step-note">字段编辑器主舞台,无散文、无 AI。右上角"回到入口"切回选择页。</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,1538 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · D 终版(手风琴 + Tab)</title>
+  <style>
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+    }
+
+    /* ============================================================
+       页面骨架
+       ============================================================ */
+    .canvas {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 24px 24px 80px;
+      position: relative;
+      z-index: 1;
+    }
+    .meta {
+      padding: 14px 18px;
+      background: color-mix(in oklch, var(--card) 70%, var(--background));
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+    .meta h2 { margin: 0 0 6px; font-size: 14.5px; font-weight: 500; }
+    .meta .belief { color: var(--primary); font-weight: 500; }
+    .meta .tradeoff { color: var(--muted-foreground); }
+    .meta ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted-foreground); }
+    .meta li { margin-bottom: 2px; }
+
+    .state-block { margin-bottom: 40px; }
+    .state-label {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 10px;
+    }
+    .state-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-radius: 50%;
+      font-size: 11.5px; font-weight: 600;
+    }
+    .state-num.alt { background: var(--accent); }
+    .state-num.muted { background: var(--muted); color: var(--muted-foreground); }
+    .state-title { font-size: 14px; font-weight: 500; }
+    .state-sub {
+      font-size: 11.5px; color: var(--muted-foreground);
+      letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 2px 9px; border-radius: 9px;
+      background: var(--secondary);
+    }
+    .state-note {
+      margin-top: 10px;
+      padding: 10px 14px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border-left: 3px solid color-mix(in oklch, var(--primary) 50%, transparent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      font-size: 12px; color: var(--muted-foreground);
+      line-height: 1.6;
+    }
+    .state-note strong { color: var(--foreground); font-weight: 500; }
+
+    /* ============================================================
+       Frame
+       ============================================================ */
+    .frame {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+
+    /* ============================================================
+       顶部:Brand + Tab
+       ============================================================ */
+    .app-header {
+      display: flex; align-items: center;
+      padding: 10px 18px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      gap: 24px;
+    }
+    .app-header .brand {
+      font-size: 13.5px; font-weight: 500;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .app-header .brand i {
+      display: inline-block; width: 9px; height: 9px; background: var(--primary);
+      border-radius: 50%;
+    }
+    .app-header .brand-tag {
+      font-size: 11px; color: var(--muted-foreground); font-weight: 400;
+    }
+
+    .app-tabs {
+      display: flex; align-items: center; gap: 2px;
+      margin-left: 0;
+    }
+    .app-tab {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px;
+      font-size: 12.5px; font-weight: 500;
+      cursor: pointer;
+      color: var(--muted-foreground);
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: var(--radius) var(--radius) 0 0;
+      margin-bottom: -11px;
+      padding-bottom: 11px;
+    }
+    .app-tab svg { width: 14px; height: 14px; stroke-width: 1.5; }
+    .app-tab.active {
+      background: var(--card);
+      color: var(--foreground);
+      border-color: color-mix(in oklch, var(--border) 60%, transparent);
+      border-bottom: 1px solid var(--card);
+    }
+    .app-tab .badge {
+      font-size: 9.5px; padding: 1px 6px; border-radius: 9px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary); letter-spacing: 0.04em;
+    }
+
+    .app-actions {
+      margin-left: auto;
+      display: flex; gap: 4px; font-size: 11px; color: var(--muted-foreground);
+    }
+    .app-actions span {
+      padding: 3px 9px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      background: var(--secondary);
+    }
+    .app-actions span.attn {
+      background: color-mix(in oklch, var(--accent) 14%, transparent);
+      color: var(--accent);
+      border-color: color-mix(in oklch, var(--accent) 35%, transparent);
+    }
+
+    /* ============================================================
+       Body 三栏 grid + 手风琴
+       ============================================================ */
+    .body {
+      flex: 1;
+      display: grid;
+      gap: 0;
+      min-height: 0;
+      min-height: 640px;
+      transition: grid-template-columns 0.3s ease;
+    }
+    .body.left-wide {
+      grid-template-columns: 1.4fr 0.42fr 0.6fr;
+    }
+    .body.center-wide {
+      grid-template-columns: 0.42fr 1.4fr 0.6fr;
+    }
+
+    .col {
+      padding: 18px 20px;
+      display: flex; flex-direction: column; gap: 12px;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .col.col-left {
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border-right: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .col.col-center {
+      background: color-mix(in oklch, var(--card) 70%, var(--background));
+    }
+    .col.col-right {
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+
+    /* 锁定标记 */
+    .lock-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 9px;
+      background: color-mix(in oklch, var(--accent) 8%, transparent);
+      border: 1px solid color-mix(in oklch, var(--accent) 30%, transparent);
+      border-radius: var(--radius);
+      font-size: 10.5px;
+      color: var(--accent);
+    }
+    .lock-bar svg { width: 11px; height: 11px; }
+    .lock-bar a {
+      margin-left: auto;
+      color: var(--accent); text-decoration: underline; font-weight: 500; cursor: pointer;
+    }
+
+    /* ============================================================
+       基本占位
+       ============================================================ */
+    .label {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted-foreground);
+    }
+    .text-mock {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      color: color-mix(in oklch, var(--foreground) 80%, var(--background));
+      line-height: 1.55;
+    }
+    .text-mock.empty {
+      color: var(--muted-foreground); font-style: italic; min-height: 200px;
+    }
+    .text-mock.huge { min-height: 240px; }
+    .text-mock.big { min-height: 160px; }
+    .text-mock.mid { min-height: 80px; }
+    .text-mock.small { min-height: 50px; font-size: 11.5px; }
+
+    .btn-mock {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px;
+      padding: 9px 16px;
+      border-radius: var(--radius);
+      font-size: 12.5px; font-weight: 500;
+      cursor: pointer;
+      box-shadow: var(--shadow-paper);
+      white-space: nowrap;
+    }
+    .btn-mock.lg { padding: 11px 20px; font-size: 13px; }
+    .btn-mock.full { width: 100%; justify-content: center; }
+    .btn-accent { background: var(--accent); color: var(--accent-foreground); }
+    .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+    .btn-outline {
+      background: var(--secondary); color: var(--foreground);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      box-shadow: none;
+    }
+    .btn-outline-accent {
+      background: transparent;
+      border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+      color: var(--accent);
+      box-shadow: none;
+    }
+    .btn-disabled {
+      background: color-mix(in oklch, var(--muted) 60%, var(--background));
+      color: var(--muted-foreground);
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .small-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 12px;
+      color: var(--muted-foreground);
+      text-decoration: none;
+    }
+    .small-link:hover { color: var(--foreground); }
+    .small-link .kbd {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10.5px;
+      padding: 1px 5px;
+      background: var(--secondary);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: 3px;
+    }
+
+    .or-divider {
+      display: flex; align-items: center; gap: 12px;
+      font-size: 10.5px; color: var(--muted-foreground);
+      letter-spacing: 0.1em; text-transform: uppercase;
+      margin: 8px 0;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ""; flex: 1; height: 1px;
+      background: color-mix(in oklch, var(--border) 50%, transparent);
+    }
+
+    /* ============================================================
+       左栏:示例 / 参考图
+       ============================================================ */
+    .aux-block {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .aux-item {
+      padding: 7px 10px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px;
+      color: var(--foreground);
+      opacity: 0.85;
+      cursor: pointer;
+    }
+    .aux-item:hover { opacity: 1; box-shadow: var(--shadow-paper); }
+    .aux-item .aux-meta {
+      font-size: 9.5px; color: var(--muted-foreground); text-transform: uppercase;
+      letter-spacing: 0.06em; margin-bottom: 1px;
+    }
+    .aux-divider {
+      height: 1px;
+      background: color-mix(in oklch, var(--border) 50%, transparent);
+      margin: 6px 0;
+    }
+    .ref-card {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+    }
+    .ref-thumb {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, #d4724a, #f5b942);
+      border-radius: 2px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .ref-meta { flex: 1; font-size: 10.5px; line-height: 1.3; }
+    .ref-meta-label {
+      font-size: 9px; color: var(--muted-foreground);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* ============================================================
+       AI 建议(左栏 · 锁定后出现)
+       ============================================================ */
+    .ai-side {
+      padding: 12px 12px;
+      background: color-mix(in oklch, var(--primary) 5%, var(--card));
+      border: 1px dashed color-mix(in oklch, var(--primary) 35%, transparent);
+      border-radius: var(--radius);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .ai-side h4 {
+      margin: 0; font-size: 11.5px; font-weight: 500;
+      color: var(--primary);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .ai-side .ai-sub {
+      font-size: 10px; color: var(--muted-foreground);
+      margin: -3px 0 2px;
+    }
+    .ai-suggestion {
+      padding: 7px 9px;
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      cursor: pointer;
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .ai-suggestion:hover {
+      border-color: color-mix(in oklch, var(--primary) 50%, var(--border));
+    }
+    .ai-suggestion .s-meta {
+      font-size: 9px; color: var(--muted-foreground);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .ai-suggestion .s-meta .accept {
+      font-size: 9px; color: var(--primary);
+      padding: 1px 5px; border-radius: 8px;
+      background: color-mix(in oklch, var(--primary) 12%, transparent);
+    }
+    .ai-suggestion .s-val { font-size: 11px; color: var(--foreground); }
+    .ai-suggestion .s-reason {
+      font-size: 10px; color: var(--muted-foreground);
+      font-style: italic; line-height: 1.4;
+    }
+    .ai-badge {
+      font-size: 9.5px; padding: 1px 6px; border-radius: 9px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary); letter-spacing: 0.04em; text-transform: uppercase;
+    }
+
+    /* ============================================================
+       中栏:字段编辑器
+       ============================================================ */
+    .editor {
+      display: flex; flex-direction: column; gap: 12px;
+      flex: 1; min-height: 0;
+      overflow-y: auto;
+    }
+    .editor-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px;
+      padding-top: 12px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      margin-top: 4px;
+      font-size: 11.5px; color: var(--muted-foreground);
+    }
+
+    /* 中栏窄态:折叠占位 */
+    .editor-collapsed {
+      flex: 1;
+      display: flex; flex-direction: column; gap: 10px;
+      align-items: stretch;
+      padding: 8px 0;
+    }
+    .editor-collapsed .ec-head {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted-foreground);
+      text-align: center;
+      padding: 4px 0;
+    }
+    .editor-collapsed .ec-stub {
+      padding: 12px 10px;
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border: 1px dashed color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-size: 10.5px;
+      color: var(--muted-foreground);
+      text-align: center;
+      display: flex; flex-direction: column; gap: 4px;
+      align-items: center;
+    }
+    .editor-collapsed .ec-stub .num {
+      font-size: 9px; color: var(--muted-foreground); letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .editor-collapsed .ec-stub .name {
+      font-size: 11.5px; color: color-mix(in oklch, var(--foreground) 65%, var(--background));
+      font-weight: 500;
+    }
+    .editor-collapsed .ec-tip {
+      margin-top: auto;
+      padding: 10px;
+      background: color-mix(in oklch, var(--primary) 5%, transparent);
+      border: 1px dashed color-mix(in oklch, var(--primary) 30%, transparent);
+      border-radius: var(--radius);
+      font-size: 10.5px;
+      color: var(--primary);
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* 字段卡片(宽态) */
+    .group-card {
+      padding: 13px 15px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+    }
+    .group-card .head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .group-card .head .title {
+      font-size: 12px; font-weight: 500; letter-spacing: 0.02em;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .group-card .head .title svg {
+      width: 14px; height: 14px; stroke-width: 1.5; color: var(--primary);
+    }
+    .group-card .head .hint {
+      font-size: 11px; color: var(--muted-foreground);
+    }
+
+    .field-grid {
+      display: grid; gap: 10px;
+    }
+    .field-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+    .field-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .field-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+    .field-grid.cols-scene { grid-template-columns: 2fr 2fr 1fr; }
+
+    .field-cell {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .field-cell .k {
+      font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted-foreground);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .field-cell .v {
+      padding: 6px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px;
+      color: color-mix(in oklch, var(--foreground) 75%, var(--background));
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px;
+      min-height: 30px;
+    }
+    .field-cell .v.tall {
+      min-height: 56px; align-items: flex-start; padding-top: 7px;
+    }
+    .field-cell .v .preview-dot {
+      width: 16px; height: 16px; border-radius: 2px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--muted) 0%, var(--secondary) 100%);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .field-cell .v .chev {
+      width: 11px; height: 11px; color: var(--muted-foreground); flex-shrink: 0;
+    }
+    .field-cell .v.empty {
+      color: var(--muted-foreground); font-style: italic;
+    }
+
+    .palette-mock {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      padding: 8px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+    }
+    .swatch {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px 3px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      color: var(--muted-foreground);
+    }
+    .swatch i {
+      width: 16px; height: 16px; border-radius: 3px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      display: inline-block;
+    }
+    .preset-chips {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-top: 8px;
+    }
+    .preset-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 8px 2px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: 10px;
+      font-size: 10.5px;
+      color: var(--foreground);
+    }
+    .preset-chip .dots { display: inline-flex; gap: 1px; }
+    .preset-chip .dots i {
+      width: 7px; height: 7px; border-radius: 50%;
+      display: inline-block;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+
+    .text-elem-mock {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+      border-radius: var(--radius);
+    }
+    .text-elem-mock .head {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted-foreground);
+      margin-bottom: 6px;
+      padding-bottom: 0; border-bottom: none;
+    }
+
+    /* ============================================================
+       右栏:本次工作区
+       ============================================================ */
+    .work-section {
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .work-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 12px; font-weight: 500;
+    }
+    .work-head .count { font-size: 10.5px; color: var(--muted-foreground); font-weight: 400; }
+
+    .empty-state {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 8px;
+      padding: 32px 16px;
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      color: var(--muted-foreground);
+      font-size: 11.5px;
+      text-align: center;
+      line-height: 1.5;
+    }
+    .empty-state svg { width: 28px; height: 28px; stroke-width: 1.5; opacity: 0.4; }
+
+    .job-mock {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--primary) 5%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px;
+    }
+    .job-mock i {
+      display: inline-block; width: 10px; height: 10px;
+      border: 2px solid var(--primary); border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+    .job-mock .truncate {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--foreground); opacity: 0.85;
+    }
+    .job-mock .progress { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+    .session-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .session-tile {
+      aspect-ratio: 1 / 1;
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, #d4724a 0%, #f5b942 50%, #3a5a40 100%);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      box-shadow: var(--shadow-paper);
+    }
+    .session-tile:nth-child(2) { background: linear-gradient(135deg, #1a2b4c, #6b8db4); }
+    .session-tile:nth-child(3) { background: linear-gradient(135deg, #c8c2bd, #7a6f64); }
+    .session-tile:nth-child(4) { background: linear-gradient(135deg, #c8163e, #f0c14b); }
+
+    /* ============================================================
+       作品 Tab(全屏网格)
+       ============================================================ */
+    .gallery-frame {
+      padding: 20px 24px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .gallery-toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px;
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+    }
+    .gallery-toolbar h3 { margin: 0; font-size: 14px; font-weight: 500; }
+    .gallery-toolbar .count { color: var(--muted-foreground); font-size: 11.5px; }
+    .gallery-toolbar input {
+      flex: 1;
+      padding: 6px 10px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 12px;
+    }
+    .gallery-toolbar .gallery-chip {
+      padding: 4px 9px;
+      font-size: 11px;
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: 12px;
+      background: var(--card);
+      color: var(--muted-foreground);
+      cursor: pointer;
+    }
+    .gallery-toolbar .gallery-chip.active {
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-color: transparent;
+    }
+
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+    }
+    .gallery-card {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow-paper);
+    }
+    .gallery-card-img {
+      aspect-ratio: 1 / 1;
+      background: linear-gradient(135deg, #d4724a 0%, #f5b942 50%, #3a5a40 100%);
+    }
+    .gallery-card:nth-child(2) .gallery-card-img { background: linear-gradient(135deg, #1a2b4c, #6b8db4); }
+    .gallery-card:nth-child(3) .gallery-card-img { background: linear-gradient(135deg, #c8c2bd, #7a6f64); }
+    .gallery-card:nth-child(4) .gallery-card-img { background: linear-gradient(135deg, #c8163e, #f0c14b); }
+    .gallery-card:nth-child(5) .gallery-card-img { background: linear-gradient(135deg, #3a5a40, #a3b18a); }
+    .gallery-card:nth-child(6) .gallery-card-img { background: linear-gradient(135deg, #6b8db4, #b0a0c2); }
+    .gallery-card:nth-child(7) .gallery-card-img { background: linear-gradient(135deg, #f5b942, #f08a5d); }
+    .gallery-card:nth-child(8) .gallery-card-img { background: linear-gradient(135deg, #ededed, #1a1a1a); }
+    .gallery-card:nth-child(9) .gallery-card-img { background: linear-gradient(135deg, #2a4d3a, #c8163e); }
+    .gallery-card:nth-child(10) .gallery-card-img { background: linear-gradient(135deg, #c8163e, #f5b942, #2a4d3a); }
+    .gallery-card:nth-child(11) .gallery-card-img { background: linear-gradient(135deg, #1a1a1a, #c8c2bd); }
+    .gallery-card:nth-child(12) .gallery-card-img { background: linear-gradient(135deg, #6b8db4, #f5b942); }
+    .gallery-card-body {
+      padding: 8px 10px;
+      font-size: 11px;
+    }
+    .gallery-card-type {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted-foreground); font-weight: 500;
+    }
+    .gallery-card-style { color: var(--foreground); opacity: 0.85; }
+  </style>
+</head>
+<body>
+
+  <div class="canvas">
+
+    <div class="meta">
+      <h2>D 终版 · 手风琴 + Tab</h2>
+      <p class="belief">三栏永远在线 · 左+中是手风琴 · 顶部两个 Tab 切"起草"和"作品"</p>
+      <ul>
+        <li><strong>左栏</strong>:永远是起草输入(初始宽,扩字段后缩窄并锁定)+ 锁定后显示 AI 建议</li>
+        <li><strong>中栏</strong>:永远是字段编辑器(初始窄占位,被"AI 扩充" / "跳过文本"触发后变宽)</li>
+        <li><strong>右栏</strong>:本次会话工作区(任务 + 刚生成的图,刷新清空)</li>
+        <li><strong>顶部 Tab</strong>:[起草] 主工作页 / [作品] 历史作品全屏网格</li>
+      </ul>
+      <p class="tradeoff">手风琴动效:左栏 1.4fr → 0.42fr,中栏 0.42fr → 1.4fr,右栏始终 0.6fr。<strong>M1 直接生图不触发手风琴</strong>——保留"轻盈起草"的体验。</p>
+    </div>
+
+    <!-- ============================================================
+         状态 1:起草 Tab · 初始
+         ============================================================ -->
+    <div class="state-block">
+      <div class="state-label">
+        <span class="state-num">1</span>
+        <span class="state-title">起草 Tab · 初始(刚进入应用)</span>
+        <span class="state-sub">左宽 中窄 右空</span>
+      </div>
+      <div class="frame">
+        <div class="app-header">
+          <span class="brand"><i></i>Inkast<span class="brand-tag">local-first ai image studio</span></span>
+          <div class="app-tabs">
+            <span class="app-tab active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19l7-7-3-3-7 7v3h3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+              起草
+            </span>
+            <span class="app-tab">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+              作品
+              <span class="badge">12</span>
+            </span>
+          </div>
+          <div class="app-actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+        </div>
+
+        <div class="body left-wide">
+          <!-- 左栏(宽):起草 -->
+          <div class="col col-left">
+            <span class="label">起草</span>
+            <div class="text-mock empty huge">一两句话说一下你想要的画面…<br/>写得越具体,AI 预填的字段越准。</div>
+
+            <div class="btn-row">
+              <span class="btn-mock btn-disabled lg">▶ 直接生图</span>
+              <span class="btn-mock btn-disabled lg">✦ AI 扩充到字段</span>
+            </div>
+            <div class="or-divider">或</div>
+            <a class="small-link" href="#">⊞ 跳过文本,直接编辑字段 <span class="kbd">⌘E</span></a>
+
+            <div class="aux-divider"></div>
+            <span class="label">快速起点</span>
+            <div class="aux-block">
+              <div class="aux-item">
+                <div class="aux-meta">示例 1 · 摄影</div>
+                电影感的咖啡馆窗边女子,午后柔光从左侧洒入…
+              </div>
+              <div class="aux-item">
+                <div class="aux-meta">示例 2 · 信息图</div>
+                6 种常见鸟类的喙形状与对应食物
+              </div>
+              <div class="aux-item">
+                <div class="aux-meta">示例 3 · 海报</div>
+                复古橘猫坐在打字机前,1950 风
+              </div>
+            </div>
+
+            <div class="aux-divider"></div>
+            <span class="label">参考图</span>
+            <div class="aux-item" style="text-align:center; padding:14px 10px; font-size:11px; color:var(--muted-foreground); border-style:dashed">
+              + 添加参考图
+            </div>
+          </div>
+
+          <!-- 中栏(窄):字段编辑器折叠 -->
+          <div class="col col-center">
+            <div class="editor-collapsed">
+              <div class="ec-head">字段编辑器</div>
+              <div class="ec-stub">
+                <span class="num">1</span><span class="name">基本</span>
+              </div>
+              <div class="ec-stub">
+                <span class="num">2</span><span class="name">画面</span>
+              </div>
+              <div class="ec-stub">
+                <span class="num">3</span><span class="name">氛围</span>
+              </div>
+              <div class="ec-stub">
+                <span class="num">4</span><span class="name">色彩</span>
+              </div>
+              <div class="ec-stub">
+                <span class="num">5</span><span class="name">文字</span>
+              </div>
+              <div class="ec-tip">
+                点 "AI 扩充" 或 "跳过文本"<br/>会展开这里
+              </div>
+            </div>
+          </div>
+
+          <!-- 右栏:本次工作区(空) -->
+          <div class="col col-right">
+            <div class="work-section" style="flex:1">
+              <div class="work-head">本次工作区 <span class="count">· 刷新清空</span></div>
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                <div>这次生成的图会出现在这里<br/>需要看历史,切到上方 [作品] Tab</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="state-note">
+        <strong>左栏占主区(1.4fr)</strong>,起草输入是绝对主角。<strong>中栏窄占位(0.42fr)</strong>显示 5 个分组的折叠 stub,告诉用户"这是字段编辑器,展开后会在这里编辑"。<strong>右栏(0.6fr)</strong>是空提示——刷新即清空,要看历史需切 [作品] Tab。
+      </div>
+    </div>
+
+    <!-- ============================================================
+         状态 2:起草 Tab · 写完文本
+         ============================================================ -->
+    <div class="state-block">
+      <div class="state-label">
+        <span class="state-num">2</span>
+        <span class="state-title">起草 Tab · 写完文本</span>
+        <span class="state-sub">布局不变 · 按钮激活</span>
+      </div>
+      <div class="frame">
+        <div class="app-header">
+          <span class="brand"><i></i>Inkast</span>
+          <div class="app-tabs">
+            <span class="app-tab active">起草</span>
+            <span class="app-tab">作品 <span class="badge">12</span></span>
+          </div>
+          <div class="app-actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+        </div>
+
+        <div class="body left-wide">
+          <div class="col col-left">
+            <span class="label">起草</span>
+            <div class="text-mock huge">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+
+            <div class="btn-row">
+              <span class="btn-mock btn-outline-accent lg">▶ 直接生图</span>
+              <span class="btn-mock btn-primary lg">✦ AI 扩充到字段</span>
+            </div>
+            <div class="or-divider">或</div>
+            <a class="small-link" href="#">⊞ 跳过文本,直接编辑字段 <span class="kbd">⌘E</span></a>
+
+            <div class="aux-divider"></div>
+            <span class="label">快速起点</span>
+            <div class="aux-block">
+              <div class="aux-item"><div class="aux-meta">示例 1</div>电影感咖啡馆…</div>
+              <div class="aux-item"><div class="aux-meta">示例 2</div>6 种鸟类的喙形…</div>
+              <div class="aux-item"><div class="aux-meta">示例 3</div>复古橘猫打字机…</div>
+            </div>
+
+            <div class="aux-divider"></div>
+            <span class="label">参考图</span>
+            <div class="ref-card">
+              <span class="ref-thumb"></span>
+              <div class="ref-meta">
+                <div class="ref-meta-label">参考图</div>
+                <div>从作品库选</div>
+              </div>
+              <span style="color:var(--muted-foreground); font-size:14px; cursor:pointer">×</span>
+            </div>
+          </div>
+
+          <div class="col col-center">
+            <div class="editor-collapsed">
+              <div class="ec-head">字段编辑器</div>
+              <div class="ec-stub"><span class="num">1</span><span class="name">基本</span></div>
+              <div class="ec-stub"><span class="num">2</span><span class="name">画面</span></div>
+              <div class="ec-stub"><span class="num">3</span><span class="name">氛围</span></div>
+              <div class="ec-stub"><span class="num">4</span><span class="name">色彩</span></div>
+              <div class="ec-stub"><span class="num">5</span><span class="name">文字</span></div>
+              <div class="ec-tip">
+                ✦ 点上面 "AI 扩充" 我会拆解到这里
+              </div>
+            </div>
+          </div>
+
+          <div class="col col-right">
+            <div class="work-section" style="flex:1">
+              <div class="work-head">本次工作区 <span class="count">· 0 张</span></div>
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                <div>这次生成的图会出现在这里</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="state-note">
+        布局未变。文本框有内容后,<strong>三个按钮的视觉状态变化</strong>:[直接生图] 从禁用变 outline-accent · [AI 扩充] 从禁用变 primary(墨绿)· [跳过文本] 始终是底部链接。参考图卡也激活了。
+      </div>
+    </div>
+
+    <!-- ============================================================
+         状态 3:点 "直接生图" 后
+         ============================================================ -->
+    <div class="state-block">
+      <div class="state-label">
+        <span class="state-num">3</span>
+        <span class="state-title">点 "▶ 直接生图"(M1)</span>
+        <span class="state-sub">布局不变 · 右栏出现任务</span>
+      </div>
+      <div class="frame">
+        <div class="app-header">
+          <span class="brand"><i></i>Inkast</span>
+          <div class="app-tabs">
+            <span class="app-tab active">起草</span>
+            <span class="app-tab">作品 <span class="badge">12</span></span>
+          </div>
+          <div class="app-actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+        </div>
+
+        <div class="body left-wide">
+          <div class="col col-left">
+            <span class="label">起草</span>
+            <div class="text-mock huge">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+
+            <div class="btn-row">
+              <span class="btn-mock btn-outline-accent lg">▶ 直接生图(再来一张)</span>
+              <span class="btn-mock btn-primary lg">✦ AI 扩充到字段</span>
+            </div>
+            <div class="or-divider">或</div>
+            <a class="small-link" href="#">⊞ 跳过文本,直接编辑字段 <span class="kbd">⌘E</span></a>
+
+            <div class="aux-divider"></div>
+            <span class="label">快速起点</span>
+            <div class="aux-block">
+              <div class="aux-item"><div class="aux-meta">示例 1</div>电影感咖啡馆…</div>
+              <div class="aux-item"><div class="aux-meta">示例 2</div>6 种鸟类的喙形…</div>
+            </div>
+          </div>
+
+          <div class="col col-center">
+            <div class="editor-collapsed">
+              <div class="ec-head">字段编辑器</div>
+              <div class="ec-stub"><span class="num">1</span><span class="name">基本</span></div>
+              <div class="ec-stub"><span class="num">2</span><span class="name">画面</span></div>
+              <div class="ec-stub"><span class="num">3</span><span class="name">氛围</span></div>
+              <div class="ec-stub"><span class="num">4</span><span class="name">色彩</span></div>
+              <div class="ec-stub"><span class="num">5</span><span class="name">文字</span></div>
+              <div class="ec-tip">
+                字段不参与本次直接生图
+              </div>
+            </div>
+          </div>
+
+          <div class="col col-right">
+            <div class="work-section" style="flex:1">
+              <div class="work-head">本次工作区 <span class="count">· 1 张 + 1 任务</span></div>
+              <div class="job-mock">
+                <i></i>
+                <div class="truncate">橘色狐狸蜷缩在松树下…</div>
+                <span class="progress">12s</span>
+              </div>
+              <div style="font-size:10.5px; color:var(--muted-foreground); margin-top:8px; padding-left:2px">已完成</div>
+              <div class="session-grid">
+                <div class="session-tile"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="state-note">
+        <strong>M1 不触发手风琴</strong>——左中宽度不变。任务出现在右栏(进行中卡片),完成的图按 grid 显示。用户可以继续修改文本然后"再来一张"。字段编辑器始终是占位,提示"不参与本次直接生图"。
+      </div>
+    </div>
+
+    <!-- ============================================================
+         状态 4:点 "AI 扩充" 后(手风琴展开)
+         ============================================================ -->
+    <div class="state-block">
+      <div class="state-label">
+        <span class="state-num">4</span>
+        <span class="state-title">点 "✦ AI 扩充"(M3 · 手风琴展开)</span>
+        <span class="state-sub">左缩窄锁定 · 中变宽 · 左栏出现 AI 建议</span>
+      </div>
+      <div class="frame">
+        <div class="app-header">
+          <span class="brand"><i></i>Inkast</span>
+          <div class="app-tabs">
+            <span class="app-tab active">起草</span>
+            <span class="app-tab">作品 <span class="badge">12</span></span>
+          </div>
+          <div class="app-actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+        </div>
+
+        <div class="body center-wide">
+          <!-- 左栏(窄,锁定):锁定文案 + AI 建议 -->
+          <div class="col col-left">
+            <div class="lock-bar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+              已锁定
+              <a href="#">解锁</a>
+            </div>
+            <span class="label">散文</span>
+            <div class="text-mock small">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+
+            <div class="btn-row" style="flex-direction:column; gap:6px">
+              <a class="small-link" href="#" style="font-size:11px">✦ 重新扩充字段</a>
+              <a class="small-link" href="#" style="font-size:11px">▶ 用散文直接生图(忽略字段)</a>
+            </div>
+
+            <div class="aux-divider"></div>
+
+            <div class="ai-side">
+              <h4>💡 AI 建议 <span class="ai-badge" style="background:transparent">3 条</span></h4>
+              <p class="ai-sub">点 ✓ 一键注入对应字段</p>
+              <div class="ai-suggestion">
+                <div class="s-meta"><span>+ Camera</span><span class="accept">✓</span></div>
+                <div class="s-val">"中景"</div>
+                <div class="s-reason">主体距离暗示中景</div>
+              </div>
+              <div class="ai-suggestion">
+                <div class="s-meta"><span>+ 文字 02</span><span class="accept">✓</span></div>
+                <div class="s-val">"Good night" · 右下小字</div>
+                <div class="s-reason">中英双语更耐看</div>
+              </div>
+              <div class="ai-suggestion">
+                <div class="s-meta"><span>改 Style</span><span class="accept">✓</span></div>
+                <div class="s-val">"厚涂插画"?</div>
+                <div class="s-reason">"宁静温暖"适合厚涂</div>
+              </div>
+            </div>
+
+            <div class="aux-divider"></div>
+            <span class="label">参考图</span>
+            <div class="ref-card">
+              <span class="ref-thumb"></span>
+              <div class="ref-meta">
+                <div class="ref-meta-label">参考图</div>
+                <div>作品库</div>
+              </div>
+              <span style="color:var(--muted-foreground); font-size:14px; cursor:pointer">×</span>
+            </div>
+          </div>
+
+          <!-- 中栏(宽,字段编辑器主战场) -->
+          <div class="col col-center">
+            <div class="editor">
+
+              <div style="display:grid; grid-template-columns: 2fr 3fr; gap: 12px;">
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+                      基本
+                    </span>
+                    <span class="hint">必填</span>
+                  </div>
+                  <div class="field-grid cols-2">
+                    <div class="field-cell">
+                      <div class="k">Type <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#d4724a,#f5b942)"></span>
+                        <span style="flex:1">海报</span>
+                        <span class="chev">▾</span>
+                      </div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Style <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#3a5a40,#a3b18a)"></span>
+                        <span style="flex:1">极简插画</span>
+                        <span class="chev">▾</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3"/></svg>
+                      氛围
+                    </span>
+                    <span class="hint">情绪 / 光照 / 镜头</span>
+                  </div>
+                  <div class="field-grid cols-3">
+                    <div class="field-cell">
+                      <div class="k">Mood <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#f5b942,#d4724a)"></span>
+                        <span style="flex:1">宁静温暖</span>
+                      </div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Lighting <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#1a2b4c,#f5b942)"></span>
+                        <span style="flex:1">黄昏侧逆光</span>
+                      </div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Camera</div>
+                      <div class="v empty"><span style="flex:1">留空</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="head">
+                  <span class="title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5L5 21"/></svg>
+                    画面
+                  </span>
+                  <span class="hint">主体 / 背景 / 构图</span>
+                </div>
+                <div class="field-grid cols-scene">
+                  <div class="field-cell">
+                    <div class="k">Subject <span class="ai-badge">AI</span></div>
+                    <div class="v tall">橘色狐狸蜷缩在松树下,抬头望着月亮</div>
+                  </div>
+                  <div class="field-cell">
+                    <div class="k">Background <span class="ai-badge">AI</span></div>
+                    <div class="v tall">远山轮廓与渐变夜空,星点稀疏</div>
+                  </div>
+                  <div class="field-cell">
+                    <div class="k">Layout</div>
+                    <div class="v empty"><span style="flex:1">留空</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="head">
+                  <span class="title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10z"/></svg>
+                    色彩 <span class="ai-badge">AI</span>
+                  </span>
+                  <span class="hint">3 色 + 预设</span>
+                </div>
+                <div class="palette-mock">
+                  <span class="swatch"><i style="background:#1a2b4c"></i>#1a2b4c</span>
+                  <span class="swatch"><i style="background:#f5b942"></i>#f5b942</span>
+                  <span class="swatch"><i style="background:#d4724a"></i>#d4724a</span>
+                  <span class="swatch" style="border-style:dashed; opacity:0.6">+ 加</span>
+                </div>
+                <div class="preset-chips">
+                  <span class="preset-chip"><span class="dots"><i style="background:#c8c2bd"></i><i style="background:#7a6f64"></i></span>莫兰迪</span>
+                  <span class="preset-chip"><span class="dots"><i style="background:#3a5a40"></i><i style="background:#a3b18a"></i></span>森林</span>
+                  <span class="preset-chip"><span class="dots"><i style="background:#f5b942"></i><i style="background:#d4724a"></i></span>夕阳</span>
+                  <span class="preset-chip"><span class="dots"><i style="background:#1a1a1a"></i><i style="background:#ededed"></i></span>黑白</span>
+                  <span class="preset-chip"><span class="dots"><i style="background:#c8163e"></i><i style="background:#f0c14b"></i></span>朱砂</span>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="head">
+                  <span class="title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7V5h16v2M9 5v14M15 5v14M7 19h4M13 19h4"/></svg>
+                    文字
+                  </span>
+                  <span class="hint">1 条 · 点 + 添加</span>
+                </div>
+                <div class="text-elem-mock">
+                  <div class="head">Text · 01</div>
+                  <div class="field-grid cols-4" style="gap: 8px">
+                    <div class="field-cell">
+                      <div class="k">Content</div>
+                      <div class="v">晚安</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Position</div>
+                      <div class="v">右下</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Font</div>
+                      <div class="v">手写体</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Size</div>
+                      <div class="v">中</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="editor-footer">
+                <span>▾ JSON · claude-code · 4.2s</span>
+                <span class="btn-mock btn-accent lg">▶ 生图</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右栏 -->
+          <div class="col col-right">
+            <div class="work-section" style="flex:1">
+              <div class="work-head">本次工作区 <span class="count">· 0 张</span></div>
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                <div>调好字段,点右下角生图按钮</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="state-note">
+        <strong>手风琴触发</strong>:左 1.4fr → 0.42fr,中 0.42fr → 1.4fr。左栏锁定(锁标志 + 解锁链接),原 textarea 缩成只读文本块。<strong>AI 建议出现在左栏</strong>(替代了原右栏位置)。中栏字段编辑器宽度足够支持"基本 + 氛围"同行(2:3 ratio)。右栏仍是工作区。
+      </div>
+    </div>
+
+    <!-- ============================================================
+         状态 5:点 "跳过文本" 后(M2 · 手风琴展开但无 AI)
+         ============================================================ -->
+    <div class="state-block">
+      <div class="state-label">
+        <span class="state-num alt">5</span>
+        <span class="state-title">点 "⊞ 跳过文本"(M2 · 手风琴展开 · 无 AI)</span>
+        <span class="state-sub">同 4 的布局 · 但左栏无散文/无 AI 建议</span>
+      </div>
+      <div class="frame">
+        <div class="app-header">
+          <span class="brand"><i></i>Inkast</span>
+          <div class="app-tabs">
+            <span class="app-tab active">起草</span>
+            <span class="app-tab">作品 <span class="badge">12</span></span>
+          </div>
+          <div class="app-actions"><span class="attn">⌫ 回到起草</span><span>配置</span><span>暗色</span></div>
+        </div>
+
+        <div class="body center-wide">
+          <div class="col col-left">
+            <div class="lock-bar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+              已锁定 · 无散文
+              <a href="#">回到起草</a>
+            </div>
+            <span class="label">散文</span>
+            <div class="text-mock small empty" style="min-height:60px; font-size:11px">— 未使用散文 —</div>
+
+            <div class="aux-divider"></div>
+            <p style="margin:0; font-size:11.5px; color:var(--muted-foreground); line-height:1.6">
+              M2 模式:<strong style="color:var(--foreground)">纯字段精修,无 AI 介入</strong>。
+              如需 AI 建议,点上方"回到起草"切回 M1/M3 路径。
+            </p>
+
+            <div class="aux-divider"></div>
+            <span class="label">参考图</span>
+            <div class="aux-item" style="text-align:center; padding:14px 10px; font-size:11px; color:var(--muted-foreground); border-style:dashed">
+              + 添加参考图
+            </div>
+          </div>
+
+          <div class="col col-center">
+            <div class="editor">
+
+              <div style="display:grid; grid-template-columns: 2fr 3fr; gap: 12px;">
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 基本</span>
+                    <span class="hint">必填</span>
+                  </div>
+                  <div class="field-grid cols-2">
+                    <div class="field-cell">
+                      <div class="k">Type</div>
+                      <div class="v empty"><span style="flex:1">未选</span><span class="chev">▾</span></div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Style</div>
+                      <div class="v empty"><span style="flex:1">未选</span><span class="chev">▾</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 氛围</span>
+                    <span class="hint">可选</span>
+                  </div>
+                  <div class="field-grid cols-3">
+                    <div class="field-cell">
+                      <div class="k">Mood</div>
+                      <div class="v empty"><span style="flex:1">未选</span></div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Lighting</div>
+                      <div class="v empty"><span style="flex:1">未选</span></div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Camera</div>
+                      <div class="v empty"><span style="flex:1">未选</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="head">
+                  <span class="title">● 画面</span>
+                  <span class="hint">主体 / 背景 / 构图</span>
+                </div>
+                <div class="field-grid cols-scene">
+                  <div class="field-cell">
+                    <div class="k">Subject</div>
+                    <div class="v tall empty">主体描述,越具体越准</div>
+                  </div>
+                  <div class="field-cell">
+                    <div class="k">Background</div>
+                    <div class="v tall empty">背景元素,留空也可</div>
+                  </div>
+                  <div class="field-cell">
+                    <div class="k">Layout</div>
+                    <div class="v empty"><span style="flex:1">留空</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="head">
+                  <span class="title">● 色彩</span>
+                  <span class="hint">留空交给模型</span>
+                </div>
+                <div class="palette-mock" style="min-height:36px">
+                  <span style="font-size:11px; color:var(--muted-foreground); font-style:italic">— 点 + 加色或选预设 —</span>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="head">
+                  <span class="title">● 文字</span>
+                  <span class="hint">画面上要出现的字</span>
+                </div>
+                <p style="margin:0; font-size:11.5px; color:var(--muted-foreground); font-style:italic">画面不需要文字就保持空</p>
+              </div>
+
+              <div class="editor-footer">
+                <span>无 AI 介入 · 纯手动</span>
+                <span class="btn-mock btn-accent lg">▶ 生图</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="col col-right">
+            <div class="work-section" style="flex:1">
+              <div class="work-head">本次工作区 <span class="count">· 0 张</span></div>
+              <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                <div>填好字段,点右下角生图</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="state-note">
+        和状态 4 共用同一个手风琴展开布局,只是<strong>左栏内容不同</strong>:无散文(标"未使用")、无 AI 建议、回到起草按钮在 header 高亮。中栏字段全空等用户填。M2 是"纯手动"路径。
+      </div>
+    </div>
+
+    <!-- ============================================================
+         状态 6:作品 Tab
+         ============================================================ -->
+    <div class="state-block">
+      <div class="state-label">
+        <span class="state-num muted">T</span>
+        <span class="state-title">[作品] Tab(独立页面)</span>
+        <span class="state-sub">历史作品 · 全屏网格</span>
+      </div>
+      <div class="frame">
+        <div class="app-header">
+          <span class="brand"><i></i>Inkast</span>
+          <div class="app-tabs">
+            <span class="app-tab">起草</span>
+            <span class="app-tab active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+              作品
+              <span class="badge">12</span>
+            </span>
+          </div>
+          <div class="app-actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+        </div>
+
+        <div class="gallery-frame">
+          <div class="gallery-toolbar">
+            <h3>历史作品</h3>
+            <span class="count">· 12 张</span>
+            <input placeholder="🔍 搜索 type / style / subject…" />
+            <span class="gallery-chip active">全部</span>
+            <span class="gallery-chip">海报</span>
+            <span class="gallery-chip">摄影</span>
+            <span class="gallery-chip">插画</span>
+            <span class="gallery-chip">⋯</span>
+          </div>
+
+          <div class="gallery-grid">
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">海报</div>
+                <div class="gallery-card-style">极简插画</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">摄影</div>
+                <div class="gallery-card-style">电影感</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">信息图</div>
+                <div class="gallery-card-style">扁平插画</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">海报</div>
+                <div class="gallery-card-style">复古美漫</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">插画</div>
+                <div class="gallery-card-style">水彩</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">头像</div>
+                <div class="gallery-card-style">黑白线稿</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">封面图</div>
+                <div class="gallery-card-style">夕阳粉橙</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">卡牌</div>
+                <div class="gallery-card-style">莫奈蓝紫</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">海报</div>
+                <div class="gallery-card-style">国画水墨</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">插画</div>
+                <div class="gallery-card-style">厚涂</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">封面图</div>
+                <div class="gallery-card-style">黑白胶片</div>
+              </div>
+            </article>
+            <article class="gallery-card">
+              <div class="gallery-card-img"></div>
+              <div class="gallery-card-body">
+                <div class="gallery-card-type">头像</div>
+                <div class="gallery-card-style">扁平卡通</div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+      <div class="state-note">
+        独立 Tab,全屏网格(6 列)。<strong>顶部工具栏</strong>:搜索 + Type 筛选 chip。点单张卡片打开详情/复用(沿用之前 GalleryDetailDialog 的设计)。这一页不显示起草区,完全聚焦"翻看历史"。
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

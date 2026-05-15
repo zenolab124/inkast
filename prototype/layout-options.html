@@ -1,0 +1,1058 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · 布局方案对比</title>
+  <style>
+    /* ============================================================
+       paper token (与项目 paper.css 对齐)
+       ============================================================ */
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+    }
+
+    /* ============================================================
+       顶部 Tab 切换
+       ============================================================ */
+    .tabs-bar {
+      position: sticky; top: 0; z-index: 100;
+      display: flex;
+      gap: 0;
+      padding: 14px 24px;
+      background: color-mix(in oklch, var(--background) 96%, var(--card));
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      backdrop-filter: blur(6px);
+    }
+    .tabs-bar h1 {
+      margin: 0 24px 0 0;
+      font-size: 14px; font-weight: 500;
+      align-self: center;
+      color: var(--foreground);
+    }
+    .tabs-bar h1 small {
+      color: var(--muted-foreground);
+      font-weight: 400;
+      margin-left: 8px;
+    }
+
+    .tabs-bar label {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      color: var(--muted-foreground);
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      transition: all 0.12s;
+    }
+    .tabs-bar label:hover { color: var(--foreground); background: var(--secondary); }
+
+    input[type="radio"][name="tab"] { display: none; }
+
+    /* 选中态 */
+    #tab-a:checked ~ .tabs-bar label[for="tab-a"],
+    #tab-b:checked ~ .tabs-bar label[for="tab-b"],
+    #tab-c:checked ~ .tabs-bar label[for="tab-c"],
+    #tab-d:checked ~ .tabs-bar label[for="tab-d"] {
+      background: var(--card);
+      color: var(--foreground);
+      border-color: color-mix(in oklch, var(--border) 60%, transparent);
+      box-shadow: var(--shadow-paper);
+    }
+
+    .tab-badge {
+      font-size: 9.5px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-left: 4px;
+    }
+
+    /* 默认显示 A */
+    .layout { display: none; }
+    #tab-a:checked ~ .panes > .layout-a { display: flex; }
+    #tab-b:checked ~ .panes > .layout-b { display: flex; }
+    #tab-c:checked ~ .panes > .layout-c { display: flex; }
+    #tab-d:checked ~ .panes > .layout-d { display: flex; }
+
+    /* ============================================================
+       通用画框样式(占位块的视觉语言)
+       ============================================================ */
+    .layout { position: relative; z-index: 1; }
+    .panes { position: relative; z-index: 1; }
+
+    .canvas {
+      width: 100%;
+      min-height: calc(100vh - 130px);
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 20px 24px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* 标题条:布局名 + 思路 + 取舍 */
+    .meta {
+      padding: 14px 18px;
+      background: color-mix(in oklch, var(--card) 70%, var(--background));
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .meta h2 {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .meta .belief {
+      color: var(--primary);
+      font-weight: 500;
+    }
+    .meta .tradeoff {
+      color: var(--muted-foreground);
+    }
+
+    /* 主页面 frame */
+    .frame {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 760px;
+    }
+
+    /* 顶部 Header(在 frame 内) */
+    .app-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 18px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+    }
+    .app-header .brand { font-size: 14px; font-weight: 500; letter-spacing: -0.012em; }
+    .app-header .brand i {
+      display: inline-block; width: 10px; height: 10px; background: var(--primary);
+      border-radius: 50%; margin-right: 8px; vertical-align: middle;
+    }
+    .app-header .actions {
+      display: flex; gap: 6px; font-size: 11.5px; color: var(--muted-foreground);
+    }
+    .app-header .actions span {
+      padding: 4px 10px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      background: var(--secondary);
+    }
+
+    /* 占位块(box-) */
+    .box {
+      background: color-mix(in oklch, var(--background) 60%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      font-size: 12px;
+      color: var(--muted-foreground);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .box-emphasized {
+      background: var(--card);
+      border-color: color-mix(in oklch, var(--border) 70%, transparent);
+      box-shadow: var(--shadow-paper);
+    }
+    .box-dashed { border-style: dashed; }
+    .box-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted-foreground);
+    }
+    .box-body {
+      font-size: 12px;
+      color: color-mix(in oklch, var(--foreground) 70%, var(--background));
+    }
+    .box-tall { min-height: 80px; }
+    .box-taller { min-height: 160px; }
+    .box-grow { flex: 1; min-height: 0; }
+
+    /* 强调按钮占位 */
+    .btn-mock {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 8px 14px;
+      background: var(--accent);
+      color: var(--accent-foreground);
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      font-weight: 500;
+      box-shadow: var(--shadow-paper);
+    }
+    .btn-mock.primary { background: var(--primary); color: var(--primary-foreground); }
+    .btn-mock.outline { background: transparent; color: var(--accent); border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent); }
+    .btn-mock.ghost { background: var(--secondary); color: var(--muted-foreground); }
+
+    .group-card {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      padding: 14px 16px;
+    }
+    .group-card-head {
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 8px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      margin-bottom: 10px;
+    }
+    .group-card-head svg { width: 14px; height: 14px; color: var(--primary); margin-right: 6px; vertical-align: middle; }
+    .group-card-head .hint { font-size: 10.5px; color: var(--muted-foreground); font-weight: 400; }
+
+    .field-row { display: grid; gap: 10px; }
+    .field-mock {
+      padding: 6px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+      min-height: 30px;
+      display: flex; align-items: center;
+    }
+    .field-mock.tall { min-height: 56px; align-items: flex-start; padding-top: 7px; }
+
+    /* Gallery 缩略 */
+    .gallery-mock {
+      display: grid;
+      gap: 8px;
+    }
+    .gallery-tile {
+      aspect-ratio: 1 / 1;
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: linear-gradient(135deg, #d4724a 0%, #f5b942 50%, #3a5a40 100%);
+    }
+    .gallery-tile:nth-child(2) { background: linear-gradient(135deg, #1a2b4c, #6b8db4); }
+    .gallery-tile:nth-child(3) { background: linear-gradient(135deg, #c8c2bd, #7a6f64); }
+    .gallery-tile:nth-child(4) { background: linear-gradient(135deg, #c8163e, #f0c14b); }
+    .gallery-tile:nth-child(5) { background: linear-gradient(135deg, #3a5a40, #a3b18a); }
+    .gallery-tile:nth-child(6) { background: linear-gradient(135deg, #6b8db4, #b0a0c2); }
+    .gallery-tile:nth-child(7) { background: linear-gradient(135deg, #f5b942, #f08a5d); }
+    .gallery-tile:nth-child(8) { background: linear-gradient(135deg, #ededed, #1a1a1a); }
+    .gallery-tile:nth-child(9) { background: linear-gradient(135deg, #2a4d3a, #c8163e); }
+
+    /* Active Job mini */
+    .job-mock {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px;
+      background: color-mix(in oklch, var(--primary) 5%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px;
+    }
+    .job-mock i {
+      display: inline-block; width: 10px; height: 10px;
+      border: 2px solid var(--primary); border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+    .job-mock .progress { color: var(--muted-foreground); }
+    .job-mock .truncate {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--foreground); opacity: 0.85;
+    }
+
+    /* ============================================================
+       LAYOUT A — 三栏
+       ============================================================ */
+
+    .layout-a .frame-body {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 280px 1fr 340px;
+      gap: 0;
+      min-height: 0;
+    }
+    .layout-a .col {
+      padding: 18px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .layout-a .col-left {
+      border-right: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+    }
+    .layout-a .col-right {
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+    }
+    .layout-a .col-center { gap: 14px; }
+    .layout-a .col-center .footer-cta {
+      margin-top: auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding-top: 14px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .layout-a .col-right .gallery-mock {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    /* ============================================================
+       LAYOUT B — 两栏(左编辑器主 + 右 Gallery 侧栏)
+       ============================================================ */
+
+    .layout-b .frame-body {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 0;
+      min-height: 0;
+    }
+    .layout-b .col-main {
+      padding: 18px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .layout-b .col-side {
+      padding: 18px;
+      overflow-y: auto;
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .layout-b .composer-strip {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: stretch;
+      padding: 12px 14px;
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+    }
+    .layout-b .composer-strip .strip-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted-foreground);
+      margin-bottom: 4px;
+    }
+    .layout-b .composer-strip .strip-body {
+      font-size: 12px;
+      color: color-mix(in oklch, var(--foreground) 70%, var(--background));
+    }
+    .layout-b .composer-strip .strip-actions {
+      display: flex; flex-direction: column; gap: 6px;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .layout-b .editor-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .layout-b .editor-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .layout-b .editor-grid-scene {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 12px;
+    }
+    .layout-b .editor-grid-scene > :nth-child(3) { grid-column: 1 / 3; }
+
+    .layout-b .col-side .gallery-mock { grid-template-columns: repeat(2, 1fr); }
+    .layout-b .col-main .footer-cta {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-top: 14px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      margin-top: 6px;
+    }
+
+    /* ============================================================
+       LAYOUT C — 上下分屏(顶编辑器 + 底 Gallery 横滚)
+       ============================================================ */
+
+    .layout-c .frame-body {
+      flex: 1;
+      display: grid;
+      grid-template-rows: 1fr 300px;
+      min-height: 0;
+    }
+
+    .layout-c .mode-tabs {
+      display: flex; gap: 4px;
+      padding: 10px 18px 0;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .layout-c .mode-tabs .mode-tab {
+      padding: 8px 16px;
+      font-size: 12.5px;
+      font-weight: 500;
+      border-radius: var(--radius) var(--radius) 0 0;
+      cursor: pointer;
+      color: var(--muted-foreground);
+      border: 1px solid transparent;
+      border-bottom: none;
+      margin-bottom: -1px;
+    }
+    .layout-c .mode-tabs .mode-tab.active {
+      background: var(--card);
+      color: var(--foreground);
+      border-color: color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .layout-c .mode-tabs .mode-tab .small {
+      font-size: 10px;
+      color: var(--muted-foreground);
+      font-weight: 400;
+      margin-left: 6px;
+    }
+    .layout-c .mode-tabs .mode-tab.active .small { color: var(--primary); }
+
+    .layout-c .edit-area {
+      padding: 18px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .layout-c .edit-area .footer-cta {
+      margin-top: auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding-top: 12px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .layout-c .editor-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .layout-c .editor-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .layout-c .gallery-strip {
+      padding: 14px 18px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      overflow-x: auto;
+      overflow-y: hidden;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .layout-c .gallery-strip-head {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11.5px;
+    }
+    .layout-c .gallery-strip-head h3 {
+      margin: 0; font-size: 12px; font-weight: 500; letter-spacing: 0.02em;
+    }
+    .layout-c .gallery-strip-row {
+      display: flex; gap: 10px;
+      overflow-x: auto; padding-bottom: 6px;
+    }
+    .layout-c .gallery-strip-row .gallery-tile {
+      flex-shrink: 0;
+      width: 180px;
+      height: 180px;
+    }
+
+    /* ============================================================
+       LAYOUT D — 主画布 + 浮动 AI 抽屉 + 底部 Gallery 抽屉
+       ============================================================ */
+
+    .layout-d .frame-body {
+      flex: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .layout-d .editor-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 320px 18px 18px; /* 右边给浮卡留空 */
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .layout-d .editor-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .layout-d .editor-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .layout-d .editor-grid-scene {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 12px;
+    }
+    .layout-d .editor-grid-scene > :nth-child(3) { grid-column: 1 / 3; }
+
+    /* 右上 AI 浮卡 */
+    .layout-d .ai-float {
+      position: absolute;
+      top: 18px; right: 18px;
+      width: 280px;
+      padding: 14px 16px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--primary) 30%, var(--border));
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper-lifted);
+      display: flex; flex-direction: column; gap: 10px;
+      z-index: 5;
+    }
+    .layout-d .ai-float-head {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11.5px;
+      font-weight: 500;
+    }
+    .layout-d .ai-float-head .badge-ai {
+      font-size: 9.5px;
+      padding: 1px 6px;
+      border-radius: 9px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .layout-d .ai-float textarea-mock {
+      display: block;
+      min-height: 60px;
+      padding: 7px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px;
+      color: color-mix(in oklch, var(--foreground) 70%, var(--background));
+    }
+
+    .layout-d .footer-cta {
+      padding: 14px 18px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      display: flex; justify-content: space-between; align-items: center;
+      background: color-mix(in oklch, var(--background) 40%, var(--card));
+    }
+
+    /* 底部 Gallery 抽屉(常开) */
+    .layout-d .gallery-drawer {
+      max-height: 220px;
+      overflow: hidden;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: color-mix(in oklch, var(--background) 40%, var(--card));
+      padding: 12px 18px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .layout-d .gallery-drawer-head {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11.5px;
+    }
+    .layout-d .gallery-drawer-head h3 { margin: 0; font-size: 12px; font-weight: 500; }
+    .layout-d .gallery-drawer-row {
+      display: flex; gap: 8px;
+      overflow-x: auto;
+    }
+    .layout-d .gallery-drawer-row .gallery-tile {
+      flex-shrink: 0;
+      width: 130px;
+      height: 130px;
+    }
+
+    /* ============================================================
+       小元素:icon、SVG
+       ============================================================ */
+    .ico { width: 14px; height: 14px; stroke-width: 1.5; vertical-align: -2px; }
+
+  </style>
+</head>
+<body>
+
+  <!-- 4 个 radio,控制显示哪个布局 -->
+  <input type="radio" name="tab" id="tab-a" checked />
+  <input type="radio" name="tab" id="tab-b" />
+  <input type="radio" name="tab" id="tab-c" />
+  <input type="radio" name="tab" id="tab-d" />
+
+  <!-- 顶部固定 Tab 条 -->
+  <nav class="tabs-bar">
+    <h1>Inkast · 布局方案对比<small>4 个变体 · 用框代替组件 · 重点看骨架</small></h1>
+    <label for="tab-a">A · 三栏 <span class="tab-badge">编辑器为中心</span></label>
+    <label for="tab-b">B · 两栏 + 顶部散文条 <span class="tab-badge">推荐</span></label>
+    <label for="tab-c">C · 上下分屏 + Tab <span class="tab-badge">模式切换</span></label>
+    <label for="tab-d">D · 单画布 + AI 浮卡 <span class="tab-badge">字段绝对主导</span></label>
+  </nav>
+
+  <div class="panes">
+
+    <!-- ============================================================
+         LAYOUT A — 三栏
+         ============================================================ -->
+    <div class="layout layout-a">
+      <div class="canvas">
+
+        <div class="meta">
+          <h2>A · 三栏:左输入 / 中编辑器 / 右 Gallery</h2>
+          <p class="belief">信念:编辑器是核心舞台,放正中。散文 / 参考图 / AI 预填是输入工具,左侧固定。Gallery + Jobs 是结果与回收,右侧常驻。</p>
+          <p class="tradeoff">取舍:编辑器列宽被压到 ~720px(够用但不宽);左右两栏窄(280 / 340)。优点:三件事一屏看完,工作循环零滚动。缺点:1440px 以下屏幕开始拥挤,1080px 必须折叠某一列。</p>
+        </div>
+
+        <div class="frame">
+          <header class="app-header">
+            <span class="brand"><i></i>Inkast</span>
+            <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+          </header>
+
+          <div class="frame-body">
+
+            <!-- 左:输入 -->
+            <div class="col col-left">
+              <div class="box-label">起草输入</div>
+              <div class="box box-dashed box-tall">
+                <div class="box-label">散文</div>
+                <div class="box-body">一两句话说画面…</div>
+              </div>
+              <div style="display:flex; gap:6px">
+                <span class="btn-mock primary" style="flex:1; font-size:11.5px; padding:7px 10px">AI 预填字段</span>
+              </div>
+              <div class="box box-dashed">
+                <div class="box-label">参考图</div>
+                <div class="box-body">— 未添加 —</div>
+              </div>
+
+              <hr style="border:none; border-top: 1px dashed color-mix(in oklch, var(--border) 50%, transparent); margin: 4px 0" />
+
+              <div class="box-label">快速起点</div>
+              <div class="box">示例 1 · 电影感人物</div>
+              <div class="box">示例 2 · 信息图</div>
+              <div class="box">示例 3 · 复古海报</div>
+            </div>
+
+            <!-- 中:编辑器 -->
+            <div class="col col-center">
+              <div class="box-label" style="font-size:11px">字段编辑器</div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 基本</span><span class="hint">Type / Style · 必填</span></div>
+                <div class="field-row" style="grid-template-columns: 1fr 1fr">
+                  <div class="field-mock">Type · 海报</div>
+                  <div class="field-mock">Style · 极简插画</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 画面</span><span class="hint">主体 / 背景 / 构图</span></div>
+                <div class="field-row" style="grid-template-columns: 2fr 1fr">
+                  <div class="field-mock tall">Subject · 橘色狐狸蜷缩在松树下…</div>
+                  <div class="field-mock">Layout · 留空</div>
+                </div>
+                <div class="field-mock tall" style="margin-top:10px">Background · 远山轮廓与渐变夜空…</div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 氛围</span><span class="hint">Mood / Lighting / Camera</span></div>
+                <div class="field-row" style="grid-template-columns: repeat(3, 1fr)">
+                  <div class="field-mock">Mood · 宁静</div>
+                  <div class="field-mock">Light · 黄昏</div>
+                  <div class="field-mock">Camera · 留空</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 色彩</span><span class="hint">3 色 · 6 预设</span></div>
+                <div class="field-mock">[#1a2b4c] [#f5b942] [#d4724a] + 加颜色</div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 文字</span><span class="hint">1 条文字</span></div>
+                <div class="field-mock">"晚安" · 右下 · 手写体 · 中</div>
+              </div>
+
+              <div class="footer-cta">
+                <span style="font-size: 11.5px; color: var(--muted-foreground)">▾ 查看 JSON · claude-code · 4.2s</span>
+                <span class="btn-mock">▶ 生图</span>
+              </div>
+            </div>
+
+            <!-- 右:Gallery + Jobs -->
+            <div class="col col-right">
+              <div class="job-mock">
+                <i></i>
+                <div class="truncate">橘色狐狸蜷缩在松树下…</div>
+                <span class="progress">12s</span>
+              </div>
+
+              <div class="box-label" style="margin-top:4px">作品 · 9</div>
+              <div class="gallery-mock">
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         LAYOUT B — 两栏 + 顶部散文条
+         ============================================================ -->
+    <div class="layout layout-b">
+      <div class="canvas">
+
+        <div class="meta">
+          <h2>B · 两栏:左编辑器主 + 右 Gallery 常驻 + 顶部散文条</h2>
+          <p class="belief">信念:字段编辑器是绝对主区,占 ~70% 宽。散文降级为顶部一条 strip(单行 + AI 预填按钮),不抢视觉权重。Gallery 在右侧常驻,生图完即时刷新。</p>
+          <p class="tradeoff">取舍:编辑器有宽阔的空间,字段可以横向排得更舒服;Gallery 列 420px 是 2 列网格的舒适宽度。代价:散文区被压缩到一行,长散文需要展开;参考图 / 示例需要找新位置(我塞在散文 strip 的右侧)。</p>
+        </div>
+
+        <div class="frame">
+          <header class="app-header">
+            <span class="brand"><i></i>Inkast</span>
+            <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+          </header>
+
+          <div class="frame-body">
+
+            <!-- 左主区 -->
+            <div class="col-main">
+              <!-- 顶部散文条 -->
+              <div class="composer-strip">
+                <div>
+                  <div class="strip-label">散文输入 · 可选 · 点 ⇲ 展开</div>
+                  <div class="strip-body">一只橘色的狐狸蜷在松树下,抬头望着月亮…</div>
+                </div>
+                <div class="strip-actions">
+                  <span class="btn-mock primary" style="font-size:11.5px; padding:6px 12px">AI 预填字段</span>
+                  <span style="font-size:10.5px; color:var(--muted-foreground); text-align:center">+ 参考图 · 示例</span>
+                </div>
+              </div>
+
+              <!-- 5 分组字段编辑器(宽屏版) -->
+              <div class="group-card">
+                <div class="group-card-head"><span>● 基本</span><span class="hint">Type / Style · 必填</span></div>
+                <div class="editor-grid-2">
+                  <div class="field-mock">Type · 海报</div>
+                  <div class="field-mock">Style · 极简插画</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 画面</span><span class="hint">主体 / 背景 / 构图</span></div>
+                <div class="editor-grid-scene">
+                  <div class="field-mock tall">Subject · 橘色狐狸蜷缩在松树下…</div>
+                  <div class="field-mock">Layout · 留空</div>
+                  <div class="field-mock tall">Background · 远山轮廓与渐变夜空…</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 氛围</span><span class="hint">Mood / Lighting / Camera</span></div>
+                <div class="editor-grid-3">
+                  <div class="field-mock">Mood · 宁静</div>
+                  <div class="field-mock">Lighting · 黄昏</div>
+                  <div class="field-mock">Camera · 留空</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 色彩</span><span class="hint">3 色 · 6 预设</span></div>
+                <div class="field-mock">[#1a2b4c] [#f5b942] [#d4724a] + 加颜色 / 预设 chips</div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 文字</span><span class="hint">1 条</span></div>
+                <div class="field-mock">"晚安" · 右下 · 手写体 · 中</div>
+              </div>
+
+              <div class="footer-cta">
+                <span style="font-size: 11.5px; color: var(--muted-foreground)">▾ 查看 JSON · claude-code · 4.2s</span>
+                <span class="btn-mock">▶ 生图</span>
+              </div>
+            </div>
+
+            <!-- 右栏 -->
+            <div class="col-side">
+              <div class="job-mock">
+                <i></i>
+                <div class="truncate">橘色狐狸蜷缩在松树下…</div>
+                <span class="progress">12s</span>
+              </div>
+
+              <div class="box-label" style="margin-top:4px">作品 · 9</div>
+              <div class="gallery-mock">
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         LAYOUT C — 上下分屏 + Tab
+         ============================================================ -->
+    <div class="layout layout-c">
+      <div class="canvas">
+
+        <div class="meta">
+          <h2>C · 上下分屏:上编辑区(Tab 切散文/字段)+ 下 Gallery 横滚</h2>
+          <p class="belief">信念:用户有两种工作模式——"快速起草"(散文 + AI)和"精细控制"(字段)——两种模式互斥,用 Tab 切。无论哪个 Tab,底部 Gallery 横滚条始终可见,任务完成即刷新。</p>
+          <p class="tradeoff">取舍:用 Tab 把"散文 vs 字段"显式表达,认知上更清晰(解决"3 个生图入口"问题)。代价:切换 Tab 时另一侧不可见,如果用户想"散文起草+字段精修"的两步流程,必须在 Tab 间来回切换。Gallery 横滚虽然始终可见但展示密度低(一屏 ~6 张)。</p>
+        </div>
+
+        <div class="frame">
+          <header class="app-header">
+            <span class="brand"><i></i>Inkast</span>
+            <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+          </header>
+
+          <div class="frame-body">
+
+            <!-- 上半:编辑器 + Mode Tabs -->
+            <div style="display:flex; flex-direction:column; overflow:hidden">
+              <div class="mode-tabs">
+                <div class="mode-tab">✦ 散文起草<span class="small">写一两句,AI 帮你填字段</span></div>
+                <div class="mode-tab active">⊞ 字段精修<span class="small">手动控制每个字段</span></div>
+              </div>
+
+              <div class="edit-area">
+                <div class="group-card">
+                  <div class="group-card-head"><span>● 基本</span><span class="hint">Type / Style · 必填</span></div>
+                  <div class="editor-grid-2">
+                    <div class="field-mock">Type · 海报</div>
+                    <div class="field-mock">Style · 极简插画</div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="group-card-head"><span>● 画面</span><span class="hint">主体 / 背景 / 构图</span></div>
+                  <div class="editor-grid-3">
+                    <div class="field-mock tall" style="grid-column: 1 / 3">Subject · 橘色狐狸蜷缩在松树下…</div>
+                    <div class="field-mock">Layout · 留空</div>
+                    <div class="field-mock tall" style="grid-column: 1 / 4">Background · 远山轮廓与渐变夜空…</div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="group-card-head"><span>● 氛围 · 色彩 · 文字</span><span class="hint">折叠到次级,默认收起</span></div>
+                  <div class="editor-grid-3" style="margin-top:2px">
+                    <div class="field-mock">▸ 氛围(3 字段)</div>
+                    <div class="field-mock">▸ 色彩(3 色)</div>
+                    <div class="field-mock">▸ 文字(1 条)</div>
+                  </div>
+                </div>
+
+                <div class="footer-cta">
+                  <span style="font-size: 11.5px; color: var(--muted-foreground)">▾ 查看 JSON · 4.2s</span>
+                  <span class="btn-mock">▶ 生图</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 下半:Gallery + Jobs 横滚 -->
+            <div class="gallery-strip">
+              <div class="gallery-strip-head">
+                <h3>作品 · 9 <span style="color:var(--muted-foreground); font-weight:400">· 1 个任务进行中</span></h3>
+                <span style="color:var(--muted-foreground)">筛选 · 排序 ▾</span>
+              </div>
+              <div class="gallery-strip-row">
+                <div class="job-mock" style="width:200px; flex-shrink:0; align-items:flex-start; flex-direction:column">
+                  <div style="display:flex; align-items:center; gap:6px; width:100%">
+                    <i></i><span style="font-size:11px; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:0.08em">生成中 · 12s</span>
+                  </div>
+                  <div style="font-size:11px; color:var(--foreground); opacity:0.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; width:100%">橘色狐狸蜷缩在松树下…</div>
+                </div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         LAYOUT D — 单画布 + AI 浮卡 + 底部 Gallery 抽屉
+         ============================================================ -->
+    <div class="layout layout-d">
+      <div class="canvas">
+
+        <div class="meta">
+          <h2>D · 单画布:字段编辑器全宽 + 右上 AI 浮卡 + 底部 Gallery 抽屉</h2>
+          <p class="belief">信念:字段编辑器是绝对主区,占满主屏。散文 + AI 是"辅助工具",收进右上角浮卡(可折叠 / 可拖动)。Gallery 是"回收站",收进底部抽屉(默认展开 1 行,可上拉)。</p>
+          <p class="tradeoff">取舍:最忠实表达"字段是核心,AI 是加速器"的产品决策。字段编辑器有最宽的空间。代价:浮卡浮在内容上方会遮挡(右上角的"基本"分组卡部分被压在浮卡下);浮卡 280px 给散文很挤;底部抽屉默认只显示 1 行 Gallery,要看全得上拉。复杂度最高。</p>
+        </div>
+
+        <div class="frame">
+          <header class="app-header">
+            <span class="brand"><i></i>Inkast</span>
+            <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+          </header>
+
+          <div class="frame-body">
+
+            <!-- 主编辑区 + 右上浮卡 -->
+            <div class="editor-area">
+              <div class="group-card">
+                <div class="group-card-head"><span>● 基本</span><span class="hint">Type / Style · 必填</span></div>
+                <div class="editor-grid-2">
+                  <div class="field-mock">Type · 海报</div>
+                  <div class="field-mock">Style · 极简插画</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 画面</span><span class="hint">主体 / 背景 / 构图</span></div>
+                <div class="editor-grid-scene">
+                  <div class="field-mock tall">Subject · 橘色狐狸蜷缩在松树下…</div>
+                  <div class="field-mock">Layout · 留空</div>
+                  <div class="field-mock tall">Background · 远山轮廓与渐变夜空…</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 氛围</span><span class="hint">Mood / Lighting / Camera</span></div>
+                <div class="editor-grid-3">
+                  <div class="field-mock">Mood · 宁静</div>
+                  <div class="field-mock">Lighting · 黄昏</div>
+                  <div class="field-mock">Camera · 留空</div>
+                </div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 色彩</span><span class="hint">3 色 · 6 预设</span></div>
+                <div class="field-mock">[#1a2b4c] [#f5b942] [#d4724a] + 加颜色 / 预设</div>
+              </div>
+
+              <div class="group-card">
+                <div class="group-card-head"><span>● 文字</span><span class="hint">1 条</span></div>
+                <div class="field-mock">"晚安" · 右下 · 手写体 · 中</div>
+              </div>
+            </div>
+
+            <!-- 右上 AI 浮卡 -->
+            <div class="ai-float">
+              <div class="ai-float-head">
+                <span>✦ AI 起草助手</span>
+                <span class="badge-ai">可折叠</span>
+              </div>
+              <textarea-mock>一只橘色的狐狸蜷在松树下,抬头望着月亮…</textarea-mock>
+              <span class="btn-mock primary" style="font-size:11.5px; padding:6px 12px; justify-content:center">AI 预填字段</span>
+              <div style="display:flex; gap:6px; font-size:11px; color:var(--muted-foreground)">
+                <span>+ 参考图</span>
+                <span style="margin-left:auto">▾ 示例</span>
+              </div>
+            </div>
+
+            <!-- 生图栏 -->
+            <div class="footer-cta">
+              <span style="font-size: 11.5px; color: var(--muted-foreground)">▾ 查看 JSON · 4.2s</span>
+              <span class="btn-mock">▶ 生图</span>
+            </div>
+
+            <!-- 底部 Gallery 抽屉 -->
+            <div class="gallery-drawer">
+              <div class="gallery-drawer-head">
+                <h3>作品 · 9 <span style="color:var(--muted-foreground); font-weight:400">· 上拉看全部</span></h3>
+                <div style="display:flex; gap:10px; align-items:center; font-size:11.5px; color:var(--muted-foreground)">
+                  <span class="job-mock" style="padding: 4px 10px; font-size:10.5px">
+                    <i style="width:8px; height:8px"></i>
+                    生成中 · 12s
+                  </span>
+                  <span>筛选 ▾</span>
+                </div>
+              </div>
+              <div class="gallery-drawer-row">
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+                <div class="gallery-tile"></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

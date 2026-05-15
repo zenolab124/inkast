@@ -51,16 +51,16 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
           </div>
         </header>
 
-        <div className="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_360px]">
-          <div className="flex items-center justify-center overflow-hidden bg-background p-4">
+        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_380px]">
+          <div className="flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-background p-4">
             <img
               src={url}
               alt={String(record.promptSnapshot.type ?? "image")}
-              className="max-h-full max-w-full rounded-sm object-contain shadow-(--shadow-paper)"
+              className="max-h-full max-w-full object-contain rounded-sm shadow-(--shadow-paper)"
             />
           </div>
 
-          <aside className="flex flex-col border-t border-border/60 md:border-l md:border-t-0">
+          <aside className="flex min-h-0 flex-col overflow-hidden border-t border-border/60 md:border-l md:border-t-0">
             <div className="flex items-center justify-between border-b border-border/60 px-5 py-3">
               <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 {t.detail.prompt}
@@ -84,7 +84,7 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
                 )}
               </Button>
             </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               <PromptFieldEditor
                 value={record.promptSnapshot as ImagePrompt}
                 onChange={() => {}}

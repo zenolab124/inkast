@@ -48,6 +48,8 @@ interface PromptFieldEditorProps {
   generating?: boolean;
   onGenerate?: () => void;
   readOnly?: boolean;
+  /** Collapsed = narrow stub mode (accordion not yet expanded). */
+  collapsed?: boolean;
 }
 
 export function PromptFieldEditor({
@@ -59,6 +61,7 @@ export function PromptFieldEditor({
   generating,
   onGenerate,
   readOnly,
+  collapsed,
 }: PromptFieldEditorProps) {
   const { t } = useLanguage();
   const ai = (key: string) =>
@@ -96,6 +99,10 @@ export function PromptFieldEditor({
 
   const extras = Object.entries(value).filter(([k]) => !KNOWN_KEYS.has(k));
 
+  if (collapsed) {
+    return <CollapsedStub />;
+  }
+
   return (
     <div
       className={cn(
@@ -112,31 +119,68 @@ export function PromptFieldEditor({
         </div>
       )}
 
-      {/* 基本 */}
-      <Group icon={<CircleDot />} title={t.editor.groups.basic.title} hint={t.editor.groups.basic.hint}>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <FieldPicker
-            label={t.editor.fields.type}
-            value={normalizeStringField(value.type)}
-            onChange={v => setStr("type", v)}
-            field="type"
-            options={TYPE_OPTIONS}
-            aiSuggested={ai("type")}
-            readOnly={readOnly}
-            placeholder={t.editor.placeholders.type}
-          />
-          <FieldPicker
-            label={t.editor.fields.style}
-            value={normalizeStringField(value.style)}
-            onChange={v => setStr("style", v)}
-            field="style"
-            options={STYLE_OPTIONS}
-            aiSuggested={ai("style")}
-            readOnly={readOnly}
-            placeholder={t.editor.placeholders.style}
-          />
-        </div>
-      </Group>
+      {/* 基本 + 氛围 同行(宽屏 2:3,窄屏堆叠) */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_3fr]">
+        <Group icon={<CircleDot />} title={t.editor.groups.basic.title} hint={t.editor.groups.basic.hint}>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FieldPicker
+              label={t.editor.fields.type}
+              value={normalizeStringField(value.type)}
+              onChange={v => setStr("type", v)}
+              field="type"
+              options={TYPE_OPTIONS}
+              aiSuggested={ai("type")}
+              readOnly={readOnly}
+              placeholder={t.editor.placeholders.type}
+            />
+            <FieldPicker
+              label={t.editor.fields.style}
+              value={normalizeStringField(value.style)}
+              onChange={v => setStr("style", v)}
+              field="style"
+              options={STYLE_OPTIONS}
+              aiSuggested={ai("style")}
+              readOnly={readOnly}
+              placeholder={t.editor.placeholders.style}
+            />
+          </div>
+        </Group>
+
+        <Group icon={<Sun />} title={t.editor.groups.mood.title} hint={t.editor.groups.mood.hint}>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <FieldPicker
+              label={t.editor.fields.mood}
+              value={normalizeStringField(value.mood)}
+              onChange={v => setStr("mood", v)}
+              field="mood"
+              options={MOOD_OPTIONS}
+              aiSuggested={ai("mood")}
+              readOnly={readOnly}
+              placeholder={t.editor.placeholders.empty}
+            />
+            <FieldPicker
+              label={t.editor.fields.lighting}
+              value={normalizeStringField(value.lighting)}
+              onChange={v => setStr("lighting", v)}
+              field="lighting"
+              options={LIGHTING_OPTIONS}
+              aiSuggested={ai("lighting")}
+              readOnly={readOnly}
+              placeholder={t.editor.placeholders.empty}
+            />
+            <FieldPicker
+              label={t.editor.fields.camera}
+              value={normalizeStringField(value.camera)}
+              onChange={v => setStr("camera", v)}
+              field="camera"
+              options={CAMERA_OPTIONS}
+              aiSuggested={ai("camera")}
+              readOnly={readOnly}
+              placeholder={t.editor.placeholders.empty}
+            />
+          </div>
+        </Group>
+      </div>
 
       {/* 画面 */}
       <Group icon={<ImageIcon />} title={t.editor.groups.scene.title} hint={t.editor.groups.scene.hint}>
@@ -170,42 +214,6 @@ export function PromptFieldEditor({
             placeholder={t.editor.placeholders.background}
             className="md:col-span-3"
             rows={2}
-          />
-        </div>
-      </Group>
-
-      {/* 氛围 */}
-      <Group icon={<Sun />} title={t.editor.groups.mood.title} hint={t.editor.groups.mood.hint}>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <FieldPicker
-            label={t.editor.fields.mood}
-            value={normalizeStringField(value.mood)}
-            onChange={v => setStr("mood", v)}
-            field="mood"
-            options={MOOD_OPTIONS}
-            aiSuggested={ai("mood")}
-            readOnly={readOnly}
-            placeholder={t.editor.placeholders.empty}
-          />
-          <FieldPicker
-            label={t.editor.fields.lighting}
-            value={normalizeStringField(value.lighting)}
-            onChange={v => setStr("lighting", v)}
-            field="lighting"
-            options={LIGHTING_OPTIONS}
-            aiSuggested={ai("lighting")}
-            readOnly={readOnly}
-            placeholder={t.editor.placeholders.empty}
-          />
-          <FieldPicker
-            label={t.editor.fields.camera}
-            value={normalizeStringField(value.camera)}
-            onChange={v => setStr("camera", v)}
-            field="camera"
-            options={CAMERA_OPTIONS}
-            aiSuggested={ai("camera")}
-            readOnly={readOnly}
-            placeholder={t.editor.placeholders.empty}
           />
         </div>
       </Group>
@@ -381,6 +389,33 @@ function formatExtra(val: unknown): string {
   if (typeof val === "string") return val;
   if (typeof val === "number" || typeof val === "boolean") return String(val);
   return JSON.stringify(val);
+}
+
+function CollapsedStub() {
+  const { t } = useLanguage();
+  return (
+    <div className="flex h-full flex-col gap-2">
+      <span className="px-1 text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        {t.editor.collapsed.title}
+      </span>
+      <div className="flex flex-1 flex-col gap-2">
+        {t.editor.collapsed.groupNames.map((name, i) => (
+          <div
+            key={name}
+            className="flex flex-1 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border/50 bg-background/50 px-2 py-3"
+          >
+            <span className="text-[9px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+              {i + 1}
+            </span>
+            <span className="text-xs font-medium text-foreground/65">{name}</span>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-md border border-dashed border-primary/30 bg-primary/5 px-2.5 py-2 text-center text-[10.5px] leading-relaxed text-primary">
+        {t.editor.collapsed.tipExpand}
+      </div>
+    </div>
+  );
 }
 
 function normalizeStringField(val: unknown): string {

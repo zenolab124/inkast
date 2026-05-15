@@ -5,6 +5,10 @@ export interface Translations {
     title: string;
     tagline: string;
   };
+  tabs: {
+    draft: string;
+    gallery: string;
+  };
   header: {
     config: string;
     dark: string;
@@ -20,20 +24,22 @@ export interface Translations {
   };
   composer: {
     label: string;
-    optional: string;
-    hint: string;
     placeholder: string;
-    sample: string;
     cancel: string;
     aiFill: string;
-    aiFillAgain: string;
     aiFilling: string;
-    titleHintFresh: string;
-    titleHintOverride: string;
-    samples: string[];
-    generateRaw: string;
-    generateRawHint: string;
-    generateRawPending: string;
+    generateNow: string;
+    generateNowHint: string;
+    generateNowPending: string;
+    skipText: string;
+    skipTextKbd: string;
+    locked: string;
+    lockedNoProse: string;
+    unlock: string;
+    backToDraft: string;
+    m2Hint: string;
+    reExpand: string;
+    rawAfterLock: string;
     reference: string;
     referenceAdd: string;
     referenceRemove: string;
@@ -78,6 +84,27 @@ export interface Translations {
     };
     json: { show: string; hide: string; copy: string; copied: string };
     generate: { ready: string; pending: string };
+    collapsed: {
+      title: string;
+      tipExpand: string;
+      tipSkipRaw: string;
+      groupNames: [string, string, string, string, string];
+    };
+  };
+  workspace: {
+    title: string;
+    refreshNote: string;
+    empty: string;
+    emptyTip: string;
+    emptyAdjust: string;
+    countSuffix: string;
+    completedLabel: string;
+    activeLabel: string;
+  };
+  galleryPage: {
+    searchPlaceholder: string;
+    filterAll: string;
+    empty: string;
   };
   palette: {
     emptyEditable: string;

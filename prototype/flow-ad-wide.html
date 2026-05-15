@@ -1,0 +1,1579 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · A / D 宽屏细化</title>
+  <style>
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+    }
+
+    /* ============================================================
+       Tab 切换 A / D
+       ============================================================ */
+    input[type="radio"][name="plan"] { display: none; }
+    .plan-bar {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; gap: 6px; align-items: center;
+      padding: 12px 24px;
+      background: color-mix(in oklch, var(--background) 96%, var(--card));
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      backdrop-filter: blur(6px);
+    }
+    .plan-bar h1 {
+      margin: 0 24px 0 0;
+      font-size: 13.5px; font-weight: 500;
+    }
+    .plan-bar h1 small {
+      color: var(--muted-foreground); font-weight: 400; margin-left: 6px;
+    }
+    .plan-bar label {
+      padding: 6px 14px;
+      font-size: 12px; font-weight: 500;
+      cursor: pointer;
+      color: var(--muted-foreground);
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+    }
+    .plan-bar label:hover { color: var(--foreground); background: var(--secondary); }
+    #plan-a:checked ~ .plan-bar label[for="plan-a"],
+    #plan-d:checked ~ .plan-bar label[for="plan-d"] {
+      background: var(--card); color: var(--foreground);
+      border-color: color-mix(in oklch, var(--border) 60%, transparent);
+      box-shadow: var(--shadow-paper);
+    }
+    .plan { display: none; }
+    #plan-a:checked ~ .panes > .plan-a,
+    #plan-d:checked ~ .panes > .plan-d { display: block; }
+
+    /* ============================================================
+       页面骨架
+       ============================================================ */
+    .panes { position: relative; z-index: 1; }
+    .canvas {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 20px 24px 80px;
+    }
+    .meta {
+      padding: 14px 18px;
+      background: color-mix(in oklch, var(--card) 70%, var(--background));
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+    .meta h2 { margin: 0 0 4px; font-size: 14.5px; font-weight: 500; }
+    .meta .belief { color: var(--primary); font-weight: 500; }
+    .meta .tradeoff { color: var(--muted-foreground); }
+
+    /* 每个状态:标签 + 完整宽屏截图 + 注释 */
+    .state-block { margin-bottom: 36px; }
+    .state-label {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 10px;
+    }
+    .state-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-radius: 50%;
+      font-size: 11.5px; font-weight: 600;
+    }
+    .state-num.alt { background: var(--accent); }
+    .state-title { font-size: 14px; font-weight: 500; }
+    .state-sub {
+      font-size: 11.5px; color: var(--muted-foreground);
+      letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 9px;
+      background: var(--secondary);
+    }
+    .state-note {
+      margin-top: 10px;
+      padding: 10px 14px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border-left: 3px solid color-mix(in oklch, var(--primary) 50%, transparent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      font-size: 12px; color: var(--muted-foreground);
+      line-height: 1.6;
+    }
+
+    /* ============================================================
+       Frame(模拟整个 app)
+       ============================================================ */
+    .frame {
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .app-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 18px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+    }
+    .app-header .brand { font-size: 13px; font-weight: 500; }
+    .app-header .brand i {
+      display: inline-block; width: 9px; height: 9px; background: var(--primary);
+      border-radius: 50%; margin-right: 8px; vertical-align: middle;
+    }
+    .app-header .actions {
+      display: flex; gap: 4px; font-size: 11px; color: var(--muted-foreground);
+    }
+    .app-header .actions span {
+      padding: 3px 8px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      background: var(--secondary);
+    }
+    .app-header .actions span.attn {
+      background: color-mix(in oklch, var(--accent) 14%, transparent);
+      color: var(--accent);
+      border-color: color-mix(in oklch, var(--accent) 35%, transparent);
+    }
+
+    /* ============================================================
+       通用占位
+       ============================================================ */
+    .label {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted-foreground);
+    }
+    .text-mock {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      color: color-mix(in oklch, var(--foreground) 80%, var(--background));
+      line-height: 1.55;
+    }
+    .text-mock.empty {
+      color: var(--muted-foreground); font-style: italic; min-height: 120px;
+    }
+    .text-mock.huge { min-height: 200px; }
+    .text-mock.big { min-height: 140px; }
+    .text-mock.mid { min-height: 80px; }
+    .text-mock.small { min-height: 50px; font-size: 11.5px; }
+
+    .btn-mock {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 5px;
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      font-size: 12.5px; font-weight: 500;
+      cursor: pointer;
+      box-shadow: var(--shadow-paper);
+    }
+    .btn-mock.lg { padding: 10px 20px; font-size: 13px; }
+    .btn-accent { background: var(--accent); color: var(--accent-foreground); }
+    .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+    .btn-outline {
+      background: var(--secondary); color: var(--foreground);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      box-shadow: none;
+    }
+    .btn-outline-accent {
+      background: transparent;
+      border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+      color: var(--accent);
+      box-shadow: none;
+    }
+    .btn-disabled {
+      background: color-mix(in oklch, var(--muted) 60%, var(--background));
+      color: var(--muted-foreground);
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .small-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 12px;
+      color: var(--muted-foreground);
+      text-decoration: none;
+    }
+    .small-link:hover { color: var(--foreground); }
+    .small-link .kbd {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10.5px;
+      padding: 1px 5px;
+      background: var(--secondary);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: 3px;
+      margin-left: 4px;
+    }
+    .or-divider {
+      display: flex; align-items: center; gap: 12px;
+      font-size: 10.5px; color: var(--muted-foreground);
+      letter-spacing: 0.1em; text-transform: uppercase;
+      margin: 8px 0;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ""; flex: 1; height: 1px;
+      background: color-mix(in oklch, var(--border) 50%, transparent);
+    }
+
+    .annot {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px;
+      padding: 1px 7px;
+      border-radius: 9px;
+      background: color-mix(in oklch, var(--accent) 14%, transparent);
+      color: var(--accent);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .annot.primary {
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary);
+    }
+
+    /* ============================================================
+       字段编辑器(宽屏版,内部多列)
+       ============================================================ */
+    .editor {
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .group-card {
+      padding: 14px 16px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+    }
+    .group-card .head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .group-card .head .title {
+      font-size: 12px; font-weight: 500; letter-spacing: 0.02em;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .group-card .head .title svg {
+      width: 14px; height: 14px; stroke-width: 1.5; color: var(--primary);
+    }
+    .group-card .head .hint {
+      font-size: 11px; color: var(--muted-foreground);
+    }
+    .ai-badge {
+      font-size: 9.5px; padding: 1px 6px; border-radius: 9px;
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      color: var(--primary); letter-spacing: 0.04em; text-transform: uppercase;
+    }
+
+    .field-grid {
+      display: grid; gap: 10px;
+    }
+    .field-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+    .field-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .field-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+    .field-grid.cols-scene {
+      grid-template-columns: 2fr 1fr 1fr;
+    }
+
+    .field-cell {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .field-cell .k {
+      font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted-foreground);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .field-cell .v {
+      padding: 6px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px;
+      color: color-mix(in oklch, var(--foreground) 75%, var(--background));
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px;
+      min-height: 30px;
+    }
+    .field-cell .v.tall {
+      min-height: 56px; align-items: flex-start; padding-top: 7px;
+    }
+    .field-cell .v .preview-dot {
+      width: 16px; height: 16px; border-radius: 2px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--muted) 0%, var(--secondary) 100%);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .field-cell .v .chev {
+      width: 11px; height: 11px; color: var(--muted-foreground); flex-shrink: 0;
+    }
+    .field-cell .v.empty {
+      color: var(--muted-foreground); font-style: italic;
+    }
+
+    /* color palette */
+    .palette-mock {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      padding: 8px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+    }
+    .swatch {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px 3px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      color: var(--muted-foreground);
+    }
+    .swatch i {
+      width: 16px; height: 16px; border-radius: 3px;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      display: inline-block;
+    }
+    .preset-chips {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-top: 8px;
+    }
+    .preset-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 8px 2px 4px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: 10px;
+      font-size: 10.5px;
+      color: var(--foreground);
+    }
+    .preset-chip .dots { display: inline-flex; gap: 1px; }
+    .preset-chip .dots i {
+      width: 7px; height: 7px; border-radius: 50%;
+      display: inline-block;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+
+    /* text element row */
+    .text-elem-mock {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+      border-radius: var(--radius);
+    }
+    .text-elem-mock .head {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted-foreground);
+      margin-bottom: 6px;
+    }
+
+    /* ============================================================
+       AI 建议侧栏
+       ============================================================ */
+    .ai-side {
+      padding: 14px 14px 12px;
+      background: color-mix(in oklch, var(--primary) 5%, var(--card));
+      border: 1px dashed color-mix(in oklch, var(--primary) 35%, transparent);
+      border-radius: var(--radius);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .ai-side h4 {
+      margin: 0; font-size: 12px; font-weight: 500;
+      color: var(--primary);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .ai-side .ai-sub {
+      font-size: 10.5px; color: var(--muted-foreground);
+      margin: -4px 0 4px;
+    }
+    .ai-suggestion {
+      padding: 8px 10px;
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      font-size: 11.5px;
+      cursor: pointer;
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .ai-suggestion:hover {
+      border-color: color-mix(in oklch, var(--primary) 50%, var(--border));
+    }
+    .ai-suggestion .s-meta {
+      font-size: 9.5px; color: var(--muted-foreground);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .ai-suggestion .s-meta .accept {
+      font-size: 9.5px; color: var(--primary);
+      padding: 1px 5px; border-radius: 8px;
+      background: color-mix(in oklch, var(--primary) 12%, transparent);
+    }
+    .ai-suggestion .s-val { font-size: 11.5px; color: var(--foreground); }
+    .ai-suggestion .s-reason {
+      font-size: 10.5px; color: var(--muted-foreground);
+      font-style: italic;
+    }
+
+    /* ============================================================
+       Gallery 缩略 + Jobs
+       ============================================================ */
+    .gallery-side {
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .gallery-side .head {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; font-weight: 500;
+    }
+    .gallery-side .head .count { font-size: 10.5px; color: var(--muted-foreground); font-weight: 400; }
+
+    .job-mock {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--primary) 5%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px;
+    }
+    .job-mock i {
+      display: inline-block; width: 10px; height: 10px;
+      border: 2px solid var(--primary); border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+    .job-mock .truncate {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--foreground); opacity: 0.85;
+    }
+    .job-mock .progress { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+    .gallery-grid-mock {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .gallery-tile {
+      aspect-ratio: 1 / 1;
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, #d4724a 0%, #f5b942 50%, #3a5a40 100%);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .gallery-tile:nth-child(2) { background: linear-gradient(135deg, #1a2b4c, #6b8db4); }
+    .gallery-tile:nth-child(3) { background: linear-gradient(135deg, #c8c2bd, #7a6f64); }
+    .gallery-tile:nth-child(4) { background: linear-gradient(135deg, #c8163e, #f0c14b); }
+    .gallery-tile:nth-child(5) { background: linear-gradient(135deg, #3a5a40, #a3b18a); }
+    .gallery-tile:nth-child(6) { background: linear-gradient(135deg, #6b8db4, #b0a0c2); }
+
+    /* 散文区:折叠态(A 用) */
+    .composer-collapsed {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px;
+      background: color-mix(in oklch, var(--background) 50%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px;
+    }
+    .composer-collapsed .chev {
+      color: var(--muted-foreground);
+      display: inline-flex;
+    }
+    .composer-collapsed .prose-text {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: color-mix(in oklch, var(--foreground) 80%, var(--background));
+    }
+    .composer-collapsed .actions {
+      display: flex; gap: 6px;
+      font-size: 11px;
+    }
+
+    /* 散文区:左栏(D 用) */
+    .composer-left {
+      display: flex; flex-direction: column; gap: 10px;
+    }
+
+    /* ============================================================
+       === A 方案专用布局 ===
+       ============================================================ */
+    .a-init {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 220px 1fr 280px;
+      gap: 0;
+      min-height: 0;
+    }
+    .a-init .left-aux {
+      padding: 18px;
+      border-right: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .a-init .center-input {
+      padding: 32px 60px;
+      display: flex; flex-direction: column; gap: 12px;
+      justify-content: center;
+    }
+    .a-init .right-gallery {
+      padding: 18px;
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      display: flex; flex-direction: column; gap: 10px;
+    }
+
+    .a-m3 {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 0;
+      min-height: 0;
+    }
+    .a-m3 .center-editor {
+      padding: 16px 18px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .a-m3 .right-stack {
+      padding: 16px;
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      display: flex; flex-direction: column; gap: 14px;
+      overflow-y: auto;
+    }
+
+    .a-m2 {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 0;
+      min-height: 0;
+    }
+    .a-m2 .center-editor {
+      padding: 16px 18px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .a-m2 .right-gallery {
+      padding: 16px;
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      display: flex; flex-direction: column; gap: 12px;
+      overflow-y: auto;
+    }
+
+    .editor-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px;
+      padding-top: 12px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      margin-top: 4px;
+      font-size: 11.5px; color: var(--muted-foreground);
+    }
+
+    /* 示例 / 参考图 块 */
+    .aux-block {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .aux-item {
+      padding: 7px 10px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px;
+      color: var(--foreground);
+      opacity: 0.85;
+      cursor: pointer;
+    }
+    .aux-item:hover { opacity: 1; box-shadow: var(--shadow-paper); }
+    .aux-item .aux-meta {
+      font-size: 9.5px; color: var(--muted-foreground); text-transform: uppercase;
+      letter-spacing: 0.06em; margin-bottom: 1px;
+    }
+    .aux-divider {
+      height: 1px;
+      background: color-mix(in oklch, var(--border) 50%, transparent);
+      margin: 6px 0;
+    }
+
+    /* ============================================================
+       === D 方案专用布局 ===
+       ============================================================ */
+    .d-init {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr 280px;
+      gap: 0;
+      min-height: 0;
+    }
+    .d-init .left-prose {
+      padding: 20px 22px;
+      display: flex; flex-direction: column; gap: 12px;
+      border-right: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .d-init .center-editor-ph {
+      padding: 20px 22px;
+      display: flex; align-items: center; justify-content: center;
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      border-right: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .d-init .right-gallery {
+      padding: 16px;
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      display: flex; flex-direction: column; gap: 10px;
+    }
+
+    .placeholder-card {
+      flex: 1; align-self: stretch;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 10px;
+      padding: 32px;
+      border: 2px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      color: var(--muted-foreground);
+      font-size: 12px;
+      text-align: center;
+      line-height: 1.6;
+    }
+    .placeholder-card svg {
+      width: 32px; height: 32px; stroke-width: 1.5;
+      opacity: 0.5;
+    }
+    .placeholder-card.primary-tint {
+      background: color-mix(in oklch, var(--primary) 5%, transparent);
+      border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+      color: var(--primary);
+    }
+
+    .d-m3 {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 280px 1fr 280px;
+      gap: 0;
+      min-height: 0;
+    }
+    .d-m3 .left-prose {
+      padding: 16px 18px;
+      display: flex; flex-direction: column; gap: 10px;
+      border-right: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+    }
+    .d-m3 .center-editor {
+      padding: 16px 18px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .d-m3 .right-stack {
+      padding: 16px;
+      border-left: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      background: color-mix(in oklch, var(--background) 30%, var(--card));
+      display: flex; flex-direction: column; gap: 14px;
+      overflow-y: auto;
+    }
+
+  </style>
+</head>
+<body>
+
+  <input type="radio" name="plan" id="plan-a" checked />
+  <input type="radio" name="plan" id="plan-d" />
+
+  <nav class="plan-bar">
+    <h1>A / D 宽屏细化<small>1500px 桌面优先 · 多列字段 · Gallery 常驻</small></h1>
+    <label for="plan-a">A · 渐进画布(宽屏)</label>
+    <label for="plan-d">D · 左右分裂(宽屏)</label>
+  </nav>
+
+  <div class="panes">
+
+    <!-- ============================================================
+         === A 方案:渐进画布(宽屏)
+         ============================================================ -->
+    <div class="plan plan-a">
+      <div class="canvas">
+
+        <div class="meta">
+          <h2>A · 渐进画布(宽屏版)</h2>
+          <p class="belief">宽屏改造:初始/已写文本态用"三栏聚焦模式"——左 220px 辅助(示例/参考图)、中央 textarea、右 280px Gallery 常驻。M3 展开后切到"两栏工作模式"——主区是字段编辑器(分组卡内部多列),散文折叠成顶部一条,AI 建议 + Gallery 并入右侧栏。M2 态独占主区,右侧只剩 Gallery。</p>
+          <p class="tradeoff">视觉重心随用户进度漂移:初始时聚焦中央 textarea,展开后焦点平移到字段编辑器。Gallery + Jobs 始终在右侧不离视野,工作循环零滚动。代价:四个状态有两套不同的网格,组件位置会"跳"——但每次跳都对应一次明确的用户动作,有迹可循。</p>
+        </div>
+
+        <!-- ============= 状态 1:初始 ============= -->
+        <div class="state-block">
+          <div class="state-label">
+            <span class="state-num">1</span>
+            <span class="state-title">初始态</span>
+            <span class="state-sub">page 首屏</span>
+          </div>
+          <div class="frame">
+            <div class="app-header">
+              <span class="brand"><i></i>Inkast<span style="margin-left:8px; font-size:11px; color:var(--muted-foreground); font-weight:400">local-first ai image studio</span></span>
+              <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+            </div>
+            <div class="a-init">
+              <!-- 左:辅助(示例 / 参考图) -->
+              <div class="left-aux">
+                <span class="label">快速起点</span>
+                <div class="aux-block">
+                  <div class="aux-item">
+                    <div class="aux-meta">示例 1 · 摄影</div>
+                    电影感的咖啡馆窗边女子…
+                  </div>
+                  <div class="aux-item">
+                    <div class="aux-meta">示例 2 · 信息图</div>
+                    6 种鸟类的喙形与食物…
+                  </div>
+                  <div class="aux-item">
+                    <div class="aux-meta">示例 3 · 海报</div>
+                    复古橘猫打字机…
+                  </div>
+                </div>
+                <div class="aux-divider"></div>
+                <span class="label">参考图</span>
+                <div class="aux-item" style="text-align:center; padding:14px 10px; font-size:11px; color:var(--muted-foreground)">
+                  + 添加参考图
+                </div>
+              </div>
+
+              <!-- 中:大 textarea -->
+              <div class="center-input">
+                <span class="label" style="text-align:center">起草</span>
+                <div class="text-mock empty huge">一两句话说一下你想要的画面…<br/>写得越具体,AI 预填的字段越准。</div>
+                <div style="text-align:center">
+                  <span class="btn-mock btn-disabled lg">▶ 生图</span>
+                </div>
+                <div class="or-divider">或</div>
+                <div style="text-align:center">
+                  <a class="small-link" href="#">⊞ 跳过文本,直接编辑字段 <span class="kbd">⌘E</span></a>
+                </div>
+              </div>
+
+              <!-- 右:Gallery 常驻 -->
+              <div class="right-gallery">
+                <div class="gallery-side">
+                  <div class="head">作品 <span class="count">· 6 张</span></div>
+                  <div class="gallery-grid-mock">
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="state-note">
+            <strong>三栏聚焦模式</strong> · 中央 textarea 是绝对主角,左右两侧是次要辅助(示例 / 参考图)和已生成作品。<strong>M2 入口</strong>在中央底部小链接(⌘E)。Gallery 让回访用户进门就能看到自己之前的作品,无需滚动。
+          </div>
+        </div>
+
+        <!-- ============= 状态 2:已写文本 ============= -->
+        <div class="state-block">
+          <div class="state-label">
+            <span class="state-num">2</span>
+            <span class="state-title">已写文本</span>
+            <span class="state-sub">用户已经输入</span>
+          </div>
+          <div class="frame">
+            <div class="app-header">
+              <span class="brand"><i></i>Inkast</span>
+              <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+            </div>
+            <div class="a-init">
+              <!-- 左:辅助仍可见(可选用其他示例)-->
+              <div class="left-aux">
+                <span class="label">快速起点</span>
+                <div class="aux-block">
+                  <div class="aux-item">
+                    <div class="aux-meta">示例 1</div>
+                    电影感的咖啡馆窗边女子…
+                  </div>
+                  <div class="aux-item">
+                    <div class="aux-meta">示例 2</div>
+                    6 种鸟类的喙形与食物…
+                  </div>
+                  <div class="aux-item">
+                    <div class="aux-meta">示例 3</div>
+                    复古橘猫打字机…
+                  </div>
+                </div>
+                <div class="aux-divider"></div>
+                <span class="label">参考图</span>
+                <div class="aux-item" style="text-align:center; padding:14px 10px; font-size:11px; color:var(--muted-foreground)">
+                  + 添加参考图
+                </div>
+              </div>
+
+              <!-- 中:有内容的 textarea + M1/M3 按钮 -->
+              <div class="center-input">
+                <span class="label" style="text-align:center">起草</span>
+                <div class="text-mock big">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+                <div style="text-align:center">
+                  <div class="btn-row" style="justify-content:center">
+                    <span class="btn-mock btn-outline-accent lg">▶ 直接生图</span>
+                    <span class="btn-mock btn-primary lg">✦ 让 AI 细化</span>
+                  </div>
+                </div>
+                <p style="font-size:11px; color:var(--muted-foreground); text-align:center; margin: 4px 0 0">
+                  <span class="annot">M2 入口消失</span> 一旦有文本,只剩 M1 / M3 两条路
+                </p>
+              </div>
+
+              <!-- 右:Gallery -->
+              <div class="right-gallery">
+                <div class="gallery-side">
+                  <div class="head">作品 <span class="count">· 6 张</span></div>
+                  <div class="gallery-grid-mock">
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="state-note">
+            布局没变,只是 textarea 有了内容、按钮换成 M1/M3 两个分叉。M2 小链接消失(不然用户会想"我点这个我的文本怎么办")。<strong>左栏示例仍可见</strong>,因为用户可能写了几句之后想换一个起点。
+          </div>
+        </div>
+
+        <!-- ============= 状态 3:M3 展开 ============= -->
+        <div class="state-block">
+          <div class="state-label">
+            <span class="state-num">3</span>
+            <span class="state-title">AI 细化后(M3 主战场)</span>
+            <span class="state-sub">字段编辑器膨胀</span>
+          </div>
+          <div class="frame">
+            <div class="app-header">
+              <span class="brand"><i></i>Inkast</span>
+              <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+            </div>
+            <!-- 顶部散文折叠条 -->
+            <div style="padding: 10px 18px; border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent); background: color-mix(in oklch, var(--background) 40%, var(--card));">
+              <div class="composer-collapsed">
+                <span class="chev">▾</span>
+                <span class="label" style="flex-shrink:0">散文</span>
+                <span class="prose-text">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</span>
+                <div class="actions">
+                  <a class="small-link" href="#" style="font-size:11px">✦ 重新预填</a>
+                  <a class="small-link" href="#" style="font-size:11px">⌫ 清空</a>
+                </div>
+              </div>
+            </div>
+            <div class="a-m3">
+              <!-- 中:字段编辑器(多列分组) -->
+              <div class="center-editor">
+
+                <!-- 基本 + 氛围(同行 2/3) -->
+                <div style="display:grid; grid-template-columns: 2fr 3fr; gap: 12px;">
+                  <div class="group-card">
+                    <div class="head">
+                      <span class="title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+                        基本
+                      </span>
+                      <span class="hint">必填</span>
+                    </div>
+                    <div class="field-grid cols-2">
+                      <div class="field-cell">
+                        <div class="k">Type <span class="ai-badge">AI</span></div>
+                        <div class="v">
+                          <span class="preview-dot" style="background:linear-gradient(135deg,#d4724a,#f5b942)"></span>
+                          <span style="flex:1">海报</span>
+                          <span class="chev">▾</span>
+                        </div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Style <span class="ai-badge">AI</span></div>
+                        <div class="v">
+                          <span class="preview-dot" style="background:linear-gradient(135deg,#3a5a40,#a3b18a)"></span>
+                          <span style="flex:1">极简插画</span>
+                          <span class="chev">▾</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="group-card">
+                    <div class="head">
+                      <span class="title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3"/></svg>
+                        氛围
+                      </span>
+                      <span class="hint">情绪 / 光照 / 镜头</span>
+                    </div>
+                    <div class="field-grid cols-3">
+                      <div class="field-cell">
+                        <div class="k">Mood <span class="ai-badge">AI</span></div>
+                        <div class="v">
+                          <span class="preview-dot" style="background:linear-gradient(135deg,#f5b942,#d4724a)"></span>
+                          <span style="flex:1">宁静温暖</span>
+                        </div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Lighting <span class="ai-badge">AI</span></div>
+                        <div class="v">
+                          <span class="preview-dot" style="background:linear-gradient(135deg,#1a2b4c,#f5b942)"></span>
+                          <span style="flex:1">黄昏侧逆光</span>
+                        </div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Camera</div>
+                        <div class="v empty"><span style="flex:1">留空</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 画面(独占,3 字段) -->
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5L5 21"/></svg>
+                      画面
+                    </span>
+                    <span class="hint">主体 / 背景 / 构图</span>
+                  </div>
+                  <div class="field-grid cols-scene">
+                    <div class="field-cell">
+                      <div class="k">Subject <span class="ai-badge">AI</span></div>
+                      <div class="v tall">橘色狐狸蜷缩在松树下,抬头望着月亮</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Background <span class="ai-badge">AI</span></div>
+                      <div class="v tall">远山轮廓与渐变夜空,星点稀疏</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Layout</div>
+                      <div class="v empty"><span style="flex:1">留空</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 色彩 -->
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 22c5.5 0 10-4.5 10-10S17.5 2 12 2 2 6.5 2 12s4.5 10 10 10z"/></svg>
+                      色彩 <span class="ai-badge">AI</span>
+                    </span>
+                    <span class="hint">3 色 + 预设</span>
+                  </div>
+                  <div class="palette-mock">
+                    <span class="swatch"><i style="background:#1a2b4c"></i>#1a2b4c</span>
+                    <span class="swatch"><i style="background:#f5b942"></i>#f5b942</span>
+                    <span class="swatch"><i style="background:#d4724a"></i>#d4724a</span>
+                    <span class="swatch" style="border-style:dashed; opacity:0.6">+ 加</span>
+                  </div>
+                  <div class="preset-chips">
+                    <span class="preset-chip"><span class="dots"><i style="background:#c8c2bd"></i><i style="background:#7a6f64"></i></span>莫兰迪</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#6b8db4"></i><i style="background:#b0a0c2"></i></span>莫奈</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#3a5a40"></i><i style="background:#a3b18a"></i></span>森林</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#f5b942"></i><i style="background:#d4724a"></i></span>夕阳</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#1a1a1a"></i><i style="background:#ededed"></i></span>黑白</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#c8163e"></i><i style="background:#f0c14b"></i></span>朱砂</span>
+                  </div>
+                </div>
+
+                <!-- 文字 -->
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7V5h16v2M9 5v14M15 5v14M7 19h4M13 19h4"/></svg>
+                      文字
+                    </span>
+                    <span class="hint">1 条 · 点 + 添加</span>
+                  </div>
+                  <div class="text-elem-mock">
+                    <div class="head" style="border-bottom:none; padding-bottom:0; margin-bottom:6px">Text · 01</div>
+                    <div class="field-grid cols-4" style="gap: 8px">
+                      <div class="field-cell">
+                        <div class="k">Content</div>
+                        <div class="v">晚安</div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Position</div>
+                        <div class="v">右下</div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Font</div>
+                        <div class="v">手写体</div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Size</div>
+                        <div class="v">中</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="editor-footer">
+                  <span>▾ JSON · claude-code · 4.2s</span>
+                  <span class="btn-mock btn-accent lg">▶ 生图</span>
+                </div>
+              </div>
+
+              <!-- 右栏:AI 建议 + Gallery + Jobs -->
+              <div class="right-stack">
+                <div class="job-mock">
+                  <i></i>
+                  <div class="truncate">橘色狐狸蜷缩在松树下…</div>
+                  <span class="progress">12s</span>
+                </div>
+
+                <div class="ai-side">
+                  <h4>💡 AI 建议 <span class="ai-badge" style="background:transparent">3 条</span></h4>
+                  <p class="ai-sub">点 ✓ 一键注入对应字段</p>
+                  <div class="ai-suggestion">
+                    <div class="s-meta"><span>+ Camera 字段</span><span class="accept">✓ 采纳</span></div>
+                    <div class="s-val">"中景"</div>
+                    <div class="s-reason">"狐狸抬头望月"的主体距离暗示中景最合适</div>
+                  </div>
+                  <div class="ai-suggestion">
+                    <div class="s-meta"><span>+ 文字 02</span><span class="accept">✓ 采纳</span></div>
+                    <div class="s-val">"Good night" · 右下小字</div>
+                    <div class="s-reason">中英双语标题在海报里更耐看</div>
+                  </div>
+                  <div class="ai-suggestion">
+                    <div class="s-meta"><span>改 Style</span><span class="accept">✓ 采纳</span></div>
+                    <div class="s-val">"厚涂插画"?</div>
+                    <div class="s-reason">"宁静温暖 + 黄昏"更适合厚涂的笔触感</div>
+                  </div>
+                </div>
+
+                <div class="gallery-side">
+                  <div class="head">作品 <span class="count">· 6 张</span></div>
+                  <div class="gallery-grid-mock">
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="state-note">
+            <strong>布局切到两栏</strong> · 散文区折叠成顶部一条(可展开/重新预填)。<strong>字段编辑器多列展开</strong>:基本(2 列)+氛围(3 列)同行,画面(2:1:1)独占,色彩/文字独占。<strong>右栏堆叠</strong>:任务卡 → AI 建议 → Gallery,从急到缓。AI 建议给出"采纳理由",透明度高,用户能学习模型的判断。
+          </div>
+        </div>
+
+        <!-- ============= 状态 4:M2 ============= -->
+        <div class="state-block">
+          <div class="state-label">
+            <span class="state-num alt">2′</span>
+            <span class="state-title">M2 路径(字段精修)</span>
+            <span class="state-sub">从状态 1 按 ⌘E 进入</span>
+          </div>
+          <div class="frame">
+            <div class="app-header">
+              <span class="brand"><i></i>Inkast</span>
+              <div class="actions"><span class="attn">⌫ 回到散文输入</span><span>配置</span><span>暗色</span></div>
+            </div>
+            <div class="a-m2">
+              <div class="center-editor">
+                <p style="margin:0 0 4px; font-size:11.5px; color:var(--muted-foreground);">字段精修 · 无 AI 介入</p>
+
+                <div style="display:grid; grid-template-columns: 2fr 3fr; gap: 12px;">
+                  <div class="group-card">
+                    <div class="head">
+                      <span class="title">● 基本</span><span class="hint">必填</span>
+                    </div>
+                    <div class="field-grid cols-2">
+                      <div class="field-cell">
+                        <div class="k">Type</div>
+                        <div class="v empty"><span style="flex:1">未选</span><span class="chev">▾</span></div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Style</div>
+                        <div class="v empty"><span style="flex:1">未选</span><span class="chev">▾</span></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="group-card">
+                    <div class="head">
+                      <span class="title">● 氛围</span><span class="hint">可选</span>
+                    </div>
+                    <div class="field-grid cols-3">
+                      <div class="field-cell">
+                        <div class="k">Mood</div>
+                        <div class="v empty"><span style="flex:1">未选</span></div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Lighting</div>
+                        <div class="v empty"><span style="flex:1">未选</span></div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Camera</div>
+                        <div class="v empty"><span style="flex:1">未选</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 画面</span><span class="hint">主体 / 背景 / 构图</span>
+                  </div>
+                  <div class="field-grid cols-scene">
+                    <div class="field-cell">
+                      <div class="k">Subject</div>
+                      <div class="v tall empty">主体描述,越具体越准</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Background</div>
+                      <div class="v tall empty">背景元素,留空也可</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Layout</div>
+                      <div class="v empty"><span style="flex:1">留空</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 色彩</span><span class="hint">留空交给模型</span>
+                  </div>
+                  <div class="palette-mock" style="min-height:36px">
+                    <span style="font-size:11px; color:var(--muted-foreground); font-style:italic">— 点 + 加色或选预设 —</span>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 文字</span><span class="hint">画面上要出现的字</span>
+                  </div>
+                  <p style="margin:0; font-size:11.5px; color:var(--muted-foreground); font-style:italic">画面不需要文字就保持空</p>
+                </div>
+
+                <div class="editor-footer">
+                  <span>无 AI 介入 · 纯手动</span>
+                  <span class="btn-mock btn-accent lg">▶ 生图</span>
+                </div>
+              </div>
+
+              <div class="right-gallery">
+                <div class="gallery-side">
+                  <div class="head">作品 <span class="count">· 6 张</span></div>
+                  <div class="gallery-grid-mock">
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="state-note">
+            字段编辑器满宽展开(右侧栏只剩 Gallery,无 AI 建议——M2 的信念是"零 AI")。<strong>右上角"⌫ 回到散文输入"按钮高亮</strong>,提示用户这是切回 M1/M3 路径的唯一出口。
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ============================================================
+         === D 方案:左右分裂(宽屏)
+         ============================================================ -->
+    <div class="plan plan-d">
+      <div class="canvas">
+
+        <div class="meta">
+          <h2>D · 左右分裂(宽屏版)</h2>
+          <p class="belief">宽屏改造:三栏永远在线——左 1/3 散文 + 中 1/3 字段编辑器 + 右 280px Gallery。初始字段栏是占位提示"写完文本展开"。用户写完点 AI 填字段 → 中栏字段编辑器膨胀,左栏散文缩到 280px(参考)。AI 建议浮在右栏顶部。两条工作路径(散文 vs 字段)永远并列可见,M2 入口在中栏占位的右下角。</p>
+          <p class="tradeoff">最大优点:用户永远知道"散文还在那儿,我可以回头改",并且能同时看到生图历史。代价:字段编辑器宽度被压(中栏约 600-800px,分组卡内部撑不了 3-4 列分组同行,要分别独占行);初始状态中栏占位的视觉权重不够,新用户可能没注意到 M2 入口;移动端必须降级成单列(D 在移动端最难处理)。</p>
+        </div>
+
+        <!-- ============= 状态 1:初始 ============= -->
+        <div class="state-block">
+          <div class="state-label">
+            <span class="state-num">1</span>
+            <span class="state-title">初始态</span>
+            <span class="state-sub">三栏并列</span>
+          </div>
+          <div class="frame">
+            <div class="app-header">
+              <span class="brand"><i></i>Inkast<span style="margin-left:8px; font-size:11px; color:var(--muted-foreground); font-weight:400">local-first ai image studio</span></span>
+              <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+            </div>
+            <div class="d-init">
+              <!-- 左:散文 -->
+              <div class="left-prose">
+                <span class="label">散文输入</span>
+                <div class="text-mock empty big" style="flex:1">一两句话说一下你想要的画面…</div>
+                <div class="btn-row" style="justify-content:flex-end">
+                  <span class="btn-mock btn-disabled">▶ 生图</span>
+                </div>
+                <div class="aux-divider"></div>
+                <span class="label">快速起点</span>
+                <div class="aux-block">
+                  <div class="aux-item"><div class="aux-meta">示例 1 · 摄影</div>电影感的咖啡馆窗边女子</div>
+                  <div class="aux-item"><div class="aux-meta">示例 2 · 信息图</div>6 种鸟类的喙形</div>
+                  <div class="aux-item"><div class="aux-meta">示例 3 · 海报</div>复古橘猫打字机</div>
+                </div>
+                <div class="aux-item" style="text-align:center; padding:14px 10px; font-size:11px; color:var(--muted-foreground); border-style:dashed">
+                  + 添加参考图
+                </div>
+              </div>
+
+              <!-- 中:字段编辑器占位 -->
+              <div class="center-editor-ph">
+                <div class="placeholder-card">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <path d="M9 3v18M3 9h18M3 15h18"/>
+                  </svg>
+                  <div>
+                    <strong style="display:block; font-size:13px; color:var(--foreground); margin-bottom:6px">字段编辑器</strong>
+                    写完文本后,AI 会把它拆到这里<br/>—— 或者 ——
+                  </div>
+                  <a class="small-link" href="#" style="color:var(--accent); font-weight:500; padding: 6px 14px; border:1px solid color-mix(in oklch, var(--accent) 35%, transparent); border-radius:var(--radius); background:color-mix(in oklch, var(--accent) 8%, transparent);">
+                    ⊞ 直接编辑字段 →
+                  </a>
+                  <span style="font-size:10.5px; color:var(--muted-foreground)">⌘E 也行</span>
+                </div>
+              </div>
+
+              <!-- 右:Gallery -->
+              <div class="right-gallery">
+                <div class="gallery-side">
+                  <div class="head">作品 <span class="count">· 6 张</span></div>
+                  <div class="gallery-grid-mock">
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="state-note">
+            <strong>三栏永远在线</strong> · 左散文 + 中字段占位 + 右 Gallery。<strong>M2 入口</strong>在中栏占位的核心位置——用按钮样式而不是小链接,因为 D 方案的信念是"两条路径并列可见,选择应该明显"。
+          </div>
+        </div>
+
+        <!-- ============= 状态 2:已写文本 ============= -->
+        <div class="state-block">
+          <div class="state-label">
+            <span class="state-num">2</span>
+            <span class="state-title">已写文本</span>
+            <span class="state-sub">中栏给视觉预期</span>
+          </div>
+          <div class="frame">
+            <div class="app-header">
+              <span class="brand"><i></i>Inkast</span>
+              <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+            </div>
+            <div class="d-init">
+              <div class="left-prose">
+                <span class="label">散文输入</span>
+                <div class="text-mock big" style="flex:1">一只橘色的狐狸蜷在松树下,抬头望着月亮,黄昏的光,温暖宁静</div>
+                <div class="btn-row" style="justify-content:flex-end">
+                  <span class="btn-mock btn-outline-accent">▶ 直接生图</span>
+                  <span class="btn-mock btn-primary">✦ AI 帮我填字段</span>
+                </div>
+                <div class="aux-divider"></div>
+                <span class="label">参考图</span>
+                <div class="aux-item" style="text-align:center; padding:14px 10px; font-size:11px; color:var(--muted-foreground); border-style:dashed">
+                  + 添加参考图
+                </div>
+              </div>
+
+              <div class="center-editor-ph">
+                <div class="placeholder-card primary-tint">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v3M5 7l2 2M3 14h3M19 7l-2 2M21 14h-3M12 19v3M8 12l4-4 4 4-4 4z"/></svg>
+                  <div>
+                    <strong style="display:block; font-size:13px; color:var(--primary); margin-bottom:6px">点 "AI 帮我填字段"</strong>
+                    我会把散文拆成结构化字段,<br/>填在这里供你微调
+                  </div>
+                </div>
+              </div>
+
+              <div class="right-gallery">
+                <div class="gallery-side">
+                  <div class="head">作品 <span class="count">· 6 张</span></div>
+                  <div class="gallery-grid-mock">
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="state-note">
+            左栏出现两个按钮(M1 直接生图 / M3 AI 填字段)。<strong>中栏占位提示语变了</strong>——从"两条路给你选"变成"等你点 AI 帮我填",视觉热度上升(primary tint),引导用户下一步动作。
+          </div>
+        </div>
+
+        <!-- ============= 状态 3:AI 填后 ============= -->
+        <div class="state-block">
+          <div class="state-label">
+            <span class="state-num">3</span>
+            <span class="state-title">AI 填字段后(M3 主战场)</span>
+            <span class="state-sub">字段编辑器膨胀</span>
+          </div>
+          <div class="frame">
+            <div class="app-header">
+              <span class="brand"><i></i>Inkast</span>
+              <div class="actions"><span>EN</span><span>配置</span><span>暗色</span></div>
+            </div>
+            <div class="d-m3">
+              <!-- 左:散文缩到 280 -->
+              <div class="left-prose">
+                <span class="label">散文(已锁定)</span>
+                <div class="text-mock small" style="font-size:11.5px">橘色的狐狸蜷在松树下,抬头望着月亮…</div>
+                <div class="btn-row" style="flex-direction:column; gap: 6px">
+                  <a class="small-link" href="#" style="font-size:11px">✦ 重新预填字段</a>
+                  <a class="small-link" href="#" style="font-size:11px">▶ 直接生图(忽略字段)</a>
+                  <a class="small-link" href="#" style="font-size:11px; color:var(--accent)">⌫ 清空,从头开始</a>
+                </div>
+                <div class="aux-divider"></div>
+                <span class="label">参考图</span>
+                <div style="display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--card); border:1px solid color-mix(in oklch, var(--border) 50%, transparent); border-radius:var(--radius)">
+                  <span style="width:32px; height:32px; background:linear-gradient(135deg,#d4724a,#f5b942); border-radius:2px; border:1px solid color-mix(in oklch, var(--border) 60%, transparent)"></span>
+                  <div style="flex:1; font-size:10.5px; line-height:1.3">
+                    <div style="font-size:9.5px; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:0.06em">参考图</div>
+                    <div>作品库</div>
+                  </div>
+                  <span style="color:var(--muted-foreground); font-size:14px; cursor:pointer">×</span>
+                </div>
+              </div>
+
+              <!-- 中:字段编辑器(中等宽度) -->
+              <div class="center-editor">
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 基本</span>
+                    <span class="hint">必填</span>
+                  </div>
+                  <div class="field-grid cols-2">
+                    <div class="field-cell">
+                      <div class="k">Type <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#d4724a,#f5b942)"></span>
+                        <span style="flex:1">海报</span>
+                        <span class="chev">▾</span>
+                      </div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Style <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#3a5a40,#a3b18a)"></span>
+                        <span style="flex:1">极简插画</span>
+                        <span class="chev">▾</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 画面</span>
+                    <span class="hint">主体 / 背景 / 构图</span>
+                  </div>
+                  <div class="field-grid cols-scene">
+                    <div class="field-cell">
+                      <div class="k">Subject <span class="ai-badge">AI</span></div>
+                      <div class="v tall">橘色狐狸蜷缩在松树下,抬头望着月亮</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Background <span class="ai-badge">AI</span></div>
+                      <div class="v tall">远山轮廓与渐变夜空,星点稀疏</div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Layout</div>
+                      <div class="v empty"><span style="flex:1">留空</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 氛围</span>
+                    <span class="hint">情绪 / 光照 / 镜头</span>
+                  </div>
+                  <div class="field-grid cols-3">
+                    <div class="field-cell">
+                      <div class="k">Mood <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#f5b942,#d4724a)"></span>
+                        <span style="flex:1">宁静温暖</span>
+                      </div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Lighting <span class="ai-badge">AI</span></div>
+                      <div class="v">
+                        <span class="preview-dot" style="background:linear-gradient(135deg,#1a2b4c,#f5b942)"></span>
+                        <span style="flex:1">黄昏侧逆光</span>
+                      </div>
+                    </div>
+                    <div class="field-cell">
+                      <div class="k">Camera</div>
+                      <div class="v empty"><span style="flex:1">留空</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 色彩 <span class="ai-badge">AI</span></span>
+                    <span class="hint">3 色 + 预设</span>
+                  </div>
+                  <div class="palette-mock">
+                    <span class="swatch"><i style="background:#1a2b4c"></i>#1a2b4c</span>
+                    <span class="swatch"><i style="background:#f5b942"></i>#f5b942</span>
+                    <span class="swatch"><i style="background:#d4724a"></i>#d4724a</span>
+                    <span class="swatch" style="border-style:dashed; opacity:0.6">+ 加</span>
+                  </div>
+                  <div class="preset-chips">
+                    <span class="preset-chip"><span class="dots"><i style="background:#c8c2bd"></i><i style="background:#7a6f64"></i></span>莫兰迪</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#3a5a40"></i><i style="background:#a3b18a"></i></span>森林</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#f5b942"></i><i style="background:#d4724a"></i></span>夕阳</span>
+                    <span class="preset-chip"><span class="dots"><i style="background:#1a1a1a"></i><i style="background:#ededed"></i></span>黑白</span>
+                  </div>
+                </div>
+
+                <div class="group-card">
+                  <div class="head">
+                    <span class="title">● 文字</span>
+                    <span class="hint">1 条</span>
+                  </div>
+                  <div class="text-elem-mock">
+                    <div class="head" style="border-bottom:none; padding-bottom:0; margin-bottom:6px">Text · 01</div>
+                    <div class="field-grid cols-4" style="gap: 8px">
+                      <div class="field-cell">
+                        <div class="k">Content</div>
+                        <div class="v">晚安</div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Position</div>
+                        <div class="v">右下</div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Font</div>
+                        <div class="v">手写体</div>
+                      </div>
+                      <div class="field-cell">
+                        <div class="k">Size</div>
+                        <div class="v">中</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="editor-footer">
+                  <span>▾ JSON · claude-code · 4.2s</span>
+                  <span class="btn-mock btn-accent lg">▶ 生图</span>
+                </div>
+              </div>
+
+              <!-- 右:AI 建议 + Gallery -->
+              <div class="right-stack">
+                <div class="job-mock">
+                  <i></i>
+                  <div class="truncate">橘色狐狸蜷缩在松树下…</div>
+                  <span class="progress">12s</span>
+                </div>
+
+                <div class="ai-side">
+                  <h4>💡 AI 建议 <span class="ai-badge" style="background:transparent">3 条</span></h4>
+                  <p class="ai-sub">点 ✓ 一键注入对应字段</p>
+                  <div class="ai-suggestion">
+                    <div class="s-meta"><span>+ Camera 字段</span><span class="accept">✓ 采纳</span></div>
+                    <div class="s-val">"中景"</div>
+                    <div class="s-reason">主体距离暗示中景最合适</div>
+                  </div>
+                  <div class="ai-suggestion">
+                    <div class="s-meta"><span>+ 文字 02</span><span class="accept">✓ 采纳</span></div>
+                    <div class="s-val">"Good night" · 右下小字</div>
+                    <div class="s-reason">中英双语更耐看</div>
+                  </div>
+                  <div class="ai-suggestion">
+                    <div class="s-meta"><span>改 Style</span><span class="accept">✓ 采纳</span></div>
+                    <div class="s-val">"厚涂插画"?</div>
+                    <div class="s-reason">"宁静温暖 + 黄昏"适合厚涂</div>
+                  </div>
+                </div>
+
+                <div class="gallery-side">
+                  <div class="head">作品 <span class="count">· 6 张</span></div>
+                  <div class="gallery-grid-mock">
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                    <div class="gallery-tile"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="state-note">
+            左栏散文缩到 280px(标"已锁定",可点链接重新预填或清空)+ 参考图卡片;中栏字段编辑器满字段;右栏 Jobs/AI 建议/Gallery 三段堆叠。<strong>用户三件事一屏看完</strong>:原文 / 字段 / 历史。
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

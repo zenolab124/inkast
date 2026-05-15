@@ -1,21 +1,26 @@
 import { type FormEvent } from "react";
-import { ImagePlus, Loader2, Sparkles } from "lucide-react";
+import { ImagePlus, Loader2, Lock, Sparkles, Unlock } from "lucide-react";
 import type { ReferenceImage } from "@inkast/shared";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { cn } from "@/lib/utils";
 import { ReferencePicker } from "./ReferencePicker.js";
+
+export type LockMode = null | "ai-filled" | "m2";
 
 interface PromptComposerProps {
   value: string;
   onChange: (next: string) => void;
   pending: boolean;
-  hasFilled: boolean;
-  onSubmit: () => void;
+  onExpand: () => void;
   onCancel?: () => void;
   onGenerateRaw?: () => void;
   generatingRaw?: boolean;
+  onSkipText: () => void;
+  lockMode: LockMode;
+  onUnlock: () => void;
   referenceImage: ReferenceImage | null;
   onReferenceImageChange: (next: ReferenceImage | null) => void;
 }
@@ -24,110 +29,214 @@ export function PromptComposer({
   value,
   onChange,
   pending,
-  hasFilled,
-  onSubmit,
+  onExpand,
   onCancel,
   onGenerateRaw,
   generatingRaw,
+  onSkipText,
+  lockMode,
+  onUnlock,
   referenceImage,
   onReferenceImageChange,
 }: PromptComposerProps) {
   const { t } = useLanguage();
   const busy = pending || generatingRaw;
+  const locked = lockMode !== null;
+  const hasText = value.trim().length > 0;
+
   const handle = (e: FormEvent) => {
     e.preventDefault();
-    if (!value.trim() || pending) return;
-    onSubmit();
+    if (!hasText || busy || locked) return;
+    onExpand();
   };
 
-  return (
-    <form onSubmit={handle} className="flex flex-col gap-3">
-      <div className="flex items-baseline justify-between gap-2">
+  if (locked) {
+    return (
+      <div className="flex h-full flex-col gap-3">
+        <LockBar lockMode={lockMode} onUnlock={onUnlock} />
+
         <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {t.composer.label} · {t.composer.optional}
+          {t.composer.label}
         </Label>
-        <span className="text-[11px] text-muted-foreground">{t.composer.hint}</span>
+
+        {lockMode === "ai-filled" ? (
+          <>
+            <div className="rounded-md border border-input bg-background/70 px-3 py-2 text-sm leading-relaxed text-foreground/80">
+              {value || (
+                <span className="italic text-muted-foreground">—</span>
+              )}
+            </div>
+            <div className="flex flex-col items-start gap-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={onExpand}
+                disabled={busy || !hasText}
+                className="h-auto px-1 py-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
+              >
+                <Sparkles strokeWidth={1.5} />
+                {t.composer.reExpand}
+              </Button>
+              {onGenerateRaw && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={onGenerateRaw}
+                  disabled={busy || !hasText}
+                  className="h-auto px-1 py-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
+                >
+                  <ImagePlus strokeWidth={1.5} />
+                  {t.composer.rawAfterLock}
+                </Button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-md border border-dashed border-border/60 bg-background/40 px-3 py-2 text-xs italic text-muted-foreground">
+              — {t.composer.lockedNoProse} —
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {t.composer.m2Hint}
+            </p>
+          </>
+        )}
+
+        <ReferencePicker
+          value={referenceImage}
+          onChange={onReferenceImageChange}
+        />
       </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handle} className="flex h-full flex-col gap-3">
+      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        {t.composer.label}
+      </Label>
       <Textarea
         value={value}
         onChange={e => onChange(e.target.value)}
-        rows={4}
+        rows={8}
         placeholder={t.composer.placeholder}
         disabled={busy}
-        className="resize-y leading-relaxed"
+        className="min-h-[200px] resize-y leading-relaxed"
       />
 
-      <div className="flex items-center justify-start">
-        <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
-      </div>
-
       <div className="flex flex-wrap items-center gap-2">
-        {t.composer.samples.map((s, i) => (
+        {onGenerateRaw && (
           <Button
-            key={i}
             type="button"
             variant="outline"
-            size="xs"
-            disabled={busy}
-            onClick={() => onChange(s)}
-            className="text-muted-foreground hover:text-foreground"
+            onClick={onGenerateRaw}
+            disabled={busy || !hasText}
+            title={t.composer.generateNowHint}
+            className="border-accent/40 text-accent hover:bg-accent/10 hover:text-accent"
           >
-            {t.composer.sample} {i + 1}
-          </Button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
-          {pending && onCancel && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onCancel}
-              className="text-muted-foreground"
-            >
-              {t.composer.cancel}
-            </Button>
-          )}
-          {onGenerateRaw && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onGenerateRaw}
-              disabled={busy || !value.trim()}
-              title={t.composer.generateRawHint}
-              className="border-accent/40 text-accent hover:bg-accent/10 hover:text-accent"
-            >
-              {generatingRaw ? (
-                <>
-                  <Loader2 className="animate-spin" strokeWidth={1.75} />
-                  {t.composer.generateRawPending}
-                </>
-              ) : (
-                <>
-                  <ImagePlus strokeWidth={1.75} />
-                  {t.composer.generateRaw}
-                </>
-              )}
-            </Button>
-          )}
-          <Button
-            type="submit"
-            disabled={busy || !value.trim()}
-            title={hasFilled ? t.composer.titleHintOverride : t.composer.titleHintFresh}
-          >
-            {pending ? (
+            {generatingRaw ? (
               <>
                 <Loader2 className="animate-spin" strokeWidth={1.75} />
-                {t.composer.aiFilling}
+                {t.composer.generateNowPending}
               </>
             ) : (
               <>
-                <Sparkles strokeWidth={1.75} />
-                {hasFilled ? t.composer.aiFillAgain : t.composer.aiFill}
+                <ImagePlus strokeWidth={1.75} />
+                {t.composer.generateNow}
               </>
             )}
           </Button>
-        </div>
+        )}
+        <Button
+          type="submit"
+          disabled={busy || !hasText}
+        >
+          {pending ? (
+            <>
+              <Loader2 className="animate-spin" strokeWidth={1.75} />
+              {t.composer.aiFilling}
+            </>
+          ) : (
+            <>
+              <Sparkles strokeWidth={1.75} />
+              {t.composer.aiFill}
+            </>
+          )}
+        </Button>
+        {pending && onCancel && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onCancel}
+            className="text-muted-foreground"
+          >
+            {t.composer.cancel}
+          </Button>
+        )}
       </div>
+
+      <Separator />
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onSkipText}
+        disabled={busy}
+        className="h-auto justify-start px-1 py-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
+      >
+        <span>⊞ {t.composer.skipText}</span>
+        <kbd className="ml-2 rounded border border-border/60 bg-secondary px-1.5 py-0.5 font-mono text-[10px]">
+          {t.composer.skipTextKbd}
+        </kbd>
+      </Button>
+
+      <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
     </form>
+  );
+}
+
+function Separator() {
+  return (
+    <div className="my-1 flex items-center gap-3 text-[10.5px] uppercase tracking-[0.1em] text-muted-foreground">
+      <span className="h-px flex-1 bg-border/50" />
+      <span className="text-muted-foreground/80">or</span>
+      <span className="h-px flex-1 bg-border/50" />
+    </div>
+  );
+}
+
+function LockBar({
+  lockMode,
+  onUnlock,
+}: {
+  lockMode: LockMode;
+  onUnlock: () => void;
+}) {
+  const { t } = useLanguage();
+  const label = lockMode === "m2" ? t.composer.lockedNoProse : t.composer.locked;
+  const linkText =
+    lockMode === "m2" ? t.composer.backToDraft : t.composer.unlock;
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[10.5px]",
+        "border-accent/30 bg-accent/8 text-accent",
+      )}
+    >
+      <Lock className="size-3" strokeWidth={1.75} />
+      <span>{label}</span>
+      <button
+        type="button"
+        onClick={onUnlock}
+        className="ml-auto inline-flex items-center gap-1 font-medium underline hover:no-underline"
+      >
+        <Unlock className="size-3" strokeWidth={1.75} />
+        {linkText}
+      </button>
+    </div>
   );
 }
