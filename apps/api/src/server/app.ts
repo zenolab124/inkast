@@ -6,6 +6,7 @@ import { generateRoutes } from "./routes/generate.js";
 import { jobsRoutes } from "./routes/jobs.js";
 import { db } from "../storage/db.js";
 import { reaperAbandonedJobs } from "../storage/jobs.js";
+import { getLlmDriver } from "../drivers/llm/index.js";
 
 export function createApp() {
   // Touch the DB to apply schema before serving any request.
@@ -18,6 +19,13 @@ export function createApp() {
   if (reaped > 0) {
     console.log(`[startup] reaped ${reaped} abandoned job(s) from previous run`);
   }
+
+  // Pre-pay LLM cold-start in the background so the user's first real prompt
+  // doesn't eat the subprocess spawn + OAuth decrypt + TLS handshake.
+  void getLlmDriver()
+    .warmup()
+    .then(r => console.log(`[startup] llm warmup: ${r.durationMs}ms (cached=${r.cached})`))
+    .catch(err => console.warn(`[startup] llm warmup failed (non-fatal):`, err?.message ?? err));
 
   const app = new Hono();
 

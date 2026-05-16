@@ -51,6 +51,7 @@ export const en: Translations = {
     referencePickTitle: "Select reference image",
     referenceUploadHint: "Drag an image here or click to browse (PNG / JPG / WebP)",
     referenceEmpty: "No images yet — generate one first or upload",
+    backendVia: "AI backend:",
   },
   jobs: {
     statusPending: "Pending",
@@ -152,13 +153,13 @@ export const en: Translations = {
     download: "Download image",
   },
   config: {
-    title: "Image provider settings",
-    description:
-      "Manage OpenAI-compatible image endpoint credentials (encrypted locally, fail over by priority)",
+    title: "Provider settings",
+    description: "Manage image and LLM endpoint credentials (encrypted locally)",
     add: "Add provider",
     edit: "Edit provider",
     addNew: "Add provider",
-    none: 'No providers yet. Click "Add provider" below to set up an OpenAI-compatible image endpoint.',
+    none: 'No image providers yet. Click "Add provider" below to configure one.',
+    noneLlm: "No LLM providers yet — falling back to ClaudeCode (local) below.",
     confirmDelete: "Delete this provider?",
     loading: "Loading…",
     error: "Error",
@@ -172,6 +173,27 @@ export const en: Translations = {
     },
     save: "Save",
     cancel: "Cancel",
+    tabs: {
+      image: "Image",
+      llm: "LLM",
+    },
+    capabilities: "Capabilities (multi-select; share base URL and key)",
+    activeDefault: "Default",
+    enable: "Enable",
+    dragToReorder: "Drag to reorder",
+    builtinTag: "Built-in",
+    probeModels: "Fetch model list",
+    probeHint: "Calls the base URL's /v1/models to enumerate supported models",
+    errors: {
+      needsKind: "Select at least one capability (image / LLM)",
+      apiKeyRequired: "API key is required for new providers",
+      probeNeedsBoth: "Fill base URL and API key first to probe models",
+    },
+    builtin: {
+      claudeCode: "ClaudeCode (local)",
+      claudeCodeDesc:
+        "Uses your local Claude Code OAuth — no API key required. Drag to reorder or disable like any other provider.",
+    },
   },
   picker: {
     titlePrefix: "Select",

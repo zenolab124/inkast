@@ -1,5 +1,5 @@
-import { type FormEvent } from "react";
-import { ImagePlus, Loader2, Lock, Sparkles, Unlock } from "lucide-react";
+import { type FormEvent, type ReactNode } from "react";
+import { ImagePlus, LayoutGrid, Loader2, Lock, Sparkles, Unlock } from "lucide-react";
 import type { ReferenceImage } from "@inkast/shared";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,6 +23,8 @@ interface PromptComposerProps {
   onUnlock: () => void;
   referenceImage: ReferenceImage | null;
   onReferenceImageChange: (next: ReferenceImage | null) => void;
+  /** Rendered next to the "AI expand" button — typically a "via X" status chip. */
+  backendStatus?: ReactNode;
 }
 
 export function PromptComposer({
@@ -38,6 +40,7 @@ export function PromptComposer({
   onUnlock,
   referenceImage,
   onReferenceImageChange,
+  backendStatus,
 }: PromptComposerProps) {
   const { t } = useLanguage();
   const busy = pending || generatingRaw;
@@ -55,9 +58,12 @@ export function PromptComposer({
       <div className="flex h-full flex-col gap-3">
         <LockBar lockMode={lockMode} onUnlock={onUnlock} />
 
-        <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {t.composer.label}
-        </Label>
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {t.composer.label}
+          </Label>
+          <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
+        </div>
 
         {lockMode === "ai-filled" ? (
           <>
@@ -103,20 +109,18 @@ export function PromptComposer({
             </p>
           </>
         )}
-
-        <ReferencePicker
-          value={referenceImage}
-          onChange={onReferenceImageChange}
-        />
       </div>
     );
   }
 
   return (
     <form onSubmit={handle} className="flex h-full flex-col gap-3">
-      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        {t.composer.label}
-      </Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {t.composer.label}
+        </Label>
+        <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
+      </div>
       <Textarea
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -176,25 +180,26 @@ export function PromptComposer({
             {t.composer.cancel}
           </Button>
         )}
+        {backendStatus && (
+          <div className="ml-auto text-xs text-muted-foreground">{backendStatus}</div>
+        )}
       </div>
 
       <Separator />
 
       <Button
         type="button"
-        variant="ghost"
-        size="sm"
+        variant="outline"
         onClick={onSkipText}
         disabled={busy}
-        className="h-auto justify-start px-1 py-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
+        className="justify-center"
       >
-        <span>⊞ {t.composer.skipText}</span>
+        <LayoutGrid strokeWidth={1.75} />
+        {t.composer.skipText}
         <kbd className="ml-2 rounded border border-border/60 bg-secondary px-1.5 py-0.5 font-mono text-[10px]">
           {t.composer.skipTextKbd}
         </kbd>
       </Button>
-
-      <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
     </form>
   );
 }

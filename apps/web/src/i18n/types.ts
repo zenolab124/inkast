@@ -50,6 +50,7 @@ export interface Translations {
     referencePickTitle: string;
     referenceUploadHint: string;
     referenceEmpty: string;
+    backendVia: string;
   };
   jobs: {
     statusPending: string;
@@ -148,6 +149,7 @@ export interface Translations {
     edit: string;
     addNew: string;
     none: string;
+    noneLlm: string;
     confirmDelete: string;
     loading: string;
     error: string;
@@ -161,6 +163,26 @@ export interface Translations {
     };
     save: string;
     cancel: string;
+    tabs: {
+      image: string;
+      llm: string;
+    };
+    capabilities: string;
+    activeDefault: string;
+    enable: string;
+    dragToReorder: string;
+    builtinTag: string;
+    probeModels: string;
+    probeHint: string;
+    errors: {
+      needsKind: string;
+      apiKeyRequired: string;
+      probeNeedsBoth: string;
+    };
+    builtin: {
+      claudeCode: string;
+      claudeCodeDesc: string;
+    };
   };
   picker: {
     titlePrefix: string;

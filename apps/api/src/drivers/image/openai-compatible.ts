@@ -3,7 +3,11 @@ import type {
   ImageEditParams,
   ImageGenerateParams,
 } from "openai/resources/images";
-import { listProviderKeys, type Provider } from "../../storage/providers.js";
+import {
+  listEnabledCapabilities,
+  type Provider,
+  type ProviderCapability,
+} from "../../storage/providers.js";
 import {
   ImageGenError,
   type AttemptErrorCode,
@@ -30,7 +34,7 @@ const DEFAULT_TIMEOUT_MS = 600_000;
  * Pool semantics match imagegen/scripts/generate.py — see types.ts header.
  */
 export async function generateImage(input: ImageGenInput): Promise<ImageGenOutcome> {
-  const pool = listProviderKeys();
+  const pool = listEnabledCapabilities("image");
   if (pool.length === 0) {
     throw new ImageGenError(
       "no_providers",
@@ -41,14 +45,14 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
   const overallStart = Date.now();
   const attempts: ImageGenAttempt[] = [];
 
-  for (const [idx, { provider, apiKey }] of pool.entries()) {
+  for (const [idx, { provider, capability, apiKey }] of pool.entries()) {
     if (input.signal?.aborted) {
       throw new ImageGenError("aborted", "image generation aborted by caller", attempts);
     }
 
     const started = Date.now();
     console.log(
-      `[image] ▶ attempt ${idx + 1}/${pool.length}: ${provider.name} (priority=${provider.priority}) → ${provider.baseUrl} · model=${provider.model}`,
+      `[image] ▶ attempt ${idx + 1}/${pool.length}: ${provider.name} (priority=${capability.priority}) → ${provider.baseUrl} · model=${capability.model}`,
     );
     console.log(
       `[image]   size=${input.size ?? "1024x1024"} quality=${input.quality ?? "high"} prompt-bytes=${input.promptText.length}`,
@@ -60,7 +64,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       console.log(`[image]   …still waiting on ${provider.name} (${elapsedSec}s elapsed)`);
     }, 15_000);
     try {
-      const b64 = await callProvider(provider, apiKey, input);
+      const b64 = await callProvider(provider, capability, apiKey, input);
       clearInterval(heartbeat);
       attempts.push({
         providerId: provider.id,
@@ -118,6 +122,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
 
 async function callProvider(
   provider: Provider,
+  capability: ProviderCapability,
   apiKey: string,
   input: ImageGenInput,
 ): Promise<string> {
@@ -139,7 +144,7 @@ async function callProvider(
   // default to returning a URL (not b64_json) when this field is absent,
   // adding an extra download hop and making timing flakier.
   const body = {
-    model: provider.model,
+    model: capability.model,
     prompt: input.promptText,
     size: input.size ?? "1024x1024",
     quality: input.quality ?? "high",
@@ -158,7 +163,7 @@ async function callProvider(
   }
   const reqStart = Date.now();
   const response = useEdit
-    ? await client.images.edit(await buildEditBody(provider, input), {
+    ? await client.images.edit(await buildEditBody(capability, input), {
         signal: input.signal,
       })
     : await client.images.generate(body, { signal: input.signal });
@@ -184,14 +189,14 @@ async function callProvider(
 }
 
 async function buildEditBody(
-  provider: Provider,
+  capability: ProviderCapability,
   input: ImageGenInput,
 ): Promise<ImageEditParams> {
   const ref = input.referenceImage;
   if (!ref) throw new Error("buildEditBody called without referenceImage");
   const file = await toFile(ref.buffer, ref.filename, { type: ref.mimeType });
   return {
-    model: provider.model,
+    model: capability.model,
     image: file,
     prompt: input.promptText,
     size: input.size ?? "1024x1024",

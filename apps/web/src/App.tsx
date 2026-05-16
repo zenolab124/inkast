@@ -9,20 +9,24 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import type {
-  GenerationRecord,
-  ImagePrompt,
-  JobRecord,
-  PromptDraft,
-  ReferenceImage,
+import {
+  BUILTIN_CLAUDE_CODE_PROVIDER_ID,
+  type GenerationRecord,
+  type ImagePrompt,
+  type JobRecord,
+  type PromptDraft,
+  type ProviderSummary,
+  type ReferenceImage,
 } from "@inkast/shared";
+import { listProviders } from "./features/config/api.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { cn } from "@/lib/utils";
 import { PromptComposer, type LockMode } from "./features/prompt/PromptComposer.js";
 import { PromptFieldEditor } from "./features/prompt/PromptFieldEditor.js";
-import { draftPrompt, type DraftPromptError } from "./features/prompt/api.js";
+import { draftPrompt, warmupLlm, type DraftPromptError } from "./features/prompt/api.js";
+import { useEffectiveLlmBackend } from "./features/prompt/useDefaultLlmBackend.js";
 import { ProviderConfigDialog } from "./features/config/ProviderConfigDialog.js";
 import { GalleryPage } from "./features/gallery/GalleryPage.js";
 import { SessionWorkspace } from "./features/workspace/SessionWorkspace.js";
@@ -56,6 +60,8 @@ export function App() {
   const [lockMode, setLockMode] = useState<LockMode>(null);
   const [sessionGenerationIds, setSessionGenerationIds] = useState<string[]>([]);
   const [galleryKey, setGalleryKey] = useState(0);
+  const [llmProviders, setLlmProviders] = useState<ProviderSummary[]>([]);
+  const defaultBackend = useEffectiveLlmBackend(llmProviders);
   const abortRef = useRef<AbortController | null>(null);
 
   const onJobSucceeded = useCallback(
@@ -122,7 +128,7 @@ export function App() {
 
     try {
       const resp = (await draftPrompt(
-        { input: trimmed, lang },
+        { input: trimmed, lang, backend: defaultBackend },
         ac.signal,
       )) as PromptDraft & {
         _meta?: { backend?: string; durationMs?: number };
@@ -141,7 +147,7 @@ export function App() {
         setPending(false);
       }
     }
-  }, [input, lang]);
+  }, [input, lang, defaultBackend]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -220,6 +226,20 @@ export function App() {
     [t],
   );
 
+  // Warm the LLM driver on mount AND whenever the default backend changes,
+  // so the first prompt expansion doesn't eat the SDK cold-start (or, for
+  // OpenAI providers, the first TLS handshake).
+  useEffect(() => {
+    void warmupLlm(defaultBackend);
+  }, [defaultBackend]);
+
+  // Load LLM providers once so the status label can show the configured
+  // provider's display name. Re-fetched whenever the config dialog closes.
+  useEffect(() => {
+    if (configOpen) return;
+    listProviders("llm").then(setLlmProviders).catch(() => setLlmProviders([]));
+  }, [configOpen]);
+
   // ⌘E / Ctrl+E to enter M2 (skip text)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -293,6 +313,19 @@ export function App() {
                 onUnlock={unlock}
                 referenceImage={referenceImage}
                 onReferenceImageChange={setReferenceImage}
+                backendStatus={
+                  <button
+                    type="button"
+                    onClick={() => setConfigOpen(true)}
+                    className="cursor-pointer hover:text-foreground"
+                    title={t.composer.backendVia}
+                  >
+                    {t.composer.backendVia}{" "}
+                    <span className="text-foreground/70">
+                      {backendDisplayName(defaultBackend, llmProviders, t.config.builtin.claudeCode)}
+                    </span>
+                  </button>
+                }
               />
             </section>
 
@@ -331,9 +364,24 @@ export function App() {
       <ProviderConfigDialog
         open={configOpen}
         onClose={() => setConfigOpen(false)}
+        onChange={list =>
+          setLlmProviders(list.filter(p => p.capabilities.some(c => c.kind === "llm")))
+        }
       />
     </div>
   );
+}
+
+function backendDisplayName(
+  backend: ReturnType<typeof useEffectiveLlmBackend>,
+  llmProviders: ProviderSummary[],
+  claudeCodeLabel: string,
+): string {
+  if (backend === "claude-code") return claudeCodeLabel;
+  if (backend.providerId === BUILTIN_CLAUDE_CODE_PROVIDER_ID) return claudeCodeLabel;
+  const found = llmProviders.find(p => p.id === backend.providerId);
+  const cap = found?.capabilities.find(c => c.kind === "llm");
+  return found && cap ? `${found.name} · ${cap.model}` : claudeCodeLabel;
 }
 
 function computeAiFields(p: ImagePrompt): Set<string> {

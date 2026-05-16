@@ -23,28 +23,43 @@ export function ReferencePicker({ value, onChange }: ReferencePickerProps) {
 
   if (value) {
     return (
-      <div className="flex items-center gap-2 rounded-md border border-border/60 bg-card px-2 py-1.5 shadow-(--shadow-paper)">
-        <ReferenceThumbnail value={value} size={40} />
-        <div className="flex flex-1 flex-col text-[11px]">
-          <span className="font-medium uppercase tracking-wider text-muted-foreground">
-            {t.composer.reference}
-          </span>
-          <span className="text-foreground/80">
-            {value.kind === "generation"
-              ? t.composer.referenceSourceGallery
-              : t.composer.referenceSourceUpload}
-          </span>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => onChange(null)}
-          title={t.composer.referenceRemove}
-          className="text-muted-foreground hover:text-accent"
+      <>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title={t.composer.reference}
+          className="inline-flex items-center gap-1.5 rounded-sm border border-border/60 bg-card pl-0.5 pr-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-border hover:text-foreground"
         >
-          <X strokeWidth={1.75} />
-        </Button>
-      </div>
+          <ReferenceThumbnail value={value} size={20} />
+          <span>{t.composer.reference}</span>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={e => {
+              e.stopPropagation();
+              onChange(null);
+            }}
+            onKeyDown={e => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.stopPropagation();
+                onChange(null);
+              }
+            }}
+            title={t.composer.referenceRemove}
+            className="ml-0.5 cursor-pointer rounded-sm p-0.5 hover:bg-secondary hover:text-accent"
+          >
+            <X strokeWidth={2} className="size-3" />
+          </span>
+        </button>
+        <ReferencePickerDialog
+          open={open}
+          onClose={() => setOpen(false)}
+          onSelect={ref => {
+            onChange(ref);
+            setOpen(false);
+          }}
+        />
+      </>
     );
   }
 
@@ -52,12 +67,12 @@ export function ReferencePicker({ value, onChange }: ReferencePickerProps) {
     <>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
+        variant="ghost"
+        size="xs"
         onClick={() => setOpen(true)}
-        className="text-muted-foreground hover:text-foreground"
+        className="h-auto px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
       >
-        <ImageIcon strokeWidth={1.5} />
+        <ImageIcon strokeWidth={1.5} className="size-3.5" />
         {t.composer.referenceAdd}
       </Button>
       <ReferencePickerDialog

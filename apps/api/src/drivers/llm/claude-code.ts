@@ -5,7 +5,11 @@ import {
   type CompleteJsonOptions,
   type CompleteJsonResult,
   type LlmDriver,
+  type WarmupResult,
 } from "./types.js";
+
+/** A driver is considered "still warm" if a real call happened within this window. */
+const WARMUP_FRESHNESS_MS = 5 * 60 * 1000;
 
 /**
  * JSON Schema enforced by the SDK on the model's structured output.
@@ -52,6 +56,40 @@ const PROMPT_DRAFT_SCHEMA: Record<string, unknown> = {
  */
 export class ClaudeCodeDriver implements LlmDriver {
   readonly backend = "claude-code" as const;
+
+  /** Timestamp of the last successful round-trip — used to dedupe warmups. */
+  private lastRoundTripAt = 0;
+  /** In-flight warmup promise so concurrent callers share one round-trip. */
+  private warmupInFlight: Promise<WarmupResult> | null = null;
+
+  async warmup(): Promise<WarmupResult> {
+    if (Date.now() - this.lastRoundTripAt < WARMUP_FRESHNESS_MS) {
+      return { durationMs: 0, cached: true, backend: this.backend };
+    }
+    if (this.warmupInFlight) return this.warmupInFlight;
+
+    this.warmupInFlight = (async (): Promise<WarmupResult> => {
+      const started = Date.now();
+      try {
+        await this.completeJson({
+          systemPrompt: 'Respond with exactly the JSON {"ok":true}. Nothing else.',
+          userPrompt: "ping",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["ok"],
+            properties: { ok: { type: "boolean" } },
+          },
+          timeoutMs: 60_000,
+        });
+        return { durationMs: Date.now() - started, cached: false, backend: this.backend };
+      } finally {
+        this.warmupInFlight = null;
+      }
+    })();
+
+    return this.warmupInFlight;
+  }
 
   async completeJson<T = unknown>(opts: CompleteJsonOptions): Promise<CompleteJsonResult<T>> {
     const started = Date.now();
@@ -108,6 +146,8 @@ export class ClaudeCodeDriver implements LlmDriver {
       const data = structured !== undefined
         ? (structured as T)
         : parseTolerantJson<T>(result.result);
+
+      this.lastRoundTripAt = Date.now();
 
       return {
         data,

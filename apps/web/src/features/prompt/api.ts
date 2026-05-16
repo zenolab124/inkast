@@ -1,4 +1,8 @@
-import type { DraftPromptRequest, DraftPromptResponse } from "@inkast/shared";
+import type {
+  DraftPromptRequest,
+  DraftPromptResponse,
+  LlmBackendDescriptor,
+} from "@inkast/shared";
 
 export interface DraftPromptError {
   status: number;
@@ -29,4 +33,21 @@ export async function draftPrompt(
   }
 
   return (await res.json()) as DraftPromptResponse;
+}
+
+/**
+ * Tell the API to pre-pay the LLM cold-start (subprocess spawn, OAuth decrypt,
+ * TLS handshake). Fire-and-forget from the UI — failures are silently ignored,
+ * since this is purely a latency optimization.
+ */
+export async function warmupLlm(backend?: LlmBackendDescriptor): Promise<void> {
+  try {
+    await fetch("/api/llm/warmup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(backend ? { backend } : {}),
+    });
+  } catch {
+    // Silent: warmup is best-effort.
+  }
 }

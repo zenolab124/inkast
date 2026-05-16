@@ -1,10 +1,10 @@
-import type { OutputLang, PromptDraft } from "@inkast/shared";
-import { getLlmDriver, type LlmBackend } from "../../drivers/llm/index.js";
+import type { LlmBackend, LlmBackendDescriptor, OutputLang, PromptDraft } from "@inkast/shared";
+import { getLlmDriver } from "../../drivers/llm/index.js";
 import { getPromptEngineSystemPrompt } from "./system-prompt.js";
 
 export interface DraftPromptInput {
   input: string;
-  backend?: LlmBackend;
+  backend?: LlmBackendDescriptor;
   lang?: OutputLang;
 }
 
@@ -30,7 +30,7 @@ export async function draftPrompt(input: DraftPromptInput): Promise<DraftPromptO
     throw new Error("input is empty");
   }
 
-  const backend = input.backend ?? "claude-code";
+  const backend: LlmBackendDescriptor = input.backend ?? "claude-code";
   const lang = input.lang ?? "zh";
   const driver = getLlmDriver(backend);
 
@@ -56,7 +56,7 @@ export async function draftPrompt(input: DraftPromptInput): Promise<DraftPromptO
   return {
     draft,
     raw: result.raw,
-    backend,
+    backend: result.backend,
     durationMs: result.durationMs,
   };
 }

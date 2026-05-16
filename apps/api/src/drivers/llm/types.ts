@@ -62,4 +62,18 @@ export interface LlmDriver {
   readonly backend: LlmBackend;
   /** Run a single-turn JSON generation. Throws LlmDriverError on failure. */
   completeJson<T = unknown>(opts: CompleteJsonOptions): Promise<CompleteJsonResult<T>>;
+  /**
+   * Pre-pay the cold-start tax (module load, subprocess spawn, OAuth decrypt,
+   * TLS handshake) by running a minimal round-trip. Idempotent and cheap to
+   * call repeatedly — successive calls inside a freshness window are no-ops.
+   */
+  warmup(): Promise<WarmupResult>;
+}
+
+export interface WarmupResult {
+  /** Wall-clock ms spent. 0 means the call was deduped within the freshness window. */
+  durationMs: number;
+  /** Whether an actual round-trip happened, or a cached "still warm" result. */
+  cached: boolean;
+  backend: LlmBackend;
 }
