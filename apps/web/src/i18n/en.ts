@@ -62,6 +62,7 @@ export const en: Translations = {
     m2Hint: 'M2 mode: pure field editing, no AI. To use AI, click "Back to draft" above.',
     reExpand: "✦ Re-expand fields",
     rawAfterLock: "▶ Generate from prose (ignore fields)",
+    paramsDivider: "Parameters",
     reference: "Reference",
     referenceAdd: "Add reference image",
     referenceRemove: "Remove",

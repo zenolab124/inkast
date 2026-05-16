@@ -62,6 +62,7 @@ export interface Translations {
     m2Hint: string;
     reExpand: string;
     rawAfterLock: string;
+    paramsDivider: string;
     reference: string;
     referenceAdd: string;
     referenceRemove: string;

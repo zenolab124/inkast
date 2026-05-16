@@ -61,6 +61,7 @@ export const zh: Translations = {
     m2Hint: "M2 模式:纯字段精修,无 AI 介入。如需 AI 扩充,点上方 “回到起草”。",
     reExpand: "✦ 重新扩充字段",
     rawAfterLock: "▶ 用散文直接生图(忽略字段)",
+    paramsDivider: "全局参数",
     reference: "参考图",
     referenceAdd: "添加参考图",
     referenceRemove: "移除",
