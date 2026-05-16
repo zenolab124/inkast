@@ -12,6 +12,8 @@ export interface Generation {
   quality: string;
   providerId: string | null;
   durationMs: number | null;
+  prose: string | null;
+  aiFilledFields: string[] | null;
   createdAt: number;
 }
 
@@ -24,6 +26,8 @@ export interface CreateGenerationInput {
   quality: string;
   providerId?: string;
   durationMs?: number;
+  prose?: string | null;
+  aiFilledFields?: string[] | null;
 }
 
 interface GenerationRow {
@@ -36,10 +40,21 @@ interface GenerationRow {
   quality: string;
   provider_id: string | null;
   duration_ms: number | null;
+  prose: string | null;
+  ai_filled_fields: string | null;
   created_at: number;
 }
 
 function rowToGeneration(row: GenerationRow): Generation {
+  let aiFilledFields: string[] | null = null;
+  if (row.ai_filled_fields) {
+    try {
+      const parsed = JSON.parse(row.ai_filled_fields);
+      if (Array.isArray(parsed)) aiFilledFields = parsed.filter(s => typeof s === "string");
+    } catch {
+      aiFilledFields = null;
+    }
+  }
   return {
     id: row.id,
     promptSnapshot: JSON.parse(row.prompt_snapshot) as ImagePrompt,
@@ -50,19 +65,27 @@ function rowToGeneration(row: GenerationRow): Generation {
     quality: row.quality,
     providerId: row.provider_id,
     durationMs: row.duration_ms,
+    prose: row.prose,
+    aiFilledFields,
     createdAt: row.created_at,
   };
 }
 
+const SELECT_GENERATION_COLUMNS = `id, prompt_snapshot, prompt_text, image_path, image_format,
+        size, quality, provider_id, duration_ms, prose, ai_filled_fields, created_at`;
+
 export function createGeneration(input: CreateGenerationInput): Generation {
   const id = randomUUID();
   const now = Date.now();
+  const prose = input.prose ?? null;
+  const aiFilledFields = input.aiFilledFields ?? null;
+  const aiFilledJson = aiFilledFields ? JSON.stringify(aiFilledFields) : null;
   db()
     .prepare(
       `INSERT INTO generations
        (id, prompt_snapshot, prompt_text, image_path, image_format,
-        size, quality, provider_id, duration_ms, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        size, quality, provider_id, duration_ms, prose, ai_filled_fields, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -74,6 +97,8 @@ export function createGeneration(input: CreateGenerationInput): Generation {
       input.quality,
       input.providerId ?? null,
       input.durationMs ?? null,
+      prose,
+      aiFilledJson,
       now,
     );
   return {
@@ -86,6 +111,8 @@ export function createGeneration(input: CreateGenerationInput): Generation {
     quality: input.quality,
     providerId: input.providerId ?? null,
     durationMs: input.durationMs ?? null,
+    prose,
+    aiFilledFields,
     createdAt: now,
   };
 }
@@ -93,8 +120,7 @@ export function createGeneration(input: CreateGenerationInput): Generation {
 export function listGenerations(limit = 100): Generation[] {
   const rows = db()
     .prepare(
-      `SELECT id, prompt_snapshot, prompt_text, image_path, image_format,
-              size, quality, provider_id, duration_ms, created_at
+      `SELECT ${SELECT_GENERATION_COLUMNS}
        FROM generations
        ORDER BY created_at DESC
        LIMIT ?`,
@@ -106,8 +132,7 @@ export function listGenerations(limit = 100): Generation[] {
 export function getGeneration(id: string): Generation | null {
   const row = db()
     .prepare(
-      `SELECT id, prompt_snapshot, prompt_text, image_path, image_format,
-              size, quality, provider_id, duration_ms, created_at
+      `SELECT ${SELECT_GENERATION_COLUMNS}
        FROM generations WHERE id = ?`,
     )
     .get(id) as GenerationRow | undefined;

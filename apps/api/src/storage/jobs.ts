@@ -13,6 +13,8 @@ export interface CreateJobInput {
   isRaw: boolean;
   size: string;
   quality: string;
+  prose?: string | null;
+  aiFilledFields?: string[] | null;
 }
 
 interface JobRow {
@@ -28,10 +30,13 @@ interface JobRow {
   attempts: string;
   error_code: string | null;
   error_message: string | null;
+  prose: string | null;
+  ai_filled_fields: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
 }
+
 
 function rowToJob(row: JobRow): JobRecord {
   return {
@@ -56,12 +61,15 @@ function rowToJob(row: JobRow): JobRecord {
 export function createJob(input: CreateJobInput): JobRecord {
   const id = randomUUID();
   const now = Date.now();
+  const prose = input.prose ?? null;
+  const aiFilledFields = input.aiFilledFields ?? null;
+  const aiFilledJson = aiFilledFields ? JSON.stringify(aiFilledFields) : null;
   db()
     .prepare(
       `INSERT INTO jobs
        (id, kind, status, prompt_snapshot, prompt_text, is_raw,
-        size, quality, attempts, created_at)
-       VALUES (?, 'image_generate', 'pending', ?, ?, ?, ?, ?, '[]', ?)`,
+        size, quality, attempts, prose, ai_filled_fields, created_at)
+       VALUES (?, 'image_generate', 'pending', ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
     )
     .run(
       id,
@@ -70,6 +78,8 @@ export function createJob(input: CreateJobInput): JobRecord {
       input.isRaw ? 1 : 0,
       input.size,
       input.quality,
+      prose,
+      aiFilledJson,
       now,
     );
   return {

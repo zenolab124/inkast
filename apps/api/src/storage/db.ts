@@ -44,8 +44,24 @@ function migrate(conn: Database.Database): void {
   }
   conn.exec(`CREATE INDEX IF NOT EXISTS idx_providers_kind_priority ON providers(kind, priority)`);
 
+  addColumnIfMissing(conn, "generations", "prose", "TEXT");
+  addColumnIfMissing(conn, "generations", "ai_filled_fields", "TEXT");
+  addColumnIfMissing(conn, "jobs", "prose", "TEXT");
+  addColumnIfMissing(conn, "jobs", "ai_filled_fields", "TEXT");
+
   backfillCapabilities(conn);
   seedBuiltinClaudeCode(conn);
+}
+
+function addColumnIfMissing(
+  conn: Database.Database,
+  table: string,
+  column: string,
+  decl: string,
+): void {
+  const cols = conn.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (cols.some(c => c.name === column)) return;
+  conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
 }
 
 /**

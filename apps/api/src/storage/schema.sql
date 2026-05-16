@@ -41,16 +41,18 @@ CREATE INDEX IF NOT EXISTS idx_capabilities_kind_priority
   ON provider_capabilities(kind, priority);
 
 CREATE TABLE IF NOT EXISTS generations (
-  id              TEXT PRIMARY KEY,
-  prompt_snapshot TEXT NOT NULL,
-  prompt_text     TEXT NOT NULL,
-  image_path      TEXT NOT NULL,
-  image_format    TEXT NOT NULL DEFAULT 'png',
-  size            TEXT NOT NULL,
-  quality         TEXT NOT NULL,
-  provider_id     TEXT,
-  duration_ms     INTEGER,
-  created_at      INTEGER NOT NULL,
+  id                 TEXT PRIMARY KEY,
+  prompt_snapshot    TEXT NOT NULL,
+  prompt_text        TEXT NOT NULL,
+  image_path         TEXT NOT NULL,
+  image_format       TEXT NOT NULL DEFAULT 'png',
+  size               TEXT NOT NULL,
+  quality            TEXT NOT NULL,
+  provider_id        TEXT,
+  duration_ms        INTEGER,
+  prose              TEXT,           -- original user prose (nullable; null = skip-text path or pre-migration row)
+  ai_filled_fields   TEXT,           -- JSON array of prompt-field names supplied by the LLM
+  created_at         INTEGER NOT NULL,
   FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE SET NULL
 );
 
@@ -61,21 +63,23 @@ CREATE INDEX IF NOT EXISTS idx_generations_created_at ON generations(created_at 
 -- failed. The frontend polls /api/jobs to recover state across page refreshes
 -- and to display "in-flight" task cards while the upstream model is working.
 CREATE TABLE IF NOT EXISTS jobs (
-  id              TEXT PRIMARY KEY,
-  kind            TEXT NOT NULL DEFAULT 'image_generate',
-  status          TEXT NOT NULL,           -- pending / running / succeeded / failed
-  prompt_snapshot TEXT NOT NULL,
-  prompt_text     TEXT NOT NULL,
-  is_raw          INTEGER NOT NULL DEFAULT 0,
-  size            TEXT NOT NULL,
-  quality         TEXT NOT NULL,
-  generation_id   TEXT,
-  attempts        TEXT NOT NULL DEFAULT '[]',
-  error_code      TEXT,
-  error_message   TEXT,
-  created_at      INTEGER NOT NULL,
-  started_at      INTEGER,
-  completed_at    INTEGER,
+  id                 TEXT PRIMARY KEY,
+  kind               TEXT NOT NULL DEFAULT 'image_generate',
+  status             TEXT NOT NULL,        -- pending / running / succeeded / failed
+  prompt_snapshot    TEXT NOT NULL,
+  prompt_text        TEXT NOT NULL,
+  is_raw             INTEGER NOT NULL DEFAULT 0,
+  size               TEXT NOT NULL,
+  quality            TEXT NOT NULL,
+  generation_id      TEXT,
+  attempts           TEXT NOT NULL DEFAULT '[]',
+  error_code         TEXT,
+  error_message      TEXT,
+  prose              TEXT,                 -- carried through onto the generation row when succeeded
+  ai_filled_fields   TEXT,                 -- JSON array, carried through to the generation row
+  created_at         INTEGER NOT NULL,
+  started_at         INTEGER,
+  completed_at       INTEGER,
   FOREIGN KEY (generation_id) REFERENCES generations(id) ON DELETE SET NULL
 );
 

@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · 左栏三块重构 v5</title>
+  <style>
+    /* ============================================================
+       PAPER TOKEN(与 v3 对齐)
+       ============================================================ */
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --ring: oklch(0.50 0.05 150);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    html.dark {
+      --background: oklch(0.18 0.012 60);
+      --foreground: oklch(0.94 0.012 80);
+      --card: oklch(0.22 0.012 60);
+      --primary: oklch(0.65 0.08 145);
+      --primary-foreground: oklch(0.18 0.012 60);
+      --accent: oklch(0.72 0.13 30);
+      --accent-foreground: oklch(0.18 0.012 60);
+      --muted: oklch(0.28 0.012 60);
+      --muted-foreground: oklch(0.70 0.012 70);
+      --border: oklch(0.36 0.012 60);
+      --secondary: oklch(0.28 0.012 60);
+      --input: oklch(0.32 0.012 60);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--background); color: var(--foreground);
+      font-family: var(--font-sans); font-size: 14px; line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' /></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.07'/></svg>");
+      mix-blend-mode: multiply;
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+    }
+
+    .page {
+      position: relative; z-index: 1;
+      max-width: 1320px; margin: 0 auto;
+      padding: 32px 24px 96px;
+      display: flex; flex-direction: column; gap: 32px;
+    }
+
+    .header-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 16px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 500; }
+    .brand-dot { width: 22px; height: 22px; border-radius: var(--radius); background: linear-gradient(135deg, var(--primary), var(--accent)); }
+
+    /* ============================================================
+       PRIMITIVES
+       ============================================================ */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: var(--radius);
+      font-size: 12.5px; font-weight: 500; font-family: inherit;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: var(--secondary); color: var(--foreground);
+      box-shadow: var(--shadow-paper); cursor: pointer;
+      transition: box-shadow 0.12s, background-color 0.12s;
+    }
+    .btn:hover { box-shadow: var(--shadow-paper-lifted); }
+    .btn svg { width: 13px; height: 13px; stroke-width: 1.5; }
+    .btn-primary { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
+    .btn-accent  { background: var(--accent); color: var(--accent-foreground); border-color: transparent; }
+    .btn-ghost   { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted-foreground); }
+    .btn-ghost:hover { color: var(--foreground); background: var(--secondary); }
+    .btn-outline { background: transparent; box-shadow: none; }
+    .btn-outline:hover { background: var(--secondary); }
+    .btn-sm { padding: 5px 10px; font-size: 11.5px; }
+    .btn-xs { padding: 3px 8px; font-size: 11px; }
+
+    .label {
+      font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+      color: var(--muted-foreground); text-transform: uppercase;
+    }
+    .input, textarea {
+      width: 100%; padding: 6px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius); font-family: inherit; font-size: 13px;
+      color: var(--foreground); outline: none;
+      transition: box-shadow 0.12s, border-color 0.12s;
+    }
+    textarea { resize: vertical; min-height: 140px; line-height: 1.6; }
+    .input:focus, textarea:focus {
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
+    }
+
+    /* ============================================================
+       状态卡片(把每个 composer 状态做成一张展示卡)
+       ============================================================ */
+    .state-card {
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 18px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px dashed color-mix(in oklch, var(--border) 80%, transparent);
+      border-radius: var(--radius);
+    }
+    .state-card-title {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 12px; color: var(--muted-foreground);
+      letter-spacing: 0.04em;
+    }
+    .state-card-title::before, .state-card-title::after {
+      content: ""; flex: 1; height: 1px;
+      background: color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .state-card-title b { color: var(--foreground); font-weight: 500; }
+
+    /* ============================================================
+       ★ 左栏本体(composer 三块)
+       ============================================================ */
+    .composer {
+      width: 100%; max-width: 460px;
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+    }
+
+    /* === Block 1: 起草区(textarea + 右上「跳过文本」+ 下方 AI 扩充按钮们) === */
+    .draft-block { display: flex; flex-direction: column; gap: 10px; }
+
+    .draft-head {
+      display: flex; align-items: center; justify-content: space-between;
+      min-height: 22px;
+    }
+    .draft-skip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 9px;
+      background: transparent;
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px; font-family: inherit;
+      color: var(--muted-foreground); cursor: pointer;
+      transition: color 0.12s, background-color 0.12s;
+    }
+    .draft-skip:hover { color: var(--foreground); background: var(--secondary); }
+    .draft-skip svg { width: 11px; height: 11px; stroke-width: 1.75; }
+    .draft-skip kbd {
+      font-family: var(--font-mono); font-size: 9.5px;
+      padding: 0 4px;
+      background: color-mix(in oklch, var(--muted) 60%, transparent);
+      border-radius: 2px; color: var(--muted-foreground);
+      margin-left: 3px;
+    }
+
+    .draft-actions {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    }
+    .draft-actions .backend {
+      margin-left: auto; font-size: 11px; color: var(--muted-foreground);
+    }
+    .draft-actions .backend b { font-weight: 500; color: var(--foreground); }
+
+    /* locked 模式的 prose 只读展示 */
+    .lock-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; font-size: 11px;
+      background: color-mix(in oklch, var(--accent) 8%, transparent);
+      border: 1px solid color-mix(in oklch, var(--accent) 30%, transparent);
+      color: color-mix(in oklch, var(--accent) 80%, var(--foreground));
+      border-radius: var(--radius);
+    }
+    .lock-bar svg { width: 12px; height: 12px; stroke-width: 1.75; }
+    .lock-bar .unlock {
+      margin-left: auto;
+      background: none; border: none; padding: 0;
+      font: inherit; cursor: pointer;
+      color: inherit; text-decoration: underline;
+    }
+    .prose-readonly {
+      padding: 10px 12px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius);
+      font-size: 13px; line-height: 1.6; color: var(--foreground);
+      opacity: 0.85;
+    }
+    .prose-empty {
+      padding: 10px 12px;
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px; color: var(--muted-foreground); font-style: italic;
+      text-align: center;
+    }
+
+    /* === Block 2: 分隔线(可选,主要是视觉分组) === */
+    .composer-divider {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 10px; color: var(--muted-foreground);
+      letter-spacing: 0.08em; text-transform: uppercase;
+      margin: 2px 0;
+    }
+    .composer-divider::before, .composer-divider::after {
+      content: ""; flex: 1; height: 1px;
+      background: color-mix(in oklch, var(--border) 40%, transparent);
+    }
+
+    /* === Block 3: 全局参数区(参考图 + 比例 + 尺寸) === */
+    .config-block { display: flex; flex-direction: column; gap: 12px; }
+
+    .config-row {
+      display: grid;
+      grid-template-columns: 50px 1fr;
+      gap: 10px; align-items: center;
+    }
+    .config-row > .label { margin: 0; }
+
+    /* 比例 chip(单选) */
+    .ratio-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ratio-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px;
+      background: var(--secondary);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px; font-family: inherit;
+      color: var(--foreground); opacity: 0.78;
+      cursor: pointer;
+      transition: background-color 0.12s, opacity 0.12s, box-shadow 0.12s;
+    }
+    .ratio-chip:hover { opacity: 1; }
+    .ratio-chip[aria-pressed="true"] {
+      background: color-mix(in oklch, var(--primary) 12%, transparent);
+      border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+      color: var(--primary); opacity: 1;
+      box-shadow: var(--shadow-paper);
+    }
+    .ratio-chip .shape {
+      display: inline-block;
+      border: 1.5px solid currentColor;
+      border-radius: 1px;
+      opacity: 0.7;
+    }
+    .ratio-chip.r1-1 .shape { width: 10px; height: 10px; }
+    .ratio-chip.r2-3 .shape { width: 8px; height: 12px; }
+    .ratio-chip.r3-2 .shape { width: 12px; height: 8px; }
+    .ratio-chip[aria-pressed="false"][data-disabled="true"] {
+      opacity: 0.5; cursor: not-allowed;
+    }
+
+    .ratio-custom-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      margin-left: 4px;
+      padding: 1px 7px; border-radius: 9px;
+      background: color-mix(in oklch, var(--muted) 60%, transparent);
+      font-size: 9.5px; letter-spacing: 0.04em;
+      color: var(--muted-foreground); text-transform: uppercase;
+    }
+    .ratio-custom-tag.warn {
+      background: color-mix(in oklch, var(--accent) 12%, transparent);
+      color: var(--accent);
+    }
+
+    /* 尺寸输入 */
+    .size-row {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .size-row .input {
+      width: 64px; padding: 4px 6px; height: 26px;
+      font-size: 12px; font-variant-numeric: tabular-nums; text-align: center;
+    }
+    .size-row .x {
+      color: var(--muted-foreground); font-size: 12px;
+    }
+    .size-row .resolution-hint {
+      margin-left: auto;
+      font-size: 10.5px; color: var(--muted-foreground);
+    }
+
+    /* 参考图 */
+    .ref-row {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .ref-pill-empty {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 10px;
+      background: transparent;
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px; font-family: inherit;
+      color: var(--muted-foreground); cursor: pointer;
+    }
+    .ref-pill-empty:hover { color: var(--foreground); border-color: var(--border); background: var(--secondary); }
+    .ref-pill-empty svg { width: 11px; height: 11px; stroke-width: 1.75; }
+
+    .ref-pill-filled {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 4px 3px 4px;
+      background: var(--secondary);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px; color: var(--foreground);
+    }
+    .ref-thumb {
+      width: 22px; height: 22px;
+      background: linear-gradient(135deg, #d4724a 0%, #f5b942 50%, #3a5a40 100%);
+      border-radius: 2px;
+    }
+    .ref-pill-filled button {
+      background: none; border: none; padding: 0 2px;
+      font: inherit; cursor: pointer; color: var(--muted-foreground);
+    }
+    .ref-pill-filled button:hover { color: var(--accent); }
+
+    /* ============================================================
+       右侧说明区(为状态卡上的小说明)
+       ============================================================ */
+    .state-wrap {
+      display: grid;
+      grid-template-columns: minmax(380px, 500px) 1fr;
+      gap: 24px; align-items: start;
+    }
+    .state-note {
+      font-size: 12px; line-height: 1.6; color: var(--muted-foreground);
+      padding-top: 6px;
+    }
+    .state-note h4 {
+      margin: 0 0 6px; font-size: 12px; font-weight: 500;
+      color: var(--foreground); letter-spacing: 0.02em;
+    }
+    .state-note ul { margin: 4px 0 0; padding-left: 18px; }
+    .state-note li { margin-bottom: 3px; }
+    .state-note code {
+      font-family: var(--font-mono); font-size: 11px;
+      padding: 1px 5px; border-radius: 2px;
+      background: color-mix(in oklch, var(--muted) 60%, transparent);
+    }
+
+    .footer {
+      margin-top: 24px;
+      display: flex; justify-content: space-between;
+      padding-top: 18px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      font-size: 11px; color: var(--muted-foreground);
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <header class="header-bar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Inkast</span>
+        <span style="font-size: 12px; color: var(--muted-foreground)">/ 原型 v5 · 左栏三块重构</span>
+      </div>
+      <button class="btn btn-outline btn-sm" id="dark-toggle">Paper · Light</button>
+    </header>
+
+    <!-- ============================================================
+         整体说明
+         ============================================================ -->
+    <section style="max-width: 900px; font-size: 13px; line-height: 1.7; color: var(--muted-foreground)">
+      <p style="margin: 0 0 8px"><b style="color: var(--foreground)">变更点 · 左栏现在分三块</b></p>
+      <ul style="margin: 0 0 0 16px; padding: 0">
+        <li><b style="color: var(--foreground)">起草区</b>:textarea + 右上「跳过文本」按钮 + 下方「AI 扩充」「直接生图」</li>
+        <li><b style="color: var(--foreground)">分隔线</b>:视觉分割,标注下方为「全局参数」</li>
+        <li><b style="color: var(--foreground)">参数区(通栏)</b>:参考图 + 比例 + 尺寸 —— 无论你写散文还是去 M2 字段编辑器,这三个都生效</li>
+      </ul>
+      <p style="margin: 12px 0 0"><b style="color: var(--foreground)">比例 vs 分辨率:</b>分成两行,比例 chip 是预设入口(点击同步填入分辨率),尺寸输入是 power-user 入口。<b style="color: var(--foreground)">自定义分辨率 ⇒ 比例 chip 全部失效</b>(没有任何 chip 高亮,旁注显示「自定义」)。</p>
+    </section>
+
+    <!-- ============================================================
+         状态 A: 默认 unlocked,textarea 空白
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title">
+        <b>状态 A · 默认</b>(unlocked · textarea 空白 · 选了 1:1 标准比例)
+      </div>
+      <div class="state-wrap">
+
+        <div class="composer">
+          <!-- Block 1: 起草 -->
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip" title="不写散文,直接进字段编辑器">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                跳过文本
+                <kbd>⌘E</kbd>
+              </button>
+            </div>
+            <textarea placeholder="一两句话说一下你想要的画面…写得越具体,AI 扩充的字段越准。"></textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm" disabled style="opacity: 0.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M20 4l-1.5 1.5M5.5 18.5 4 20M20 20l-1.5-1.5M5.5 5.5 4 4"/></svg>
+                AI 扩充到字段
+              </button>
+              <button class="btn btn-outline btn-sm" disabled style="opacity: 0.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                直接生图
+              </button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+
+          <!-- 分隔线 -->
+          <div class="composer-divider">全局参数</div>
+
+          <!-- Block 3: 参数 -->
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div class="ratio-chips">
+                <button class="ratio-chip r1-1" aria-pressed="true"><span class="shape"></span>1:1</button>
+                <button class="ratio-chip r2-3" aria-pressed="false"><span class="shape"></span>2:3</button>
+                <button class="ratio-chip r3-2" aria-pressed="false"><span class="shape"></span>3:2</button>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div class="size-row">
+                <input class="input" type="text" value="1024" />
+                <span class="x">×</span>
+                <input class="input" type="text" value="1024" />
+                <span class="resolution-hint">px · gpt-image-2 标准档</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+                  选择参考图
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-note">
+          <h4>这个状态展示什么</h4>
+          <ul>
+            <li>三块分组 + 通栏视觉</li>
+            <li>「跳过文本」放在「起草」label 同一行的右上,跟 textarea 上沿对齐</li>
+            <li>「AI 扩充」「直接生图」紧贴 textarea 下方,空白时两个按钮 disabled</li>
+            <li>比例和尺寸双向同步:点 <code>1:1</code> chip → 尺寸自动变 <code>1024 × 1024</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 B: textarea 有内容,准备 AI 扩充,选了 3:2 比例
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title">
+        <b>状态 B · 有内容</b>(unlocked · 写了散文 · 点了 3:2 比例)
+      </div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>跳过文本<kbd>⌘E</kbd></button>
+            </div>
+            <textarea>想做一张秋天感觉的海报,主角是蜷缩在松树下的橘色狐狸,要有月光的感觉,色调暖一些,整体安静孤独又不冷。最好留出顶部空间放标题。</textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M20 4l-1.5 1.5M5.5 18.5 4 20M20 20l-1.5-1.5M5.5 5.5 4 4"/></svg>
+                AI 扩充到字段
+              </button>
+              <button class="btn btn-outline btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                直接生图
+              </button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div class="ratio-chips">
+                <button class="ratio-chip r1-1" aria-pressed="false"><span class="shape"></span>1:1</button>
+                <button class="ratio-chip r2-3" aria-pressed="false"><span class="shape"></span>2:3</button>
+                <button class="ratio-chip r3-2" aria-pressed="true"><span class="shape"></span>3:2</button>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div class="size-row">
+                <input class="input" type="text" value="1536" />
+                <span class="x">×</span>
+                <input class="input" type="text" value="1024" />
+                <span class="resolution-hint">px · gpt-image-2 标准档</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <span class="ref-pill-filled">
+                  <span class="ref-thumb"></span>
+                  <span>fox-ref.png</span>
+                  <button title="移除">×</button>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>这个状态展示什么</h4>
+          <ul>
+            <li>textarea 有内容,AI 扩充 / 直接生图都可点</li>
+            <li><code>3:2</code> chip 选中,尺寸联动到 <code>1536 × 1024</code></li>
+            <li>参考图已选:用 pill 展示缩略图 + 文件名 + ✕ 移除</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 C: 自定义分辨率,比例失效
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title">
+        <b>状态 C · 自定义分辨率</b>(用户手写了 1200×800 · 比例 chip 全部失效)
+      </div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>跳过文本<kbd>⌘E</kbd></button>
+            </div>
+            <textarea>想做一张秋天感觉的海报…</textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M20 4l-1.5 1.5M5.5 18.5 4 20M20 20l-1.5-1.5M5.5 5.5 4 4"/></svg>AI 扩充到字段</button>
+              <button class="btn btn-outline btn-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>直接生图</button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div class="ratio-chips">
+                <button class="ratio-chip r1-1" aria-pressed="false"><span class="shape"></span>1:1</button>
+                <button class="ratio-chip r2-3" aria-pressed="false"><span class="shape"></span>2:3</button>
+                <button class="ratio-chip r3-2" aria-pressed="false"><span class="shape"></span>3:2</button>
+                <span class="ratio-custom-tag warn">自定义</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div class="size-row">
+                <input class="input" type="text" value="1200" />
+                <span class="x">×</span>
+                <input class="input" type="text" value="800" />
+                <span class="resolution-hint" style="color: var(--accent)">⚠ 非标准档</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>「比例失效」的语义</h4>
+          <ul>
+            <li>用户在尺寸输入框敲了 <code>1200 × 800</code> → 不匹配任何标准档</li>
+            <li>三个比例 chip <b>全部 unselected</b>,旁注一个 <code>自定义</code> tag</li>
+            <li>尺寸右侧出现 <code>⚠ 非标准档</code>,提示 gpt-image-2 上游可能拒绝</li>
+            <li>用户点任一比例 chip 时:尺寸立刻被替换回该 chip 的标准档,「自定义」tag 消失</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 D: locked ai-filled(AI 已扩充,prose 只读)
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title">
+        <b>状态 D · 已锁定(AI 已扩充)</b>(textarea → prose 只读 · 跳过文本按钮 → 「返回起草」)
+      </div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="lock-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 1 1 8 0v3"/></svg>
+            散文已扩充到字段
+            <button class="unlock">返回编辑</button>
+          </div>
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草 · 只读</span>
+              <span style="font-size: 10.5px; color: var(--muted-foreground)">右侧字段可编辑</span>
+            </div>
+            <div class="prose-readonly">
+              想做一张秋天感觉的海报,主角是蜷缩在松树下的橘色狐狸,要有月光的感觉,色调暖一些,整体安静孤独又不冷。最好留出顶部空间放标题。
+            </div>
+            <div class="draft-actions">
+              <button class="btn btn-ghost btn-xs">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v2M12 20v2M4 12H2M22 12h-2"/></svg>
+                重新扩充
+              </button>
+              <button class="btn btn-ghost btn-xs">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                直接拿原文生图
+              </button>
+            </div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div class="ratio-chips">
+                <button class="ratio-chip r1-1" aria-pressed="false"><span class="shape"></span>1:1</button>
+                <button class="ratio-chip r2-3" aria-pressed="false"><span class="shape"></span>2:3</button>
+                <button class="ratio-chip r3-2" aria-pressed="true"><span class="shape"></span>3:2</button>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div class="size-row">
+                <input class="input" type="text" value="1536" />
+                <span class="x">×</span>
+                <input class="input" type="text" value="1024" />
+                <span class="resolution-hint">px · gpt-image-2 标准档</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>locked 状态下的变化</h4>
+          <ul>
+            <li>textarea → 只读 prose 块(沿用之前的设计)</li>
+            <li>右上「跳过文本」按钮替换为顶部 <b>LockBar + 「返回编辑」</b>(逻辑上跳过文本此时无意义)</li>
+            <li>AI 扩充按钮 → 「重新扩充」(ghost 弱化,因为已经扩充过)</li>
+            <li>下方参数区<b>不变</b>:这正是「下方通栏」设计的好处 —— 锁不锁定都是同样的尺寸/参考图控件</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 E: locked m2(没散文,直接进字段编辑器)
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title">
+        <b>状态 E · 已锁定(无散文 / M2)</b>(用户点了「跳过文本」直接去字段编辑器)
+      </div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="lock-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 1 1 8 0v3"/></svg>
+            已跳过散文输入
+            <button class="unlock">返回起草</button>
+          </div>
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <span style="font-size: 10.5px; color: var(--muted-foreground)">字段直接在右侧编辑</span>
+            </div>
+            <div class="prose-empty">— 无散文(直接进字段编辑器) —</div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div class="ratio-chips">
+                <button class="ratio-chip r1-1" aria-pressed="true"><span class="shape"></span>1:1</button>
+                <button class="ratio-chip r2-3" aria-pressed="false"><span class="shape"></span>2:3</button>
+                <button class="ratio-chip r3-2" aria-pressed="false"><span class="shape"></span>3:2</button>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div class="size-row">
+                <input class="input" type="text" value="1024" />
+                <span class="x">×</span>
+                <input class="input" type="text" value="1024" />
+                <span class="resolution-hint">px · gpt-image-2 标准档</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>m2 (skip-text) 状态</h4>
+          <ul>
+            <li>LockBar 文案不同:「已跳过散文输入」 → 「返回起草」</li>
+            <li>起草区是空虚线占位(没散文)</li>
+            <li>参数区仍然完整:用户依然可以在这里改比例 / 尺寸 / 参考图</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>原型 v5 · 左栏三块布局 + 比例/分辨率分离</span>
+      <span>基于 v3 token</span>
+    </footer>
+  </div>
+
+  <script>
+    document.getElementById("dark-toggle").addEventListener("click", () => {
+      const html = document.documentElement;
+      html.classList.toggle("dark");
+      document.getElementById("dark-toggle").textContent =
+        html.classList.contains("dark") ? "Paper · Dark" : "Paper · Light";
+    });
+  </script>
+</body>
+</html>

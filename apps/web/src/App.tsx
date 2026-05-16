@@ -57,6 +57,7 @@ export function App() {
   const [flash, setFlash] = useState<FlashMessage | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
+  const [size, setSize] = useState<string>("auto");
   const [lockMode, setLockMode] = useState<LockMode>(null);
   const [sessionGenerationIds, setSessionGenerationIds] = useState<string[]>([]);
   const [galleryKey, setGalleryKey] = useState(0);
@@ -175,16 +176,20 @@ export function App() {
 
   const generate = useCallback(async () => {
     setFlash(null);
+    const proseTrimmed = input.trim();
     try {
       await submitJob({
         prompt,
+        size,
         referenceImage: referenceImage ?? undefined,
+        prose: proseTrimmed.length > 0 ? proseTrimmed : undefined,
+        aiFilledFields: aiSuggested.size > 0 ? Array.from(aiSuggested) : undefined,
       });
     } catch (err) {
       const e = err as { message?: string };
       setFlash({ kind: "error", text: e?.message ?? String(err) });
     }
-  }, [prompt, referenceImage, submitJob]);
+  }, [prompt, size, referenceImage, input, aiSuggested, submitJob]);
 
   const generateRaw = useCallback(async () => {
     const trimmed = input.trim();
@@ -195,13 +200,15 @@ export function App() {
       await submitJob({
         prompt: placeholder,
         rawPrompt: trimmed,
+        size,
         referenceImage: referenceImage ?? undefined,
+        prose: trimmed,
       });
     } catch (err) {
       const e = err as { message?: string };
       setFlash({ kind: "error", text: e?.message ?? String(err) });
     }
-  }, [input, referenceImage, submitJob]);
+  }, [input, size, referenceImage, submitJob]);
 
   const skipText = useCallback(() => {
     setPrompt(EMPTY_PROMPT);
@@ -313,6 +320,8 @@ export function App() {
                 onUnlock={unlock}
                 referenceImage={referenceImage}
                 onReferenceImageChange={setReferenceImage}
+                size={size}
+                onSizeChange={setSize}
                 backendStatus={
                   <button
                     type="button"

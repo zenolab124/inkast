@@ -61,7 +61,7 @@ export function Gallery({ refreshKey, onReuse }: GalleryProps) {
         <h2 className="text-sm font-medium tracking-wide">{t.gallery.title}</h2>
         <span className="text-xs text-muted-foreground">· {items.length}</span>
       </header>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+      <div className="columns-2 gap-3 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6">
         {items.map(it => (
           <GalleryCard
             key={it.id}
@@ -98,41 +98,46 @@ function GalleryCard({
   return (
     <article
       className={cn(
-        "group relative flex flex-col overflow-hidden rounded-md border border-border/60 bg-card shadow-(--shadow-paper)",
+        "group relative mb-3 flex break-inside-avoid flex-col overflow-hidden rounded-md border border-border/60 bg-card shadow-(--shadow-paper)",
         "transition hover:shadow-(--shadow-paper-lifted)",
       )}
     >
-      <Button
+      <button
         type="button"
-        variant="ghost"
         onClick={onOpen}
         title={t.gallery.openDetail}
-        className="aspect-square h-auto w-full overflow-hidden rounded-none bg-background p-0 hover:bg-background"
+        className="block w-full overflow-hidden bg-background p-0"
       >
         <img
           src={url}
           alt={subjectText || typeLabel || "image"}
           loading="lazy"
-          className="size-full object-cover transition group-hover:scale-[1.02]"
+          className="block w-full transition group-hover:scale-[1.02]"
         />
-      </Button>
-      <div className="flex flex-col gap-1 px-3 py-2.5">
-        {typeLabel && (
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            {typeLabel}
-          </span>
-        )}
-        {styleLabel && (
-          <span className="line-clamp-1 text-xs text-foreground/85" title={styleLabel}>
-            {styleLabel}
-          </span>
-        )}
+      </button>
+      <div className="flex flex-col gap-0.5 px-2.5 py-2">
+        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+          {typeLabel && (
+            <span className="font-semibold uppercase tracking-wider text-foreground/75">
+              {typeLabel}
+            </span>
+          )}
+          {typeLabel && styleLabel && <span className="opacity-40">·</span>}
+          {styleLabel && (
+            <span className="line-clamp-1" title={styleLabel}>
+              {styleLabel}
+            </span>
+          )}
+        </div>
         {subjectText && (
-          <span className="line-clamp-2 text-xs leading-snug text-muted-foreground" title={subjectText}>
+          <span
+            className="line-clamp-2 text-[11px] leading-snug text-foreground/85"
+            title={subjectText}
+          >
             {subjectText}
           </span>
         )}
-        <div className="mt-1 flex items-center justify-end gap-1">
+        <div className="mt-0.5 flex items-center justify-end gap-0.5 opacity-0 transition group-hover:opacity-100">
           {onReuse && (
             <Button
               variant="ghost"

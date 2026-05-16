@@ -31,6 +31,10 @@ export interface GenerateInput {
   rawPrompt?: string;
   /** Reference image (Gallery generation or fresh upload). */
   referenceImage?: ReferenceImage;
+  /** Original prose the user typed in the composer (persisted on the row). */
+  prose?: string | null;
+  /** Field names supplied by the LLM expansion (persisted on the row). */
+  aiFilledFields?: string[] | null;
 }
 
 export interface GenerateOutcome {
@@ -83,6 +87,8 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
     quality: input.quality ?? "high",
     providerId: outcome.providerId,
     durationMs: outcome.totalDurationMs,
+    prose: input.prose ?? null,
+    aiFilledFields: input.aiFilledFields ?? null,
   });
   console.log(`[generate] ✓ done · id=${generation.id} · total=${outcome.totalDurationMs}ms`);
 

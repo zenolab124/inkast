@@ -13,8 +13,10 @@
  *     to override, but the UI should require explicit confirmation.
  */
 
-export type ImageSize = "1024x1024" | "1024x1536" | "1536x1024";
-export type ImageQuality = "low" | "medium" | "high";
+import type { ImageSize as SharedImageSize, ImageQuality as SharedImageQuality } from "@inkast/shared";
+
+export type ImageSize = SharedImageSize;
+export type ImageQuality = SharedImageQuality;
 
 export interface ImageGenInput {
   /** Prompt text the provider sees. We typically pass JSON.stringify(prompt). */

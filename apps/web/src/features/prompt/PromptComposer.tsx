@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { cn } from "@/lib/utils";
 import { ReferencePicker } from "./ReferencePicker.js";
+import { SizeSelector } from "./SizeSelector.js";
 
 export type LockMode = null | "ai-filled" | "m2";
 
@@ -23,6 +24,8 @@ interface PromptComposerProps {
   onUnlock: () => void;
   referenceImage: ReferenceImage | null;
   onReferenceImageChange: (next: ReferenceImage | null) => void;
+  size: string;
+  onSizeChange: (next: string) => void;
   /** Rendered next to the "AI expand" button — typically a "via X" status chip. */
   backendStatus?: ReactNode;
 }
@@ -40,6 +43,8 @@ export function PromptComposer({
   onUnlock,
   referenceImage,
   onReferenceImageChange,
+  size,
+  onSizeChange,
   backendStatus,
 }: PromptComposerProps) {
   const { t } = useLanguage();
@@ -64,6 +69,8 @@ export function PromptComposer({
           </Label>
           <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
         </div>
+
+        <SizeSelector value={size} onChange={onSizeChange} disabled={busy} />
 
         {lockMode === "ai-filled" ? (
           <>
@@ -121,6 +128,7 @@ export function PromptComposer({
         </Label>
         <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
       </div>
+      <SizeSelector value={size} onChange={onSizeChange} disabled={busy} />
       <Textarea
         value={value}
         onChange={e => onChange(e.target.value)}

@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Inkast · 方向 + 尺寸标签 v7</title>
+  <style>
+    :root {
+      --background: oklch(0.935 0.020 80);
+      --foreground: oklch(0.265 0.020 50);
+      --card: oklch(0.965 0.014 80);
+      --primary: oklch(0.43 0.06 145);
+      --primary-foreground: oklch(0.96 0.014 80);
+      --accent: oklch(0.55 0.13 28);
+      --accent-foreground: oklch(0.97 0.012 80);
+      --muted: oklch(0.90 0.016 75);
+      --muted-foreground: oklch(0.48 0.022 55);
+      --border: oklch(0.82 0.018 70);
+      --secondary: oklch(0.89 0.018 75);
+      --input: oklch(0.85 0.014 72);
+      --ring: oklch(0.50 0.05 150);
+      --radius: 0.3rem;
+      --shadow-paper:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 1px 2px rgba(70, 45, 20, 0.10),
+        0 2px 6px rgba(70, 45, 20, 0.06);
+      --shadow-paper-lifted:
+        0 1px 0 rgba(255, 250, 235, 0.6) inset,
+        0 4px 10px rgba(70, 45, 20, 0.14),
+        0 8px 24px rgba(70, 45, 20, 0.08);
+      --font-sans:
+        -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+        "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+        system-ui, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    html.dark {
+      --background: oklch(0.18 0.012 60);
+      --foreground: oklch(0.94 0.012 80);
+      --card: oklch(0.22 0.012 60);
+      --primary: oklch(0.65 0.08 145);
+      --primary-foreground: oklch(0.18 0.012 60);
+      --accent: oklch(0.72 0.13 30);
+      --accent-foreground: oklch(0.18 0.012 60);
+      --muted: oklch(0.28 0.012 60);
+      --muted-foreground: oklch(0.70 0.012 70);
+      --border: oklch(0.36 0.012 60);
+      --secondary: oklch(0.28 0.012 60);
+      --input: oklch(0.32 0.012 60);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--background); color: var(--foreground);
+      font-family: var(--font-sans); font-size: 14px; line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' /></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.07'/></svg>");
+      mix-blend-mode: multiply;
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at top left, transparent 50%, rgba(70,45,20,0.06)),
+        radial-gradient(ellipse at bottom right, transparent 50%, rgba(70,45,20,0.06));
+      mix-blend-mode: multiply;
+    }
+
+    .page {
+      position: relative; z-index: 1;
+      max-width: 1320px; margin: 0 auto;
+      padding: 32px 24px 96px;
+      display: flex; flex-direction: column; gap: 28px;
+    }
+    .header-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 16px;
+      border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 500; }
+    .brand-dot { width: 22px; height: 22px; border-radius: var(--radius); background: linear-gradient(135deg, var(--primary), var(--accent)); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: var(--radius);
+      font-size: 12.5px; font-weight: 500; font-family: inherit;
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      background: var(--secondary); color: var(--foreground);
+      box-shadow: var(--shadow-paper); cursor: pointer;
+      transition: box-shadow 0.12s, background-color 0.12s;
+    }
+    .btn:hover { box-shadow: var(--shadow-paper-lifted); }
+    .btn svg { width: 13px; height: 13px; stroke-width: 1.5; }
+    .btn-primary { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
+    .btn-outline { background: transparent; box-shadow: none; }
+    .btn-outline:hover { background: var(--secondary); }
+    .btn-sm { padding: 5px 10px; font-size: 11.5px; }
+
+    .label {
+      font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+      color: var(--muted-foreground); text-transform: uppercase;
+    }
+    .input, textarea {
+      width: 100%; padding: 6px 10px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px solid color-mix(in oklch, var(--input) 80%, transparent);
+      border-radius: var(--radius); font-family: inherit; font-size: 13px;
+      color: var(--foreground); outline: none;
+      transition: box-shadow 0.12s, border-color 0.12s;
+    }
+    textarea { resize: vertical; min-height: 120px; line-height: 1.6; }
+    .input:focus, textarea:focus {
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
+    }
+
+    .state-card {
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 18px;
+      background: color-mix(in oklch, var(--background) 70%, var(--card));
+      border: 1px dashed color-mix(in oklch, var(--border) 80%, transparent);
+      border-radius: var(--radius);
+    }
+    .state-card-title {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 12px; color: var(--muted-foreground);
+      letter-spacing: 0.04em;
+    }
+    .state-card-title::before, .state-card-title::after {
+      content: ""; flex: 1; height: 1px;
+      background: color-mix(in oklch, var(--border) 50%, transparent);
+    }
+    .state-card-title b { color: var(--foreground); font-weight: 500; }
+
+    /* ============================================================
+       COMPOSER
+       ============================================================ */
+    .composer {
+      width: 100%; max-width: 480px;
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-paper);
+    }
+    .draft-block { display: flex; flex-direction: column; gap: 10px; }
+    .draft-head {
+      display: flex; align-items: center; justify-content: space-between;
+      min-height: 22px;
+    }
+    .draft-skip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 9px;
+      background: transparent;
+      border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+      border-radius: var(--radius);
+      font-size: 11px; font-family: inherit;
+      color: var(--muted-foreground); cursor: pointer;
+      transition: color 0.12s, background-color 0.12s;
+    }
+    .draft-skip:hover { color: var(--foreground); background: var(--secondary); }
+    .draft-skip:hover svg.arrow { transform: translateX(2px); }
+    .draft-skip svg { width: 11px; height: 11px; stroke-width: 1.75; }
+    .draft-skip svg.arrow { transition: transform 0.12s; }
+    .draft-skip kbd {
+      font-family: var(--font-mono); font-size: 9.5px;
+      padding: 0 4px;
+      background: color-mix(in oklch, var(--muted) 60%, transparent);
+      border-radius: 2px; color: var(--muted-foreground);
+    }
+
+    .draft-actions {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    }
+    .draft-actions .backend {
+      margin-left: auto; font-size: 11px; color: var(--muted-foreground);
+    }
+    .draft-actions .backend b { font-weight: 500; color: var(--foreground); }
+
+    .composer-divider {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 10px; color: var(--muted-foreground);
+      letter-spacing: 0.08em; text-transform: uppercase;
+      margin: 2px 0;
+    }
+    .composer-divider::before, .composer-divider::after {
+      content: ""; flex: 1; height: 1px;
+      background: color-mix(in oklch, var(--border) 40%, transparent);
+    }
+
+    /* ============================================================
+       PARAMS
+       ============================================================ */
+    .config-block { display: flex; flex-direction: column; gap: 14px; }
+
+    .config-row {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 10px;
+    }
+    .config-row > .label { padding-top: 4px; }
+
+    .config-row.disabled .ratio-chip,
+    .config-row.disabled .ratio-custom-row .input {
+      opacity: 0.42;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .config-row.disabled-label { color: var(--muted-foreground); opacity: 0.7; }
+    .disabled-note {
+      grid-column: 2 / 3;
+      margin-top: 4px;
+      font-size: 10.5px; color: var(--accent);
+      display: flex; align-items: center; gap: 4px;
+    }
+    .disabled-note svg { width: 11px; height: 11px; stroke-width: 1.75; }
+
+    /* === 方向 chip(4 个:方/横/竖/自定义) === */
+    .direction-chips {
+      display: flex; flex-wrap: wrap; gap: 5px;
+    }
+    .direction-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 11px;
+      background: var(--secondary);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 12px; font-family: inherit;
+      color: var(--foreground); opacity: 0.78;
+      cursor: pointer;
+      transition: background-color 0.12s, opacity 0.12s, box-shadow 0.12s;
+    }
+    .direction-chip:hover { opacity: 1; }
+    .direction-chip[aria-pressed="true"] {
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+      color: var(--primary); opacity: 1;
+      box-shadow: var(--shadow-paper);
+    }
+    .direction-chip .shape {
+      display: inline-block;
+      border: 1.5px solid currentColor;
+      border-radius: 1px;
+      opacity: 0.75;
+    }
+    .shape.s-square { width: 11px; height: 11px; }
+    .shape.s-wide   { width: 14px; height: 8px; }
+    .shape.s-tall   { width: 8px;  height: 14px; }
+    .shape.s-custom { width: 11px; height: 11px; border-style: dashed; }
+
+    .direction-chip.custom[aria-pressed="true"] {
+      background: color-mix(in oklch, var(--accent) 12%, transparent);
+      border-color: color-mix(in oklch, var(--accent) 50%, transparent);
+      color: var(--accent);
+    }
+
+    .ratio-custom-row {
+      display: flex; align-items: center; gap: 6px;
+      margin-top: 8px;
+    }
+    .ratio-custom-row .input {
+      width: 52px; height: 26px;
+      padding: 4px 6px; font-size: 12px;
+      font-variant-numeric: tabular-nums; text-align: center;
+    }
+    .ratio-custom-row .colon {
+      font-size: 13px; color: var(--muted-foreground); font-weight: 500;
+    }
+    .ratio-custom-row .hint {
+      margin-left: auto;
+      font-size: 10.5px; color: var(--muted-foreground);
+    }
+
+    /* === 尺寸候选(带比例前缀) === */
+    .size-presets {
+      display: flex; flex-wrap: wrap; gap: 5px;
+    }
+    .size-preset {
+      display: inline-flex; align-items: baseline; gap: 6px;
+      padding: 4px 10px;
+      background: var(--secondary);
+      border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px;
+      color: var(--foreground); opacity: 0.78;
+      cursor: pointer;
+      transition: background-color 0.12s, opacity 0.12s, box-shadow 0.12s;
+    }
+    .size-preset:hover { opacity: 1; }
+    .size-preset[aria-pressed="true"] {
+      background: color-mix(in oklch, var(--primary) 14%, transparent);
+      border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+      color: var(--primary); opacity: 1;
+      box-shadow: var(--shadow-paper);
+    }
+    .size-preset .ratio-tag {
+      font-size: 10px; font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--muted-foreground);
+      opacity: 0.85;
+    }
+    .size-preset[aria-pressed="true"] .ratio-tag { color: var(--primary); opacity: 0.7; }
+    .size-preset .res {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+    .size-preset .star {
+      font-size: 10px;
+      color: var(--accent);
+      margin-left: -2px;
+    }
+    .size-preset[aria-pressed="true"] .star {
+      color: var(--accent);
+    }
+    .size-presets-empty {
+      font-size: 11px; color: var(--muted-foreground); font-style: italic;
+      padding: 3px 0;
+    }
+
+    .size-row {
+      display: flex; align-items: center; gap: 6px;
+      margin-top: 6px;
+    }
+    .size-row .input {
+      width: 64px; padding: 4px 6px; height: 26px;
+      font-size: 12px; font-variant-numeric: tabular-nums; text-align: center;
+    }
+    .size-row .x { color: var(--muted-foreground); font-size: 12px; }
+    .size-row .px { font-size: 10.5px; color: var(--muted-foreground); margin-left: 4px; }
+    .size-row .clear-btn {
+      margin-left: auto;
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 7px;
+      background: color-mix(in oklch, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+      border-radius: var(--radius);
+      font-size: 10.5px; font-family: inherit;
+      color: var(--accent); cursor: pointer;
+    }
+    .size-row .clear-btn:hover { background: color-mix(in oklch, var(--accent) 20%, transparent); }
+    .size-row .clear-btn svg { width: 10px; height: 10px; stroke-width: 1.75; }
+
+    .size-hint {
+      grid-column: 2 / 3;
+      margin-top: 4px;
+      font-size: 10.5px;
+    }
+    .size-hint.default { color: var(--muted-foreground); }
+    .size-hint.custom  { color: var(--accent); }
+    .size-hint .legend {
+      display: inline-flex; align-items: center; gap: 3px;
+      margin-left: 8px;
+    }
+    .size-hint .legend .star {
+      color: var(--accent);
+    }
+
+    /* ref */
+    .ref-row { display: flex; align-items: center; gap: 8px; }
+    .ref-pill-empty {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 10px;
+      background: transparent;
+      border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+      border-radius: var(--radius);
+      font-size: 11.5px; font-family: inherit;
+      color: var(--muted-foreground); cursor: pointer;
+    }
+    .ref-pill-empty:hover { color: var(--foreground); border-color: var(--border); background: var(--secondary); }
+    .ref-pill-empty svg { width: 11px; height: 11px; stroke-width: 1.75; }
+
+    /* notes */
+    .state-wrap {
+      display: grid;
+      grid-template-columns: minmax(440px, 540px) 1fr;
+      gap: 24px; align-items: start;
+    }
+    .state-note {
+      font-size: 12px; line-height: 1.65; color: var(--muted-foreground);
+      padding-top: 6px;
+    }
+    .state-note h4 {
+      margin: 0 0 6px; font-size: 12px; font-weight: 500;
+      color: var(--foreground); letter-spacing: 0.02em;
+    }
+    .state-note ul { margin: 4px 0 0; padding-left: 18px; }
+    .state-note li { margin-bottom: 3px; }
+    .state-note code {
+      font-family: var(--font-mono); font-size: 11px;
+      padding: 1px 5px; border-radius: 2px;
+      background: color-mix(in oklch, var(--muted) 60%, transparent);
+    }
+
+    .footer {
+      margin-top: 24px;
+      display: flex; justify-content: space-between;
+      padding-top: 18px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+      font-size: 11px; color: var(--muted-foreground);
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <header class="header-bar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Inkast</span>
+        <span style="font-size: 12px; color: var(--muted-foreground)">/ 原型 v7 · 方/横/竖 + 尺寸标签</span>
+      </div>
+      <button class="btn btn-outline btn-sm" id="dark-toggle">Paper · Light</button>
+    </header>
+
+    <section style="max-width: 900px; font-size: 13px; line-height: 1.7; color: var(--muted-foreground)">
+      <p style="margin: 0 0 8px"><b style="color: var(--foreground)">这版变更点</b></p>
+      <ul style="margin: 0 0 0 16px; padding: 0">
+        <li>「比例」收敛到 <b style="color: var(--foreground)">方 / 横 / 竖 / 自定义</b> 4 个 chip</li>
+        <li>细比例(<code>3:2</code> / <code>16:9</code> / <code>4:3</code> 等)<b style="color: var(--foreground)">下沉到尺寸候选标签</b>:每个尺寸 chip 显示 <code>3:2 1536×1024</code> 这种「比例 + 实际尺寸」</li>
+        <li>带 <b style="color: var(--accent)">★</b> 的尺寸 = gpt-image-2 原生支持的标准档,不带 ★ 的 = 数学合法但上游可能拒</li>
+        <li>「按方向走」时默认选中带 ★ 的标准档</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================
+         状态 A · 选了「方」
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title"><b>状态 A · 方</b>(默认 · 选中 ★ 1024×1024)</div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip">跳过文本<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M13 5l7 7-7 7"/></svg><kbd>⌘E</kbd></button>
+            </div>
+            <textarea placeholder="一两句话说一下你想要的画面…"></textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm" disabled style="opacity: 0.5">AI 扩充到字段</button>
+              <button class="btn btn-outline btn-sm" disabled style="opacity: 0.5">直接生图</button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+
+          <div class="composer-divider">全局参数</div>
+
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div>
+                <div class="direction-chips">
+                  <button class="direction-chip" aria-pressed="true"><span class="shape s-square"></span>方</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-wide"></span>横</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-tall"></span>竖</button>
+                  <button class="direction-chip custom" aria-pressed="false"><span class="shape s-custom"></span>自定义</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div>
+                <div class="size-presets">
+                  <button class="size-preset" aria-pressed="true">
+                    <span class="ratio-tag">1:1</span><span class="res">1024×1024</span><span class="star">★</span>
+                  </button>
+                  <button class="size-preset" aria-pressed="false">
+                    <span class="ratio-tag">1:1</span><span class="res">512×512</span>
+                  </button>
+                  <button class="size-preset" aria-pressed="false">
+                    <span class="ratio-tag">1:1</span><span class="res">2048×2048</span>
+                  </button>
+                </div>
+                <div class="size-row">
+                  <input class="input" type="text" placeholder="1024" />
+                  <span class="x">×</span>
+                  <input class="input" type="text" placeholder="1024" />
+                  <span class="px">px</span>
+                </div>
+              </div>
+              <div class="size-hint default">
+                按「方」走 · 提交时用 <code>1024×1024</code>
+                <span class="legend"><span class="star">★</span> = gpt-image-2 标准档</span>
+              </div>
+            </div>
+
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-note">
+          <h4>方</h4>
+          <ul>
+            <li>方向 chip 4 个,横向一行排开</li>
+            <li>尺寸候选自带前缀 <code>1:1</code>,真实尺寸用等宽数字</li>
+            <li><b>★</b> 标记 <code>1024×1024</code>,告诉用户这个是上游原生支持的安全档</li>
+            <li>下方有 ★ 图例,首次接触有上下文</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 B · 选了「横」(尺寸候选给 3 个常见横向比例)
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title"><b>状态 B · 横</b>(尺寸候选 = 3:2 ★ / 16:9 / 4:3)</div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip">跳过文本<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M13 5l7 7-7 7"/></svg><kbd>⌘E</kbd></button>
+            </div>
+            <textarea>电影感横版海报…</textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm">AI 扩充到字段</button>
+              <button class="btn btn-outline btn-sm">直接生图</button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div>
+                <div class="direction-chips">
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-square"></span>方</button>
+                  <button class="direction-chip" aria-pressed="true"><span class="shape s-wide"></span>横</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-tall"></span>竖</button>
+                  <button class="direction-chip custom" aria-pressed="false"><span class="shape s-custom"></span>自定义</button>
+                </div>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div>
+                <div class="size-presets">
+                  <button class="size-preset" aria-pressed="true">
+                    <span class="ratio-tag">3:2</span><span class="res">1536×1024</span><span class="star">★</span>
+                  </button>
+                  <button class="size-preset" aria-pressed="false">
+                    <span class="ratio-tag">16:9</span><span class="res">1920×1080</span>
+                  </button>
+                  <button class="size-preset" aria-pressed="false">
+                    <span class="ratio-tag">4:3</span><span class="res">1280×960</span>
+                  </button>
+                </div>
+                <div class="size-row">
+                  <input class="input" type="text" placeholder="1536" />
+                  <span class="x">×</span>
+                  <input class="input" type="text" placeholder="1024" />
+                  <span class="px">px</span>
+                </div>
+              </div>
+              <div class="size-hint default">
+                按「横」走 · 提交时用 <code>1536×1024</code>
+                <span class="legend"><span class="star">★</span> = gpt-image-2 标准档</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>横向时</h4>
+          <ul>
+            <li>方向 chip 切到「横」</li>
+            <li>尺寸候选立刻换:<code>3:2·1536×1024 ★</code> / <code>16:9·1920×1080</code> / <code>4:3·1280×960</code></li>
+            <li>默认选 ★ 那一档(gpt-image-2 安全)</li>
+            <li>用户想要 16:9 → 直接点对应 chip,但要做好上游拒绝的心理准备</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 C · 选了「竖」
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title"><b>状态 C · 竖</b>(尺寸候选 = 2:3 ★ / 9:16 / 3:4 / 4:5)</div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip">跳过文本<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M13 5l7 7-7 7"/></svg><kbd>⌘E</kbd></button>
+            </div>
+            <textarea>手机壁纸…</textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm">AI 扩充到字段</button>
+              <button class="btn btn-outline btn-sm">直接生图</button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div>
+                <div class="direction-chips">
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-square"></span>方</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-wide"></span>横</button>
+                  <button class="direction-chip" aria-pressed="true"><span class="shape s-tall"></span>竖</button>
+                  <button class="direction-chip custom" aria-pressed="false"><span class="shape s-custom"></span>自定义</button>
+                </div>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div>
+                <div class="size-presets">
+                  <button class="size-preset" aria-pressed="true">
+                    <span class="ratio-tag">2:3</span><span class="res">1024×1536</span><span class="star">★</span>
+                  </button>
+                  <button class="size-preset" aria-pressed="false">
+                    <span class="ratio-tag">9:16</span><span class="res">1080×1920</span>
+                  </button>
+                  <button class="size-preset" aria-pressed="false">
+                    <span class="ratio-tag">3:4</span><span class="res">960×1280</span>
+                  </button>
+                  <button class="size-preset" aria-pressed="false">
+                    <span class="ratio-tag">4:5</span><span class="res">1024×1280</span>
+                  </button>
+                </div>
+                <div class="size-row">
+                  <input class="input" type="text" placeholder="1024" />
+                  <span class="x">×</span>
+                  <input class="input" type="text" placeholder="1536" />
+                  <span class="px">px</span>
+                </div>
+              </div>
+              <div class="size-hint default">
+                按「竖」走 · 提交时用 <code>1024×1536</code>
+                <span class="legend"><span class="star">★</span> = gpt-image-2 标准档</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>竖向时</h4>
+          <ul>
+            <li>竖向候选给了 4 个(社交媒体常见比例较多)</li>
+            <li>★ <code>2:3 · 1024×1536</code> 是 gpt-image-2 原生</li>
+            <li>注意 chip 横向自动换行,不会爆出容器</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 D · 自定义比例
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title"><b>状态 D · 自定义比例</b>(展开 W:H · 无候选)</div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip">跳过文本<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M13 5l7 7-7 7"/></svg><kbd>⌘E</kbd></button>
+            </div>
+            <textarea></textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm" disabled style="opacity: 0.5">AI 扩充到字段</button>
+              <button class="btn btn-outline btn-sm" disabled style="opacity: 0.5">直接生图</button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row">
+              <span class="label">比例</span>
+              <div>
+                <div class="direction-chips">
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-square"></span>方</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-wide"></span>横</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-tall"></span>竖</button>
+                  <button class="direction-chip custom" aria-pressed="true"><span class="shape s-custom"></span>自定义</button>
+                </div>
+                <div class="ratio-custom-row">
+                  <input class="input" type="text" value="5" />
+                  <span class="colon">:</span>
+                  <input class="input" type="text" value="7" />
+                  <span class="hint">自定义比例 5:7</span>
+                </div>
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div>
+                <div class="size-presets-empty">— 自定义比例无候选,请手填 —</div>
+                <div class="size-row">
+                  <input class="input" type="text" placeholder="W" />
+                  <span class="x">×</span>
+                  <input class="input" type="text" placeholder="H" />
+                  <span class="px">px</span>
+                </div>
+              </div>
+              <div class="size-hint custom">⚠ 没有尺寸 · 提交前请填写</div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>自定义比例</h4>
+          <ul>
+            <li>第 4 个 chip 用 accent 色区分,展开 W:H 输入</li>
+            <li>尺寸候选区显式说明「无候选」,引导用户手填</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         状态 E · 手填尺寸 → 比例禁用
+         ============================================================ -->
+    <section class="state-card">
+      <div class="state-card-title"><b>状态 E · 手填尺寸</b>(比例整块灰掉 · 出现「清空」)</div>
+      <div class="state-wrap">
+        <div class="composer">
+          <div class="draft-block">
+            <div class="draft-head">
+              <span class="label">起草</span>
+              <button class="draft-skip">跳过文本<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M13 5l7 7-7 7"/></svg><kbd>⌘E</kbd></button>
+            </div>
+            <textarea>电影感横版海报…</textarea>
+            <div class="draft-actions">
+              <button class="btn btn-primary btn-sm">AI 扩充到字段</button>
+              <button class="btn btn-outline btn-sm">直接生图</button>
+              <span class="backend">via <b>ClaudeCode</b></span>
+            </div>
+          </div>
+          <div class="composer-divider">全局参数</div>
+          <div class="config-block">
+            <div class="config-row disabled">
+              <span class="label disabled-label">比例</span>
+              <div>
+                <div class="direction-chips">
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-square"></span>方</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-wide"></span>横</button>
+                  <button class="direction-chip" aria-pressed="false"><span class="shape s-tall"></span>竖</button>
+                  <button class="direction-chip custom" aria-pressed="false"><span class="shape s-custom"></span>自定义</button>
+                </div>
+              </div>
+              <div class="disabled-note">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                已被下方手填尺寸覆盖 · 点「清空」恢复
+              </div>
+            </div>
+            <div class="config-row">
+              <span class="label">尺寸</span>
+              <div>
+                <div class="size-presets-empty">— 自定义尺寸 —</div>
+                <div class="size-row">
+                  <input class="input" type="text" value="1500" />
+                  <span class="x">×</span>
+                  <input class="input" type="text" value="900" />
+                  <span class="px">px</span>
+                  <button class="clear-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>
+                    清空
+                  </button>
+                </div>
+              </div>
+              <div class="size-hint custom">⚠ 非标准档 · 提交后由上游模型判断接受/拒绝</div>
+            </div>
+            <div class="config-row">
+              <span class="label">参考图</span>
+              <div class="ref-row">
+                <button class="ref-pill-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>选择参考图</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-note">
+          <h4>覆盖规则(沿用 v6)</h4>
+          <ul>
+            <li>用户手填 <code>1500 × 900</code> → 比例区灰掉</li>
+            <li>「清空」按钮在尺寸 input 右侧</li>
+            <li>清空后回到「按方向走」</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>原型 v7 · 方/横/竖 + 尺寸标签 + ★ 标准档标记</span>
+      <span>基于 v3 token</span>
+    </footer>
+  </div>
+
+  <script>
+    document.getElementById("dark-toggle").addEventListener("click", () => {
+      const html = document.documentElement;
+      html.classList.toggle("dark");
+      document.getElementById("dark-toggle").textContent =
+        html.classList.contains("dark") ? "Paper · Dark" : "Paper · Light";
+    });
+  </script>
+</body>
+</html>

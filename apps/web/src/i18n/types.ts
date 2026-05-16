@@ -22,6 +22,28 @@ export interface Translations {
     ok: string;
     close: string;
   };
+  size: {
+    orientationLabel: string;
+    ratioLabel: string;
+    sizeLabel: string;
+    orientationAuto: string;
+    orientationSquare: string;
+    orientationWide: string;
+    orientationTall: string;
+    orientationCustom: string;
+    autoNote: string;
+    customRatioHint: string;
+    customRatioNoSize: string;
+    sizeNoPresets: string;
+    width: string;
+    height: string;
+    clear: string;
+    /** Suffix appended to the submit-size hint: "...· {disclaimer}" */
+    disclaimer: string;
+    widelyCompatibleLegend: string;
+    customLabel: string;
+    overrideNote: string;
+  };
   composer: {
     label: string;
     placeholder: string;
@@ -141,6 +163,23 @@ export interface Translations {
     copied: string;
     reuse: string;
     download: string;
+    prose: string;
+    proseFromUser: string;
+    proseEmpty: string;
+    proseExpand: string;
+    proseCollapse: string;
+    structured: string;
+    structuredFromAi: string;
+    structuredManual: string;
+    aiBadge: string;
+    meta: {
+      createdAt: string;
+      size: string;
+      quality: string;
+      duration: string;
+      provider: string;
+      model: string;
+    };
   };
   config: {
     title: string;
