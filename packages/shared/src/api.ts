@@ -64,6 +64,36 @@ export type ImageSize = string;
 export const SIZE_AUTO = "auto";
 
 /**
+ * Inkast-private wire prefix for "fixed aspect ratio, auto pixels". Form is
+ * `"ratio:W:H"` (e.g. `"ratio:9:16"`). NOT a standard OpenAI value — image
+ * drivers must translate before sending upstream:
+ *   - images.generate: drop `size` entirely → server picks pixels under the
+ *     hint (works on most compat proxies; gpt-image-2 official is okay too)
+ *   - responses + image_generation tool: rewrite the size hint in the prompt
+ *     from `"Target size: 1024x1024"` to `"Target aspect ratio: 9:16"`
+ *
+ * Persisted on `GenerationRecord.size` and accepted by the same field on
+ * `GenerateImageRequest.size`. Round-tripping through SQLite is safe — it's
+ * just a string.
+ */
+export const SIZE_RATIO_PREFIX = "ratio:";
+
+export function isRatioSize(value: string | undefined | null): boolean {
+  return typeof value === "string" && value.startsWith(SIZE_RATIO_PREFIX);
+}
+
+/** Returns the `W:H` part of a `ratio:W:H` wire value, or null if not a
+ *  ratio-form value. The returned string is NOT validated beyond the prefix. */
+export function extractRatio(value: string | undefined | null): string | null {
+  if (!isRatioSize(value)) return null;
+  return (value as string).slice(SIZE_RATIO_PREFIX.length) || null;
+}
+
+export function makeRatioSize(ratio: string): string {
+  return `${SIZE_RATIO_PREFIX}${ratio}`;
+}
+
+/**
  * The four orientations exposed in the SizeSelector. `"auto"` is the no-op
  * (we don't send `size` to the provider — it picks freely). `"custom"` lets
  * the user type an arbitrary ratio.
@@ -146,12 +176,33 @@ export const STANDARD_IMAGE_SIZES = [
 
 export type ImageQuality = "low" | "medium" | "high";
 
+/**
+ * How an image capability calls upstream:
+ *
+ * - `"images"` — POST /v1/images/generations. Classic, accepts size/quality/n
+ *   as discrete params. Default. Required for gpt-image-2 and family.
+ * - `"responses"` — POST /v1/responses with `tools: [{type:"image_generation"}]`.
+ *   Lets a general chat model (gpt-5.3-codex etc.) call the image tool. Does
+ *   NOT accept size/quality params — driver injects them into the prompt text.
+ *
+ * Persisted in `ProviderCapability.extras.mode` (image kind only).
+ */
+export type ImageGenerationMode = "images" | "responses";
+
+export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
+
 export interface ProviderCapability {
   kind: ProviderKind;
   model: string;
   priority: number;
   disabled: boolean;
-  /** Driver-specific options (effort, thinking, temperature, ...). Null when empty. */
+  /**
+   * Driver-specific options (effort, thinking, temperature, ...). Null when empty.
+   *
+   * Reserved keys:
+   *   - `mode` (image kind only): `ImageGenerationMode` — selects the upstream
+   *     dispatch path. Absent = "images".
+   */
   extras: Record<string, unknown> | null;
 }
 

@@ -31,6 +31,8 @@ export interface Translations {
     orientationWide: string;
     orientationTall: string;
     orientationCustom: string;
+    /** Label on the new "auto pixels under chosen ratio" chip in size row. */
+    sizeAuto: string;
     autoNote: string;
     customRatioHint: string;
     customRatioNoSize: string;
@@ -64,6 +66,8 @@ export interface Translations {
     rawAfterLock: string;
     paramsDivider: string;
     reference: string;
+    countLabel: string;
+    countHint: string;
     referenceAdd: string;
     referenceRemove: string;
     referenceFromGallery: string;
@@ -222,6 +226,13 @@ export interface Translations {
     builtin: {
       claudeCode: string;
       claudeCodeDesc: string;
+    };
+    imageMode: {
+      label: string;
+      images: string;
+      responses: string;
+      hintImages: string;
+      hintResponses: string;
     };
   };
   picker: {

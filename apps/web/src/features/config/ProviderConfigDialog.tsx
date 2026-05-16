@@ -28,7 +28,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_ID,
+  IMAGE_GENERATION_MODE_DEFAULT,
   type CapabilityInput,
+  type ImageGenerationMode,
   type ProviderCapability,
   type ProviderKind,
   type ProviderSummary,
@@ -46,6 +48,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Combobox } from "@/components/combobox";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { cn } from "@/lib/utils";
@@ -72,6 +75,7 @@ interface FormState {
   apiKey: string;
   // Per-kind model fields. Empty string means the kind is not selected.
   imageModel: string;
+  imageMode: ImageGenerationMode;
   llmModel: string;
 }
 
@@ -80,6 +84,22 @@ const DEFAULT_MODEL: Record<ProviderKind, string> = {
   llm: "gpt-4o-mini",
 };
 
+/**
+ * Suggested default model when the user flips image mode. "images" mode runs
+ * dedicated image models (gpt-image-2); "responses" mode runs general chat
+ * models that happen to support the image_generation tool. Only applied when
+ * the user hasn't typed a model yet, so we don't trample manual choices.
+ */
+const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<ImageGenerationMode, string> = {
+  images: "gpt-image-2",
+  responses: "gpt-5.3-codex",
+};
+
+function readImageMode(cap: ProviderCapability | undefined): ImageGenerationMode {
+  const raw = cap?.extras?.mode;
+  return raw === "responses" || raw === "images" ? raw : IMAGE_GENERATION_MODE_DEFAULT;
+}
+
 function emptyForm(): FormState {
   return {
     id: null,
@@ -87,6 +107,7 @@ function emptyForm(): FormState {
     baseUrl: "https://api.openai.com/v1",
     apiKey: "",
     imageModel: DEFAULT_MODEL.image,
+    imageMode: IMAGE_GENERATION_MODE_DEFAULT,
     llmModel: "",
   };
 }
@@ -100,6 +121,7 @@ function buildFormFromProvider(p: ProviderSummary): FormState {
     baseUrl: p.baseUrl,
     apiKey: "",
     imageModel: image?.model ?? "",
+    imageMode: readImageMode(image),
     llmModel: llm?.model ?? "",
   };
 }
@@ -107,7 +129,9 @@ function buildFormFromProvider(p: ProviderSummary): FormState {
 function formToCapabilities(form: FormState): CapabilityInput[] {
   const caps: CapabilityInput[] = [];
   if (form.imageModel.trim()) {
-    caps.push({ kind: "image", model: form.imageModel.trim() });
+    const extras =
+      form.imageMode === IMAGE_GENERATION_MODE_DEFAULT ? null : { mode: form.imageMode };
+    caps.push({ kind: "image", model: form.imageModel.trim(), extras });
   }
   if (form.llmModel.trim()) {
     caps.push({ kind: "llm", model: form.llmModel.trim() });
@@ -419,20 +443,39 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                       )}
                     </Button>
                   </div>
-                  <KindRow
-                    label={t.config.tabs.image}
-                    icon={<ImageIcon strokeWidth={1.5} className="size-4" />}
-                    enabled={form.imageModel.trim().length > 0}
-                    onToggle={on =>
-                      setForm({
-                        ...form,
-                        imageModel: on ? DEFAULT_MODEL.image : "",
-                      })
-                    }
-                    model={form.imageModel}
-                    onModelChange={v => setForm({ ...form, imageModel: v })}
-                    options={modelOptions}
-                  />
+                  <div className="flex flex-col gap-1">
+                    <KindRow
+                      label={t.config.tabs.image}
+                      icon={<ImageIcon strokeWidth={1.5} className="size-4" />}
+                      enabled={form.imageModel.trim().length > 0}
+                      onToggle={on =>
+                        setForm({
+                          ...form,
+                          imageModel: on ? DEFAULT_IMAGE_MODEL_FOR_MODE[form.imageMode] : "",
+                        })
+                      }
+                      model={form.imageModel}
+                      onModelChange={v => setForm({ ...form, imageModel: v })}
+                      options={modelOptions}
+                    />
+                    {form.imageModel.trim().length > 0 && (
+                      <ImageModeRow
+                        mode={form.imageMode}
+                        onChange={mode =>
+                          setForm(prev => {
+                            if (!prev) return prev;
+                            const previousDefault = DEFAULT_IMAGE_MODEL_FOR_MODE[prev.imageMode];
+                            const swapModel = prev.imageModel.trim() === previousDefault;
+                            return {
+                              ...prev,
+                              imageMode: mode,
+                              imageModel: swapModel ? DEFAULT_IMAGE_MODEL_FOR_MODE[mode] : prev.imageModel,
+                            };
+                          })
+                        }
+                      />
+                    )}
+                  </div>
                   <KindRow
                     label={t.config.tabs.llm}
                     icon={<Cpu strokeWidth={1.5} className="size-4" />}
@@ -641,6 +684,45 @@ function KindRow({
           readOnly={!enabled}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Sub-row under the image KindRow that flips between /v1/images/generations
+ * (default, "images") and /v1/responses + image_generation tool ("responses").
+ * Hidden when the image capability is disabled — there's nothing to configure.
+ */
+function ImageModeRow({
+  mode,
+  onChange,
+}: {
+  mode: ImageGenerationMode;
+  onChange: (next: ImageGenerationMode) => void;
+}) {
+  const { t } = useLanguage();
+  const hint =
+    mode === "responses" ? t.config.imageMode.hintResponses : t.config.imageMode.hintImages;
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium text-foreground">{t.config.imageMode.label}</span>
+        <span className="text-[11px] text-muted-foreground">{hint}</span>
+      </div>
+      <ToggleGroup
+        type="single"
+        size="sm"
+        value={mode}
+        onValueChange={v => v && onChange(v as ImageGenerationMode)}
+        aria-label={t.config.imageMode.label}
+      >
+        <ToggleGroupItem value="images" aria-label={t.config.imageMode.images}>
+          {t.config.imageMode.images}
+        </ToggleGroupItem>
+        <ToggleGroupItem value="responses" aria-label={t.config.imageMode.responses}>
+          {t.config.imageMode.responses}
+        </ToggleGroupItem>
+      </ToggleGroup>
     </div>
   );
 }

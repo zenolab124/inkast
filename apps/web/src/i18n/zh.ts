@@ -31,6 +31,7 @@ export const zh: Translations = {
     orientationWide: "横",
     orientationTall: "竖",
     orientationCustom: "自定义",
+    sizeAuto: "自动",
     autoNote: "取向 / 比例 / 尺寸 全部交给 provider 决定",
     customRatioHint: "自定义比例",
     customRatioNoSize: "自定义比例无候选,请手填",
@@ -63,6 +64,8 @@ export const zh: Translations = {
     rawAfterLock: "▶ 用散文直接生图(忽略字段)",
     paramsDivider: "全局参数",
     reference: "参考图",
+    countLabel: "数量",
+    countHint: "并发提交,池子按优先级 fallback",
     referenceAdd: "添加参考图",
     referenceRemove: "移除",
     referenceFromGallery: "从作品库选",
@@ -224,6 +227,13 @@ export const zh: Translations = {
     builtin: {
       claudeCode: "ClaudeCode(本机)",
       claudeCodeDesc: "使用本机 Claude Code OAuth,不需要 API key。可拖拽改排序、可禁用。",
+    },
+    imageMode: {
+      label: "调用方式",
+      images: "images",
+      responses: "responses",
+      hintImages: "POST /v1/images/generations,适用于 gpt-image-2 等专用生图模型,支持 size/quality 参数。",
+      hintResponses: "POST /v1/responses + image_generation 工具,让通用模型(如 gpt-5.3-codex)调工具出图;size/quality 会自动拼到提示词。",
     },
   },
   picker: {

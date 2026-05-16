@@ -6,8 +6,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { cn } from "@/lib/utils";
+import { Slider } from "@/components/ui/slider";
 import { ReferencePicker } from "./ReferencePicker.js";
 import { SizeSelector } from "./SizeSelector.js";
+
+const MAX_COUNT = 20;
 
 export type LockMode = null | "ai-filled" | "m2";
 
@@ -26,6 +29,8 @@ interface PromptComposerProps {
   onReferenceImageChange: (next: ReferenceImage | null) => void;
   size: string;
   onSizeChange: (next: string) => void;
+  count: number;
+  onCountChange: (next: number) => void;
   /** Rendered next to the "AI expand" button — typically a "via X" status chip. */
   backendStatus?: ReactNode;
 }
@@ -45,6 +50,8 @@ export function PromptComposer({
   onReferenceImageChange,
   size,
   onSizeChange,
+  count,
+  onCountChange,
   backendStatus,
 }: PromptComposerProps) {
   const { t } = useLanguage();
@@ -64,6 +71,8 @@ export function PromptComposer({
       onReferenceImageChange={onReferenceImageChange}
       size={size}
       onSizeChange={onSizeChange}
+      count={count}
+      onCountChange={onCountChange}
       disabled={busy}
     />
   );
@@ -247,12 +256,16 @@ function ParamsBlock({
   onReferenceImageChange,
   size,
   onSizeChange,
+  count,
+  onCountChange,
   disabled,
 }: {
   referenceImage: ReferenceImage | null;
   onReferenceImageChange: (next: ReferenceImage | null) => void;
   size: string;
   onSizeChange: (next: string) => void;
+  count: number;
+  onCountChange: (next: number) => void;
   disabled?: boolean;
 }) {
   const { t } = useLanguage();
@@ -268,6 +281,49 @@ function ParamsBlock({
         </div>
       </div>
       <SizeSelector value={size} onChange={onSizeChange} disabled={disabled} />
+      <CountRow value={count} onChange={onCountChange} disabled={disabled} />
+    </div>
+  );
+}
+
+function CountRow({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useLanguage();
+  const clamped = Math.max(1, Math.min(MAX_COUNT, value));
+  return (
+    <div className="grid grid-cols-[48px_1fr] items-center gap-x-3">
+      <Label className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {t.composer.countLabel}
+      </Label>
+      <div className="flex min-w-0 items-center gap-3">
+        <Slider
+          value={[clamped]}
+          min={1}
+          max={MAX_COUNT}
+          step={1}
+          onValueChange={vals => {
+            const next = vals[0];
+            if (typeof next === "number") onChange(next);
+          }}
+          disabled={disabled}
+          className="max-w-xs"
+        />
+        <span className="font-mono tabular-nums text-xs text-foreground/85 w-10">
+          ×{clamped}
+        </span>
+        {clamped > 1 && (
+          <span className="text-[10.5px] text-muted-foreground">
+            {t.composer.countHint}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

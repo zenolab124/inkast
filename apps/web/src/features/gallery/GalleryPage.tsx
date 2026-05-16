@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, ImageIcon, Loader2, RefreshCw, Search } from "lucide-react";
+import Masonry from "react-masonry-css";
 import type { GenerationRecord } from "@inkast/shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,27 @@ interface Props {
   refreshKey: number;
   onReuse?: (record: GenerationRecord) => void;
 }
+
+/**
+ * Tailwind-aligned breakpoints for react-masonry-css. The library matches
+ * `windowWidth <= key` and picks the smallest matching key — so each entry's
+ * key is "the largest viewport this column count applies to". `default` is
+ * the bucket for viewports larger than all keys (i.e. xl and up).
+ *
+ * Mapping (Tailwind defaults):
+ *   < 640   → 2 cols  (base)
+ *   640+    → 3 cols  (sm)
+ *   768+    → 4 cols  (md)
+ *   1024+   → 5 cols  (lg)
+ *   1280+   → 6 cols  (xl, default)
+ */
+const MASONRY_BREAKPOINTS = {
+  default: 6,
+  1279: 5,
+  1023: 4,
+  767: 3,
+  639: 2,
+};
 
 export function GalleryPage({ refreshKey, onReuse }: Props) {
   const { t } = useLanguage();
@@ -120,7 +142,11 @@ export function GalleryPage({ refreshKey, onReuse }: Props) {
           {items.length === 0 ? t.galleryPage.empty : "—"}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+        <Masonry
+          breakpointCols={MASONRY_BREAKPOINTS}
+          className="-ml-3 flex w-auto"
+          columnClassName="bg-clip-padding pl-3"
+        >
           {filtered.map(it => (
             <GalleryCard
               key={it.id}
@@ -129,7 +155,7 @@ export function GalleryPage({ refreshKey, onReuse }: Props) {
               onOpen={() => setOpenRecord(it)}
             />
           ))}
-        </div>
+        </Masonry>
       )}
 
       <GalleryDetailDialog
@@ -184,7 +210,7 @@ function GalleryCard({
   return (
     <article
       className={cn(
-        "group relative flex flex-col overflow-hidden rounded-md border border-border/60 bg-card shadow-(--shadow-paper)",
+        "group relative mb-3 flex flex-col overflow-hidden rounded-md border border-border/60 bg-card shadow-(--shadow-paper)",
         "transition hover:shadow-(--shadow-paper-lifted)",
       )}
     >
@@ -193,13 +219,13 @@ function GalleryCard({
         variant="ghost"
         onClick={onOpen}
         title={t.gallery.openDetail}
-        className="aspect-square h-auto w-full overflow-hidden rounded-none bg-background p-0 hover:bg-background"
+        className="block h-auto w-full overflow-hidden rounded-none bg-background p-0 hover:bg-background"
       >
         <img
           src={url}
           alt={subjectText || typeLabel || "image"}
           loading="lazy"
-          className="size-full object-cover transition group-hover:scale-[1.02]"
+          className="block w-full transition group-hover:scale-[1.02]"
         />
       </Button>
       <div className="flex flex-col gap-1 px-3 py-2.5">

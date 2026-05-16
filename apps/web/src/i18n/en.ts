@@ -31,6 +31,7 @@ export const en: Translations = {
     orientationWide: "Wide",
     orientationTall: "Tall",
     orientationCustom: "Custom",
+    sizeAuto: "Auto",
     autoNote: "Provider decides orientation / ratio / size",
     customRatioHint: "Custom ratio",
     customRatioNoSize: "No presets for custom ratios — type a size below",
@@ -64,6 +65,8 @@ export const en: Translations = {
     rawAfterLock: "▶ Generate from prose (ignore fields)",
     paramsDivider: "Parameters",
     reference: "Reference",
+    countLabel: "Count",
+    countHint: "Submitted concurrently, fallback per provider",
     referenceAdd: "Add reference image",
     referenceRemove: "Remove",
     referenceFromGallery: "From Gallery",
@@ -232,6 +235,15 @@ export const en: Translations = {
       claudeCode: "ClaudeCode (local)",
       claudeCodeDesc:
         "Uses your local Claude Code OAuth — no API key required. Drag to reorder or disable like any other provider.",
+    },
+    imageMode: {
+      label: "Call style",
+      images: "images",
+      responses: "responses",
+      hintImages:
+        "POST /v1/images/generations — for dedicated image models like gpt-image-2. Accepts size/quality params.",
+      hintResponses:
+        "POST /v1/responses with the image_generation tool — lets general chat models (gpt-5.3-codex etc.) emit images. Size/quality get appended to the prompt.",
     },
   },
   picker: {

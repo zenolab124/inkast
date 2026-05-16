@@ -4,10 +4,17 @@ import type {
   ImageGenerateParams,
 } from "openai/resources/images";
 import {
+  IMAGE_GENERATION_MODE_DEFAULT,
+  extractRatio,
+  isRatioSize,
+  type ImageGenerationMode,
+} from "@inkast/shared";
+import {
   listEnabledCapabilities,
   type Provider,
   type ProviderCapability,
 } from "../../storage/providers.js";
+import { callImageGenerationTool } from "./openai-responses.js";
 import {
   ImageGenError,
   type AttemptErrorCode,
@@ -15,6 +22,12 @@ import {
   type ImageGenInput,
   type ImageGenOutcome,
 } from "./types.js";
+
+/** Read `extras.mode` off an image capability, with a safe default. */
+function resolveMode(capability: ProviderCapability): ImageGenerationMode {
+  const raw = capability.extras?.mode;
+  return raw === "responses" || raw === "images" ? raw : IMAGE_GENERATION_MODE_DEFAULT;
+}
 
 // gpt-image-2 high-quality jobs commonly take 1-5 minutes via third-party
 // proxies. 10 minutes mirrors gpt-image-canvas's 1_200_000 ms ceiling cut
@@ -51,8 +64,9 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
     }
 
     const started = Date.now();
+    const mode = resolveMode(capability);
     console.log(
-      `[image] ▶ attempt ${idx + 1}/${pool.length}: ${provider.name} (priority=${capability.priority}) → ${provider.baseUrl} · model=${capability.model}`,
+      `[image] ▶ attempt ${idx + 1}/${pool.length}: ${provider.name} (priority=${capability.priority}, mode=${mode}) → ${provider.baseUrl} · model=${capability.model}`,
     );
     console.log(
       `[image]   size=${input.size ?? "1024x1024"} quality=${input.quality ?? "high"} prompt-bytes=${input.promptText.length}`,
@@ -64,7 +78,10 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       console.log(`[image]   …still waiting on ${provider.name} (${elapsedSec}s elapsed)`);
     }, 15_000);
     try {
-      const b64 = await callProvider(provider, capability, apiKey, input);
+      const b64 =
+        mode === "responses"
+          ? await callImageGenerationTool(provider, capability, apiKey, input)
+          : await callProvider(provider, capability, apiKey, input);
       clearInterval(heartbeat);
       attempts.push({
         providerId: provider.id,
@@ -143,10 +160,21 @@ async function callProvider(
   // `output_format: "png"` is important: some OpenAI-compatible proxies
   // default to returning a URL (not b64_json) when this field is absent,
   // adding an extra download hop and making timing flakier.
+  //
+  // Wire `ratio:W:H` means "lock aspect ratio, let upstream pick pixels" —
+  // we translate that to "no size param at all"; OpenAI's gpt-image-2 then
+  // returns its default-sized output. Compat proxies follow the same rule.
+  // The ratio hint travels with the prompt text (caller embeds it) rather
+  // than as a discrete param the upstream API doesn't have.
+  const useRatio = isRatioSize(input.size);
+  const ratioHint = useRatio ? extractRatio(input.size) : null;
+  const promptForUpstream = ratioHint
+    ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
+    : input.promptText;
   const body = {
     model: capability.model,
-    prompt: input.promptText,
-    size: input.size ?? "1024x1024",
+    prompt: promptForUpstream,
+    ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
     quality: input.quality ?? "high",
     output_format: "png",
     n: input.n ?? 1,
@@ -195,11 +223,18 @@ async function buildEditBody(
   const ref = input.referenceImage;
   if (!ref) throw new Error("buildEditBody called without referenceImage");
   const file = await toFile(ref.buffer, ref.filename, { type: ref.mimeType });
+  // Mirror the ratio-mode handling in callProvider: drop `size` when the
+  // caller passed `ratio:W:H`, and let the ratio hint travel via the prompt.
+  const useRatio = isRatioSize(input.size);
+  const ratioHint = useRatio ? extractRatio(input.size) : null;
+  const promptForUpstream = ratioHint
+    ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
+    : input.promptText;
   return {
     model: capability.model,
     image: file,
-    prompt: input.promptText,
-    size: input.size ?? "1024x1024",
+    prompt: promptForUpstream,
+    ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
     n: input.n ?? 1,
   } as unknown as ImageEditParams;
 }

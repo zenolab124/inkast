@@ -123,6 +123,13 @@ LLM SDK   : @anthropic-ai/claude-agent-sdk (默认) + 自建 OpenAI 兼容 clien
 7. 中文文字在亮色和暗色下都是 PingFang（不是 Songti）？
 8. 没有破坏全站 noise + vignette 层（不要在子容器再叠一遍噪点）？
 
+### 第三方库准入(避免被过度泛化的"少加依赖"误导)
+
+- UI 通用组件 → **shadcn 优先**(见上文"UI 组件库"红线)。
+- 功能型库(布局、拖拽、瀑布流、表单状态、日期、动画等) → **按需引入**,只要它成熟、维护活跃、bundle 体积合理。无需"先讨论再加"。
+- 已用先例:`@dnd-kit/*`(拖拽)、`react-masonry-css`(瀑布流)、`lucide-react`(图标)、`@anthropic-ai/claude-agent-sdk`(LLM SDK)。
+- 红线仍在:不引入会触发字体下载的库(@fontsource / 字体加载器等),不引入和 shadcn 功能重叠的 UI 组件库(MUI / Ant Design / Chakra 等)。
+
 ### 备选主题：玻璃质感（Glass）
 
 `themes/glass.css` 是占位，Phase 1 不实现。要做时**只动 token 文件**，不改任何组件代码。届时 glass 会允许 `backdrop-blur` 和深色渐变背景——那是 glass 的特权，paper 主题里禁止。

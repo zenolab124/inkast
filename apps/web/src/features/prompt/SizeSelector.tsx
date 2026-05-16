@@ -3,6 +3,9 @@ import {
   ORIENTATION_RATIOS,
   RATIO_SIZE_PRESETS,
   SIZE_AUTO,
+  extractRatio,
+  isRatioSize,
+  makeRatioSize,
   type SizeOrientation,
 } from "@inkast/shared";
 import { Input } from "@/components/ui/input";
@@ -11,16 +14,17 @@ import { useLanguage } from "@/i18n/LanguageContext";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  /** Wire value: either "auto" or "<W>x<H>". */
+  /** Wire value: `"auto"`, `"<W>x<H>"`, or `"ratio:<W>:<H>"`. */
   value: string;
   onChange: (next: string) => void;
   disabled?: boolean;
 }
 
 const SIZE_RE = /^(\d{2,4})x(\d{2,4})$/;
+const RATIO_RE = /^(\d{1,3}):(\d{1,3})$/;
 
 function parseSize(value: string): { w: number; h: number } | null {
-  if (value === SIZE_AUTO) return null;
+  if (value === SIZE_AUTO || isRatioSize(value)) return null;
   const m = SIZE_RE.exec(value);
   if (!m) return null;
   return { w: Number(m[1]), h: Number(m[2]) };
@@ -47,6 +51,18 @@ function lookupPreset(value: string): { orientation: SizeOrientation; ratio: str
   return null;
 }
 
+/** Find which orientation a known `W:H` ratio belongs to, or null if it's a
+ *  user-defined ratio that's not in the preset table. */
+function orientationForRatio(ratio: string): Exclude<SizeOrientation, "auto" | "custom"> | null {
+  for (const [orientation, ratios] of Object.entries(ORIENTATION_RATIOS) as [
+    Exclude<SizeOrientation, "auto" | "custom">,
+    readonly string[],
+  ][]) {
+    if (ratios.includes(ratio)) return orientation;
+  }
+  return null;
+}
+
 function defaultRatioFor(orientation: Exclude<SizeOrientation, "auto" | "custom">): string {
   return ORIENTATION_RATIOS[orientation][0] ?? "1:1";
 }
@@ -55,34 +71,33 @@ function defaultSizeFor(ratio: string): string {
   return RATIO_SIZE_PRESETS[ratio]?.[0]?.value ?? "1024x1024";
 }
 
+/** Size row mode within a known orientation/ratio context:
+ *  - "preset" → wire is the picked pixel preset (e.g. "1024x1024")
+ *  - "auto"   → wire is `ratio:W:H` — pixels left to the upstream */
+type SizeMode = "preset" | "auto";
+
 export function SizeSelector({ value, onChange, disabled }: Props) {
   const { t } = useLanguage();
 
-  // Three-layer state. `customWH` overrides everything when both fields are
-  // valid numbers (the "user typed pixels" path); otherwise we derive the wire
-  // value from orientation → ratio → sizePreset.
-  const [orientation, setOrientation] = useState<SizeOrientation>(() => {
-    if (value === SIZE_AUTO) return "auto";
-    const hit = lookupPreset(value);
-    return hit?.orientation ?? "custom";
-  });
-  const [ratio, setRatio] = useState<string>(() => {
-    if (value === SIZE_AUTO) return "1:1";
-    return lookupPreset(value)?.ratio ?? "1:1";
-  });
-  const [sizePreset, setSizePreset] = useState<string>(() => {
-    if (value === SIZE_AUTO) return defaultSizeFor("1:1");
-    const parsed = parseSize(value);
-    if (parsed && lookupPreset(value)) return value;
-    return defaultSizeFor(lookupPreset(value)?.ratio ?? "1:1");
-  });
+  // Initial state derivation — all three pieces (orientation/ratio/sizeMode)
+  // are computed from `value` once on mount. Subsequent changes go through
+  // handlers below, so the wire format is reconstituted by `computedValue`.
+  const init = deriveInitialState(value);
 
-  // Custom-ratio inputs (only used when orientation === "custom").
-  const [customRatioW, setCustomRatioW] = useState("");
-  const [customRatioH, setCustomRatioH] = useState("");
+  const [orientation, setOrientation] = useState<SizeOrientation>(init.orientation);
+  const [ratio, setRatio] = useState<string>(init.ratio);
+  const [sizePreset, setSizePreset] = useState<string>(init.sizePreset);
+  const [sizeMode, setSizeMode] = useState<SizeMode>(init.sizeMode);
+
+  // Custom-ratio inputs (only used when orientation === "custom"). When both
+  // are filled the wire value flips to `ratio:W:H` — that's the default for
+  // custom orientation. Filling customW/customH below overrides that with
+  // explicit pixels.
+  const [customRatioW, setCustomRatioW] = useState(init.customRatioW);
+  const [customRatioH, setCustomRatioH] = useState(init.customRatioH);
 
   // Free-form size inputs. When BOTH parse as positive numbers, they override
-  // orientation/ratio (the "manual size" path).
+  // orientation/ratio (the "manual pixels" path).
   const [customW, setCustomW] = useState("");
   const [customH, setCustomH] = useState("");
 
@@ -96,13 +111,37 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
     customWNum > 0 &&
     customHNum > 0;
 
-  // The single source of truth for what gets submitted. Recompute on every
-  // render so chip clicks / typing all converge to the same wire value.
+  const customRatioActive =
+    orientation === "custom" &&
+    customRatioW.length > 0 &&
+    customRatioH.length > 0 &&
+    Number(customRatioW) > 0 &&
+    Number(customRatioH) > 0;
+
+  // Single source of truth for what gets submitted. Each branch produces one
+  // of: SIZE_AUTO / "ratio:W:H" / "WxH".
   const computedValue = useMemo<string>(() => {
     if (orientation === "auto") return SIZE_AUTO;
     if (customSizeActive) return `${customWNum}x${customHNum}`;
+    if (orientation === "custom") {
+      // No explicit pixels — fall back to "ratio:W:H" once both ratio inputs
+      // are filled. Before that we have no usable wire value, so emit auto.
+      return customRatioActive ? makeRatioSize(`${customRatioW}:${customRatioH}`) : SIZE_AUTO;
+    }
+    if (sizeMode === "auto") return makeRatioSize(ratio);
     return sizePreset;
-  }, [orientation, customSizeActive, customWNum, customHNum, sizePreset]);
+  }, [
+    orientation,
+    customSizeActive,
+    customWNum,
+    customHNum,
+    customRatioActive,
+    customRatioW,
+    customRatioH,
+    sizeMode,
+    ratio,
+    sizePreset,
+  ]);
 
   // Propagate the computed value upward whenever it changes. Skip when the
   // parent already has this value (avoids ping-pong with the useEffect below).
@@ -126,15 +165,15 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
   function selectOrientation(next: SizeOrientation) {
     if (next === orientation) return;
     setOrientation(next);
-    // Reset downstream selection so each orientation starts at its default.
     if (next === "auto" || next === "custom") {
-      // No-op: ratio/size are irrelevant in those modes.
+      // No-op: ratio/sizeMode/sizePreset are irrelevant in those modes.
+      // (computedValue reads orientation first, so stale values don't leak.)
       return;
     }
     const r = defaultRatioFor(next);
     setRatio(r);
     setSizePreset(defaultSizeFor(r));
-    // Clear any "manual override" so the chips take effect again.
+    setSizeMode("preset");
     setCustomW("");
     setCustomH("");
   }
@@ -142,12 +181,21 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
   function selectRatio(next: string) {
     setRatio(next);
     setSizePreset(defaultSizeFor(next));
+    // Keep the user's sizeMode preference — if they had picked "auto", a new
+    // ratio still means "auto under this ratio". Otherwise stay on "preset".
     setCustomW("");
     setCustomH("");
   }
 
   function selectSizePreset(next: string) {
+    setSizeMode("preset");
     setSizePreset(next);
+    setCustomW("");
+    setCustomH("");
+  }
+
+  function selectSizeAuto() {
+    setSizeMode("auto");
     setCustomW("");
     setCustomH("");
   }
@@ -270,7 +318,7 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
         </Row>
       )}
 
-      {/* === Row 3: size (presets + free-form inputs) === */}
+      {/* === Row 3: size (auto chip + presets + free-form inputs) === */}
       <Row label={t.size.sizeLabel}>
         {autoMode ? (
           <AutoNote text={t.size.autoNote} />
@@ -280,12 +328,22 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
               <div className="text-[11px] italic text-muted-foreground py-0.5">
                 — {t.size.customRatioNoSize} —
               </div>
-            ) : sizePresetsForRatio.length > 0 ? (
+            ) : (
               <div className="flex flex-wrap gap-1.5">
+                {/* "Auto" chip: pixels free, ratio honored upstream. */}
+                <Chip
+                  active={!customSizeActive && sizeMode === "auto"}
+                  onClick={selectSizeAuto}
+                  disabled={disabled}
+                  tone="auto"
+                >
+                  <AutoDot />
+                  {t.size.sizeAuto}
+                </Chip>
                 {sizePresetsForRatio.map(p => (
                   <Chip
                     key={p.value}
-                    active={!customSizeActive && sizePreset === p.value}
+                    active={!customSizeActive && sizeMode === "preset" && sizePreset === p.value}
                     onClick={() => selectSizePreset(p.value)}
                     disabled={disabled}
                     mono
@@ -298,10 +356,6 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
                     )}
                   </Chip>
                 ))}
-              </div>
-            ) : (
-              <div className="text-[11px] italic text-muted-foreground py-0.5">
-                — {t.size.sizeNoPresets} —
               </div>
             )}
             <div className="flex items-center gap-1.5">
@@ -353,6 +407,78 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
   );
 }
 
+interface InitialState {
+  orientation: SizeOrientation;
+  ratio: string;
+  sizePreset: string;
+  sizeMode: SizeMode;
+  customRatioW: string;
+  customRatioH: string;
+}
+
+/**
+ * One-time wire→state mapping for the initial render. Handles all three wire
+ * shapes (auto / pixels / ratio) plus the edge cases (custom-orientation
+ * ratios that aren't in the preset table).
+ */
+function deriveInitialState(value: string): InitialState {
+  if (value === SIZE_AUTO) {
+    return {
+      orientation: "auto",
+      ratio: "1:1",
+      sizePreset: defaultSizeFor("1:1"),
+      sizeMode: "preset",
+      customRatioW: "",
+      customRatioH: "",
+    };
+  }
+  // `ratio:W:H` — fixed aspect, pixels free.
+  if (isRatioSize(value)) {
+    const r = extractRatio(value) ?? "";
+    const orientation = orientationForRatio(r);
+    if (orientation) {
+      return {
+        orientation,
+        ratio: r,
+        sizePreset: defaultSizeFor(r),
+        sizeMode: "auto",
+        customRatioW: "",
+        customRatioH: "",
+      };
+    }
+    // Unknown ratio → treat as user-defined custom ratio.
+    const m = RATIO_RE.exec(r);
+    return {
+      orientation: "custom",
+      ratio: "1:1",
+      sizePreset: defaultSizeFor("1:1"),
+      sizeMode: "auto",
+      customRatioW: m?.[1] ?? "",
+      customRatioH: m?.[2] ?? "",
+    };
+  }
+  // `WxH` — explicit pixels. Try to locate the preset; fall back to custom.
+  const hit = lookupPreset(value);
+  if (hit) {
+    return {
+      orientation: hit.orientation,
+      ratio: hit.ratio,
+      sizePreset: value,
+      sizeMode: "preset",
+      customRatioW: "",
+      customRatioH: "",
+    };
+  }
+  return {
+    orientation: "custom",
+    ratio: "1:1",
+    sizePreset: defaultSizeFor("1:1"),
+    sizeMode: "preset",
+    customRatioW: "",
+    customRatioH: "",
+  };
+}
+
 // === presentational helpers ==============================================
 
 function Row({
@@ -397,7 +523,9 @@ function Chip({
   const activeStyles =
     tone === "accent"
       ? "bg-accent/12 border-accent/50 text-accent shadow-(--shadow-paper)"
-      : "bg-primary/14 border-primary/50 text-primary shadow-(--shadow-paper)";
+      : tone === "auto"
+        ? "bg-primary/10 border-primary/40 text-primary shadow-(--shadow-paper)"
+        : "bg-primary/14 border-primary/50 text-primary shadow-(--shadow-paper)";
   return (
     <button
       type="button"

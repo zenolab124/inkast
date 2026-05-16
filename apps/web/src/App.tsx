@@ -58,6 +58,7 @@ export function App() {
   const [configOpen, setConfigOpen] = useState(false);
   const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
   const [size, setSize] = useState<string>("auto");
+  const [count, setCount] = useState<number>(1);
   const [lockMode, setLockMode] = useState<LockMode>(null);
   const [sessionGenerationIds, setSessionGenerationIds] = useState<string[]>([]);
   const [galleryKey, setGalleryKey] = useState(0);
@@ -177,38 +178,62 @@ export function App() {
   const generate = useCallback(async () => {
     setFlash(null);
     const proseTrimmed = input.trim();
-    try {
-      await submitJob({
-        prompt,
-        size,
-        referenceImage: referenceImage ?? undefined,
-        prose: proseTrimmed.length > 0 ? proseTrimmed : undefined,
-        aiFilledFields: aiSuggested.size > 0 ? Array.from(aiSuggested) : undefined,
+    const n = Math.max(1, Math.min(20, count));
+    const req = {
+      prompt,
+      size,
+      referenceImage: referenceImage ?? undefined,
+      prose: proseTrimmed.length > 0 ? proseTrimmed : undefined,
+      aiFilledFields: aiSuggested.size > 0 ? Array.from(aiSuggested) : undefined,
+    };
+    // Each generation is a fully-independent job (own provider walk, own
+    // fallback, own attempts trail). We fire N submits in parallel and
+    // surface a single aggregated error if any of them fail — successful
+    // submissions still go through.
+    const results = await Promise.allSettled(
+      Array.from({ length: n }, () => submitJob(req)),
+    );
+    const failed = results.filter(r => r.status === "rejected");
+    if (failed.length > 0) {
+      const first = (failed[0] as PromiseRejectedResult).reason as { message?: string };
+      setFlash({
+        kind: "error",
+        text:
+          failed.length === n
+            ? first?.message ?? String(first)
+            : `${failed.length}/${n} jobs failed to submit · ${first?.message ?? ""}`,
       });
-    } catch (err) {
-      const e = err as { message?: string };
-      setFlash({ kind: "error", text: e?.message ?? String(err) });
     }
-  }, [prompt, size, referenceImage, input, aiSuggested, submitJob]);
+  }, [prompt, size, count, referenceImage, input, aiSuggested, submitJob]);
 
   const generateRaw = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
     setFlash(null);
     const placeholder: ImagePrompt = { type: "raw", style: "", subject: trimmed };
-    try {
-      await submitJob({
-        prompt: placeholder,
-        rawPrompt: trimmed,
-        size,
-        referenceImage: referenceImage ?? undefined,
-        prose: trimmed,
+    const n = Math.max(1, Math.min(20, count));
+    const req = {
+      prompt: placeholder,
+      rawPrompt: trimmed,
+      size,
+      referenceImage: referenceImage ?? undefined,
+      prose: trimmed,
+    };
+    const results = await Promise.allSettled(
+      Array.from({ length: n }, () => submitJob(req)),
+    );
+    const failed = results.filter(r => r.status === "rejected");
+    if (failed.length > 0) {
+      const first = (failed[0] as PromiseRejectedResult).reason as { message?: string };
+      setFlash({
+        kind: "error",
+        text:
+          failed.length === n
+            ? first?.message ?? String(first)
+            : `${failed.length}/${n} jobs failed to submit · ${first?.message ?? ""}`,
       });
-    } catch (err) {
-      const e = err as { message?: string };
-      setFlash({ kind: "error", text: e?.message ?? String(err) });
     }
-  }, [input, size, referenceImage, submitJob]);
+  }, [input, size, count, referenceImage, submitJob]);
 
   const skipText = useCallback(() => {
     setPrompt(EMPTY_PROMPT);
@@ -322,6 +347,8 @@ export function App() {
                 onReferenceImageChange={setReferenceImage}
                 size={size}
                 onSizeChange={setSize}
+                count={count}
+                onCountChange={setCount}
                 backendStatus={
                   <button
                     type="button"
