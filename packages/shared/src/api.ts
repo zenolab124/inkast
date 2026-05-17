@@ -191,6 +191,22 @@ export type ImageGenerationMode = "images" | "responses";
 
 export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
 
+/**
+ * Output file format the user *requests*. The actual on-disk format is decided
+ * by sniffing the returned base64 bytes (magic number), because third-party
+ * OpenAI-compatible proxies frequently ignore `output_format` and return PNG
+ * regardless. Stored on `GenerationRecord.imageFormat`.
+ */
+export type ImageFormat = "png" | "jpeg" | "webp";
+
+export const IMAGE_FORMAT_VALUES: readonly ImageFormat[] = ["png", "jpeg", "webp"];
+
+export const IMAGE_FORMAT_DEFAULT: ImageFormat = "png";
+
+export function isImageFormat(v: unknown): v is ImageFormat {
+  return v === "png" || v === "jpeg" || v === "webp";
+}
+
 export interface ProviderCapability {
   kind: ProviderKind;
   model: string;
@@ -281,22 +297,37 @@ export interface GenerationRecord {
 
 /**
  * Reference image input. When present, the image driver switches from
- * `images.generate` (text-only) to `images.edit` (image + text) so the model
- * preserves visual style/composition from the reference.
+ * `images.generate` (text-only) to `images.edit` / responses-mode multimodal
+ * so the model preserves visual style/composition from the reference(s).
  *
  * Two source modes:
  *   - `generation` — points at an existing inkast Generation by ID. The API
  *     reads the file from disk; no payload over the wire.
  *   - `upload`     — base64-encoded bytes uploaded fresh by the client.
+ *
+ * Multi-reference: callers pass an array (see `referenceImages` on
+ * `GenerateImageRequest`). Hard cap is `MAX_REFERENCE_IMAGES`. The
+ * responses-mode driver pushes each as a separate `input_image` content
+ * part; the legacy `images.edit` driver only accepts a single reference
+ * (callers must switch to a responses-mode capability for >1).
  */
 export type ReferenceImage =
   | { kind: "generation"; generationId: string }
   | { kind: "upload"; mimeType: string; dataBase64: string };
 
+/** Hard cap on the number of reference images per generation request. */
+export const MAX_REFERENCE_IMAGES = 16;
+
 export interface GenerateImageRequest {
   prompt: ImagePrompt;
   size?: ImageSize;
   quality?: ImageQuality;
+  /**
+   * Requested output file format. Sent to the provider as a hint; the actual
+   * on-disk format is decided by magic-number sniffing the returned bytes
+   * (third-party proxies frequently ignore this and return PNG).
+   */
+  format?: ImageFormat;
   bypassModeration?: boolean;
   /**
    * If set, the image driver feeds this raw text directly to the upstream
@@ -306,7 +337,11 @@ export interface GenerateImageRequest {
    * `promptSnapshot` for history display.
    */
   rawPrompt?: string;
-  referenceImage?: ReferenceImage;
+  /**
+   * Zero or more reference images. Order is preserved when handed to the
+   * upstream model. Hard-capped at MAX_REFERENCE_IMAGES.
+   */
+  referenceImages?: ReferenceImage[];
   /**
    * The original prose the user wrote in the composer textarea, captured
    * verbatim. Persisted on the Generation row so the detail view can show

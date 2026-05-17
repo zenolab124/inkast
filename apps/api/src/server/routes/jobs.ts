@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import type { ImagePrompt, JobStatus, ReferenceImage } from "@inkast/shared";
+import type { ImageFormat, ImagePrompt, JobStatus, ReferenceImage } from "@inkast/shared";
+import { MAX_REFERENCE_IMAGES, isImageFormat } from "@inkast/shared";
 import { runGenerationJob } from "../../domain/generate/index.js";
 import { createJob, getJob, listJobs } from "../../storage/jobs.js";
 
@@ -11,28 +12,47 @@ interface SubmitBody {
   /** "<width>x<height>" — typed loosely so the upstream model validates. */
   size?: string;
   quality?: "low" | "medium" | "high";
+  /** Requested output format. Actual stored format follows magic-number sniff. */
+  format?: ImageFormat;
   bypassModeration?: boolean;
   rawPrompt?: string;
-  referenceImage?: ReferenceImage;
+  referenceImages?: ReferenceImage[];
   prose?: string;
   aiFilledFields?: string[];
 }
 
 const SIZE_RE = /^(\d{2,4})x(\d{2,4})$/;
+const RATIO_RE = /^ratio:(\d{1,3}):(\d{1,3})$/;
 /**
  * Surface-level shape check. Accepts:
  *   - "auto" — sentinel that tells the driver to omit `size` entirely so the
  *     upstream model picks freely (OpenAI gpt-image-2 default).
+ *   - "ratio:<W>:<H>" — Inkast-private wire form for "lock aspect, free
+ *     pixels". Drivers translate this either by dropping `size` (images
+ *     endpoint) or by embedding the ratio as a prompt hint (responses
+ *     endpoint). See SIZE_RATIO_PREFIX in @inkast/shared.
  *   - "<W>x<H>" — concrete pixels. We only verify the format and a sane
  *     dimension range; the actual list of supported sizes varies by provider,
  *     so the upstream returns the real verdict.
  */
 function validateSize(s: string): void {
   if (s === "auto") return;
+  const ratioMatch = RATIO_RE.exec(s);
+  if (ratioMatch) {
+    const w = Number(ratioMatch[1]);
+    const h = Number(ratioMatch[2]);
+    if (w < 1 || h < 1) {
+      throw new HTTPException(400, {
+        message: "'size' ratio parts must be >= 1 (e.g. ratio:9:16)",
+      });
+    }
+    return;
+  }
   const m = SIZE_RE.exec(s);
   if (!m) {
     throw new HTTPException(400, {
-      message: "'size' must be 'auto' or '<width>x<height>' (e.g. 1024x1024)",
+      message:
+        "'size' must be 'auto', 'ratio:<W>:<H>', or '<width>x<height>' (e.g. 1024x1024)",
     });
   }
   const [, wStr, hStr] = m;
@@ -45,33 +65,51 @@ function validateSize(s: string): void {
   }
 }
 
-function validateReferenceImage(ref: unknown): asserts ref is ReferenceImage {
+function validateReferenceImage(
+  ref: unknown,
+  idx: number,
+): asserts ref is ReferenceImage {
+  const path = `referenceImages[${idx}]`;
   if (typeof ref !== "object" || ref === null) {
-    throw new HTTPException(400, { message: "'referenceImage' must be an object" });
+    throw new HTTPException(400, { message: `'${path}' must be an object` });
   }
   const r = ref as Record<string, unknown>;
   if (r.kind === "generation") {
     if (typeof r.generationId !== "string" || !r.generationId) {
       throw new HTTPException(400, {
-        message: "'referenceImage.generationId' required for kind=generation",
+        message: `'${path}.generationId' required for kind=generation`,
       });
     }
   } else if (r.kind === "upload") {
     if (typeof r.mimeType !== "string" || !r.mimeType.startsWith("image/")) {
       throw new HTTPException(400, {
-        message: "'referenceImage.mimeType' must be image/*",
+        message: `'${path}.mimeType' must be image/*`,
       });
     }
     if (typeof r.dataBase64 !== "string" || r.dataBase64.length < 100) {
       throw new HTTPException(400, {
-        message: "'referenceImage.dataBase64' missing or too short",
+        message: `'${path}.dataBase64' missing or too short`,
       });
     }
   } else {
     throw new HTTPException(400, {
-      message: "'referenceImage.kind' must be 'generation' or 'upload'",
+      message: `'${path}.kind' must be 'generation' or 'upload'`,
     });
   }
+}
+
+function validateReferenceImages(
+  refs: unknown,
+): asserts refs is ReferenceImage[] {
+  if (!Array.isArray(refs)) {
+    throw new HTTPException(400, { message: "'referenceImages' must be an array" });
+  }
+  if (refs.length > MAX_REFERENCE_IMAGES) {
+    throw new HTTPException(400, {
+      message: `'referenceImages' length ${refs.length} exceeds cap ${MAX_REFERENCE_IMAGES}`,
+    });
+  }
+  refs.forEach(validateReferenceImage);
 }
 
 const VALID_STATUSES: ReadonlySet<JobStatus> = new Set([
@@ -99,8 +137,8 @@ jobsRoutes.post("/jobs/generate", async c => {
       message: "'rawPrompt' must be a non-empty string when provided",
     });
   }
-  if (body.referenceImage !== undefined) {
-    validateReferenceImage(body.referenceImage);
+  if (body.referenceImages !== undefined) {
+    validateReferenceImages(body.referenceImages);
   }
   if (
     body.aiFilledFields !== undefined &&
@@ -116,6 +154,11 @@ jobsRoutes.post("/jobs/generate", async c => {
       throw new HTTPException(400, { message: "'size' must be a string" });
     }
     validateSize(body.size);
+  }
+  if (body.format !== undefined && !isImageFormat(body.format)) {
+    throw new HTTPException(400, {
+      message: "'format' must be one of 'png' / 'jpeg' / 'webp'",
+    });
   }
 
   const isRaw = body.rawPrompt !== undefined;
@@ -135,8 +178,9 @@ jobsRoutes.post("/jobs/generate", async c => {
     prose,
     aiFilledFields,
   });
+  const refCount = body.referenceImages?.length ?? 0;
   console.log(
-    `[job] ▶ ${job.id} submitted (isRaw=${isRaw} promptBytes=${promptText.length}${body.referenceImage ? " withReference" : ""}${prose ? ` prose=${prose.length}b` : ""}${aiFilledFields ? ` aiFields=${aiFilledFields.length}` : ""})`,
+    `[job] ▶ ${job.id} submitted (isRaw=${isRaw} promptBytes=${promptText.length}${refCount > 0 ? ` refs=${refCount}` : ""}${prose ? ` prose=${prose.length}b` : ""}${aiFilledFields ? ` aiFields=${aiFilledFields.length}` : ""})`,
   );
 
   // Fire and forget — never block the HTTP response on the upstream model.
@@ -144,9 +188,10 @@ jobsRoutes.post("/jobs/generate", async c => {
     prompt: body.prompt,
     size: body.size,
     quality: body.quality,
+    format: body.format,
     bypassModeration: body.bypassModeration,
     rawPrompt: body.rawPrompt,
-    referenceImage: body.referenceImage,
+    referenceImages: body.referenceImages,
     prose,
     aiFilledFields,
   }).catch(err => {

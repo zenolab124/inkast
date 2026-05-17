@@ -4,6 +4,7 @@ import type {
   ImageGenerateParams,
 } from "openai/resources/images";
 import {
+  IMAGE_FORMAT_DEFAULT,
   IMAGE_GENERATION_MODE_DEFAULT,
   extractRatio,
   isRatioSize,
@@ -171,22 +172,33 @@ async function callProvider(
   const promptForUpstream = ratioHint
     ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
     : input.promptText;
+  const requestedFormat = input.format ?? IMAGE_FORMAT_DEFAULT;
   const body = {
     model: capability.model,
     prompt: promptForUpstream,
     ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
     quality: input.quality ?? "high",
-    output_format: "png",
+    output_format: requestedFormat,
     n: input.n ?? 1,
   } as unknown as ImageGenerateParams;
 
-  const useEdit = input.referenceImage !== undefined;
+  const refs = input.referenceImages ?? [];
+  if (refs.length > 1) {
+    // The legacy /v1/images/edits endpoint only takes a single reference on
+    // most upstreams (gpt-image-1 ships multi-image edit but compat proxies
+    // rarely forward it). Fail loudly with a hint pointing operators at the
+    // responses-mode capability, which natively supports multi-reference.
+    throw new Error(
+      `this provider's images.edit endpoint supports only a single reference image (got ${refs.length}); switch to a responses-mode capability for multi-reference, or reduce to 1`,
+    );
+  }
+  const useEdit = refs.length === 1;
   console.log(
     `[image]   → POST ${provider.baseUrl.replace(/\/+$/, "")}/images/${useEdit ? "edits" : "generations"}`,
   );
   if (useEdit) {
     console.log(
-      `[image]   reference: ${input.referenceImage!.mimeType} · ${input.referenceImage!.buffer.length} bytes`,
+      `[image]   reference: ${refs[0]!.mimeType} · ${refs[0]!.buffer.length} bytes`,
     );
   }
   const reqStart = Date.now();
@@ -220,8 +232,14 @@ async function buildEditBody(
   capability: ProviderCapability,
   input: ImageGenInput,
 ): Promise<ImageEditParams> {
-  const ref = input.referenceImage;
-  if (!ref) throw new Error("buildEditBody called without referenceImage");
+  const refs = input.referenceImages ?? [];
+  if (refs.length !== 1) {
+    // Defensive: callProvider guarantees length === 1 before reaching here.
+    throw new Error(
+      `buildEditBody requires exactly 1 reference image, got ${refs.length}`,
+    );
+  }
+  const ref = refs[0]!;
   const file = await toFile(ref.buffer, ref.filename, { type: ref.mimeType });
   // Mirror the ratio-mode handling in callProvider: drop `size` when the
   // caller passed `ratio:W:H`, and let the ratio hint travel via the prompt.

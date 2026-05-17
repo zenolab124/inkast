@@ -11,7 +11,10 @@ import {
 } from "lucide-react";
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_ID,
+  IMAGE_FORMAT_DEFAULT,
+  isImageFormat,
   type GenerationRecord,
+  type ImageFormat,
   type ImagePrompt,
   type JobRecord,
   type PromptDraft,
@@ -56,9 +59,19 @@ export function App() {
   >();
   const [flash, setFlash] = useState<FlashMessage | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-  const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [size, setSize] = useState<string>("auto");
   const [count, setCount] = useState<number>(1);
+  const [format, setFormat] = useState<ImageFormat>(() => {
+    if (typeof window === "undefined") return IMAGE_FORMAT_DEFAULT;
+    const v = window.localStorage.getItem("inkast.format");
+    return isImageFormat(v) ? v : IMAGE_FORMAT_DEFAULT;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("inkast.format", format);
+    }
+  }, [format]);
   const [lockMode, setLockMode] = useState<LockMode>(null);
   const [sessionGenerationIds, setSessionGenerationIds] = useState<string[]>([]);
   const [galleryKey, setGalleryKey] = useState(0);
@@ -182,7 +195,8 @@ export function App() {
     const req = {
       prompt,
       size,
-      referenceImage: referenceImage ?? undefined,
+      format,
+      referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
       prose: proseTrimmed.length > 0 ? proseTrimmed : undefined,
       aiFilledFields: aiSuggested.size > 0 ? Array.from(aiSuggested) : undefined,
     };
@@ -204,7 +218,7 @@ export function App() {
             : `${failed.length}/${n} jobs failed to submit · ${first?.message ?? ""}`,
       });
     }
-  }, [prompt, size, count, referenceImage, input, aiSuggested, submitJob]);
+  }, [prompt, size, format, count, referenceImages, input, aiSuggested, submitJob]);
 
   const generateRaw = useCallback(async () => {
     const trimmed = input.trim();
@@ -216,7 +230,8 @@ export function App() {
       prompt: placeholder,
       rawPrompt: trimmed,
       size,
-      referenceImage: referenceImage ?? undefined,
+      format,
+      referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
       prose: trimmed,
     };
     const results = await Promise.allSettled(
@@ -233,7 +248,7 @@ export function App() {
             : `${failed.length}/${n} jobs failed to submit · ${first?.message ?? ""}`,
       });
     }
-  }, [input, size, count, referenceImage, submitJob]);
+  }, [input, size, format, count, referenceImages, submitJob]);
 
   const skipText = useCallback(() => {
     setPrompt(EMPTY_PROMPT);
@@ -343,12 +358,14 @@ export function App() {
                 onSkipText={skipText}
                 lockMode={lockMode}
                 onUnlock={unlock}
-                referenceImage={referenceImage}
-                onReferenceImageChange={setReferenceImage}
+                referenceImages={referenceImages}
+                onReferenceImagesChange={setReferenceImages}
                 size={size}
                 onSizeChange={setSize}
                 count={count}
                 onCountChange={setCount}
+                format={format}
+                onFormatChange={setFormat}
                 backendStatus={
                   <button
                     type="button"

@@ -1,13 +1,18 @@
-import { type FormEvent, type ReactNode } from "react";
+import { useCallback, useState, type ClipboardEvent, type DragEvent, type FormEvent, type ReactNode } from "react";
 import { ArrowRight, ImagePlus, Loader2, Lock, Sparkles, Unlock } from "lucide-react";
-import type { ReferenceImage } from "@inkast/shared";
+import {
+  IMAGE_FORMAT_VALUES,
+  MAX_REFERENCE_IMAGES,
+  type ImageFormat,
+  type ReferenceImage,
+} from "@inkast/shared";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
-import { ReferencePicker } from "./ReferencePicker.js";
+import { ReferencePicker, fileToBase64 } from "./ReferencePicker.js";
 import { SizeSelector } from "./SizeSelector.js";
 
 const MAX_COUNT = 20;
@@ -25,12 +30,14 @@ interface PromptComposerProps {
   onSkipText: () => void;
   lockMode: LockMode;
   onUnlock: () => void;
-  referenceImage: ReferenceImage | null;
-  onReferenceImageChange: (next: ReferenceImage | null) => void;
+  referenceImages: ReferenceImage[];
+  onReferenceImagesChange: (next: ReferenceImage[]) => void;
   size: string;
   onSizeChange: (next: string) => void;
   count: number;
   onCountChange: (next: number) => void;
+  format: ImageFormat;
+  onFormatChange: (next: ImageFormat) => void;
   /** Rendered next to the "AI expand" button — typically a "via X" status chip. */
   backendStatus?: ReactNode;
 }
@@ -46,18 +53,21 @@ export function PromptComposer({
   onSkipText,
   lockMode,
   onUnlock,
-  referenceImage,
-  onReferenceImageChange,
+  referenceImages,
+  onReferenceImagesChange,
   size,
   onSizeChange,
   count,
   onCountChange,
+  format,
+  onFormatChange,
   backendStatus,
 }: PromptComposerProps) {
   const { t } = useLanguage();
   const busy = pending || generatingRaw;
   const locked = lockMode !== null;
   const hasText = value.trim().length > 0;
+  const [dropping, setDropping] = useState(false);
 
   const handle = (e: FormEvent) => {
     e.preventDefault();
@@ -65,14 +75,65 @@ export function PromptComposer({
     onExpand();
   };
 
+  const appendImagesFromFiles = useCallback(
+    async (files: File[]) => {
+      const remaining = MAX_REFERENCE_IMAGES - referenceImages.length;
+      if (remaining <= 0) return;
+      const accepted = files
+        .filter(f => f.type.startsWith("image/") && f.size <= 8 * 1024 * 1024)
+        .slice(0, remaining);
+      if (accepted.length === 0) return;
+      const next: ReferenceImage[] = [];
+      for (const file of accepted) {
+        const dataBase64 = await fileToBase64(file);
+        next.push({ kind: "upload", mimeType: file.type, dataBase64 });
+      }
+      onReferenceImagesChange([...referenceImages, ...next]);
+    },
+    [referenceImages, onReferenceImagesChange],
+  );
+
+  const handlePaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files: File[] = [];
+      for (const it of items) {
+        if (it.kind === "file" && it.type.startsWith("image/")) {
+          const f = it.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length === 0) return;
+      e.preventDefault();
+      void appendImagesFromFiles(files);
+    },
+    [appendImagesFromFiles],
+  );
+
+  const handleDrop = useCallback(
+    (e: DragEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      setDropping(false);
+      const files = Array.from(e.dataTransfer?.files ?? []).filter(f =>
+        f.type.startsWith("image/"),
+      );
+      if (files.length === 0) return;
+      void appendImagesFromFiles(files);
+    },
+    [appendImagesFromFiles],
+  );
+
   const paramsBlock = (
     <ParamsBlock
-      referenceImage={referenceImage}
-      onReferenceImageChange={onReferenceImageChange}
+      referenceImages={referenceImages}
+      onReferenceImagesChange={onReferenceImagesChange}
       size={size}
       onSizeChange={onSizeChange}
       count={count}
       onCountChange={onCountChange}
+      format={format}
+      onFormatChange={onFormatChange}
       disabled={busy}
     />
   );
@@ -137,7 +198,29 @@ export function PromptComposer({
   }
 
   return (
-    <form onSubmit={handle} className="flex h-full min-h-0 flex-col gap-3">
+    <form
+      onSubmit={handle}
+      onDragOver={e => {
+        // Only treat as a file drag, not text selections inside the form.
+        if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+          e.preventDefault();
+          setDropping(true);
+        }
+      }}
+      onDragLeave={e => {
+        if (e.currentTarget === e.target) setDropping(false);
+      }}
+      onDrop={handleDrop}
+      className={cn(
+        "relative flex h-full min-h-0 flex-col gap-3",
+        dropping && "ring-2 ring-primary/40 ring-offset-2 ring-offset-card rounded-md",
+      )}
+    >
+      {dropping && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md bg-primary/5 text-xs font-medium uppercase tracking-wider text-primary">
+          {t.composer.referenceDropOverlay}
+        </div>
+      )}
       {/* 起草区:占纵向 60% */}
       <div className="flex min-h-0 flex-[3] flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
@@ -150,6 +233,7 @@ export function PromptComposer({
         <Textarea
           value={value}
           onChange={e => onChange(e.target.value)}
+          onPaste={handlePaste}
           placeholder={t.composer.placeholder}
           disabled={busy}
           className="min-h-0 flex-1 resize-none leading-relaxed"
@@ -252,36 +336,87 @@ function SkipTextButton({
 }
 
 function ParamsBlock({
-  referenceImage,
-  onReferenceImageChange,
+  referenceImages,
+  onReferenceImagesChange,
   size,
   onSizeChange,
   count,
   onCountChange,
+  format,
+  onFormatChange,
   disabled,
 }: {
-  referenceImage: ReferenceImage | null;
-  onReferenceImageChange: (next: ReferenceImage | null) => void;
+  referenceImages: ReferenceImage[];
+  onReferenceImagesChange: (next: ReferenceImage[]) => void;
   size: string;
   onSizeChange: (next: string) => void;
   count: number;
   onCountChange: (next: number) => void;
+  format: ImageFormat;
+  onFormatChange: (next: ImageFormat) => void;
   disabled?: boolean;
 }) {
   const { t } = useLanguage();
   return (
     <div className="mt-1 flex flex-col gap-3">
       <ParamsDivider label={t.composer.paramsDivider} />
-      <div className="grid grid-cols-[48px_1fr] items-center gap-x-3">
-        <Label className="pt-0 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="grid grid-cols-[48px_1fr] items-start gap-x-3">
+        <Label className="pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
           {t.composer.reference}
         </Label>
         <div className="min-w-0">
-          <ReferencePicker value={referenceImage} onChange={onReferenceImageChange} />
+          <ReferencePicker value={referenceImages} onChange={onReferenceImagesChange} />
         </div>
       </div>
       <SizeSelector value={size} onChange={onSizeChange} disabled={disabled} />
+      <FormatRow value={format} onChange={onFormatChange} disabled={disabled} />
       <CountRow value={count} onChange={onCountChange} disabled={disabled} />
+    </div>
+  );
+}
+
+function FormatRow({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: ImageFormat;
+  onChange: (next: ImageFormat) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useLanguage();
+  return (
+    <div className="grid grid-cols-[48px_1fr] items-start gap-x-3">
+      <Label className="pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {t.composer.formatLabel}
+      </Label>
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap gap-1.5">
+          {IMAGE_FORMAT_VALUES.map(f => {
+            const active = value === f;
+            return (
+              <button
+                key={f}
+                type="button"
+                onClick={() => onChange(f)}
+                disabled={disabled}
+                aria-pressed={active}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md border px-2.5 py-1 font-mono text-[11.5px] tabular-nums uppercase transition disabled:cursor-not-allowed disabled:opacity-40",
+                  active
+                    ? "bg-primary/14 border-primary/50 text-primary shadow-(--shadow-paper)"
+                    : "border-border/60 bg-secondary text-foreground/80 hover:bg-secondary/80",
+                )}
+              >
+                {f}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[10.5px] text-muted-foreground">
+          {t.composer.formatHint}
+        </div>
+      </div>
     </div>
   );
 }

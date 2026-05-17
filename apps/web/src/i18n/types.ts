@@ -68,6 +68,8 @@ export interface Translations {
     reference: string;
     countLabel: string;
     countHint: string;
+    formatLabel: string;
+    formatHint: string;
     referenceAdd: string;
     referenceRemove: string;
     referenceFromGallery: string;
@@ -77,6 +79,14 @@ export interface Translations {
     referencePickTitle: string;
     referenceUploadHint: string;
     referenceEmpty: string;
+    referenceRemaining: string;
+    referenceSelected: string;
+    referenceAddSelected: string;
+    referenceAlreadyAdded: string;
+    referenceAlreadyAddedBadge: string;
+    referenceUploadErrType: string;
+    referenceUploadErrSize: string;
+    referenceDropOverlay: string;
     backendVia: string;
   };
   jobs: {

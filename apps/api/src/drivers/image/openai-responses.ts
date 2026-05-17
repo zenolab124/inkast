@@ -1,4 +1,4 @@
-import { extractRatio, isRatioSize } from "@inkast/shared";
+import { IMAGE_FORMAT_DEFAULT, extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
 import type { ImageGenInput } from "./types.js";
 
@@ -44,28 +44,35 @@ export async function callImageGenerationTool(
   const promptWithDirective = wrapPromptForImageGen(input);
 
   // Either a plain string (text-only) or a single user message with text +
-  // input_image parts (reference-image mode). The two shapes match the
-  // documented OpenAI Responses API; proxies pass them through verbatim.
-  const requestInput: unknown = input.referenceImage
+  // one or more input_image parts (reference-image mode). The two shapes
+  // match the documented OpenAI Responses API; proxies pass them through
+  // verbatim. Multiple references: each becomes its own `input_image` part
+  // in order.
+  const refs = input.referenceImages ?? [];
+  const requestInput: unknown = refs.length > 0
     ? [
         {
           role: "user",
           content: [
             { type: "input_text", text: promptWithDirective },
-            {
+            ...refs.map(ref => ({
               type: "input_image",
-              image_url: `data:${input.referenceImage.mimeType};base64,${input.referenceImage.buffer.toString("base64")}`,
+              image_url: `data:${ref.mimeType};base64,${ref.buffer.toString("base64")}`,
               detail: "auto",
-            },
+            })),
           ],
         },
       ]
     : promptWithDirective;
 
+  // image_generation tool accepts `output_format` (best-effort; many proxies
+  // silently drop unknown tool fields). Domain layer sniffs the bytes anyway,
+  // so an ignored hint still produces an honest extension on disk.
+  const requestedFormat = input.format ?? IMAGE_FORMAT_DEFAULT;
   const body = {
     model: capability.model,
     input: requestInput,
-    tools: [{ type: "image_generation" }],
+    tools: [{ type: "image_generation", output_format: requestedFormat }],
     // Force the tool call. General chat models tend to respond with text
     // when the input looks like a JSON spec.
     tool_choice: { type: "image_generation" },
@@ -73,11 +80,11 @@ export async function callImageGenerationTool(
   };
 
   console.log(
-    `[image]   → STREAM ${url} (tool=image_generation${input.referenceImage ? " · with reference" : ""})`,
+    `[image]   → STREAM ${url} (tool=image_generation${refs.length > 0 ? ` · ${refs.length} reference${refs.length > 1 ? "s" : ""}` : ""})`,
   );
-  if (input.referenceImage) {
+  for (const [i, ref] of refs.entries()) {
     console.log(
-      `[image]   reference: ${input.referenceImage.mimeType} · ${input.referenceImage.buffer.length} bytes`,
+      `[image]   reference[${i}]: ${ref.mimeType} · ${ref.buffer.length} bytes`,
     );
   }
   const reqStart = Date.now();

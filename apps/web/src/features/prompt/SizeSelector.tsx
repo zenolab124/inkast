@@ -173,7 +173,7 @@ export function SizeSelector({ value, onChange, disabled }: Props) {
     const r = defaultRatioFor(next);
     setRatio(r);
     setSizePreset(defaultSizeFor(r));
-    setSizeMode("preset");
+    setSizeMode("auto");
     setCustomW("");
     setCustomH("");
   }

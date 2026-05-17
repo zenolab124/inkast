@@ -13,7 +13,11 @@
  *     to override, but the UI should require explicit confirmation.
  */
 
-import type { ImageSize as SharedImageSize, ImageQuality as SharedImageQuality } from "@inkast/shared";
+import type {
+  ImageSize as SharedImageSize,
+  ImageQuality as SharedImageQuality,
+  ImageFormat,
+} from "@inkast/shared";
 
 export type ImageSize = SharedImageSize;
 export type ImageQuality = SharedImageQuality;
@@ -23,21 +27,34 @@ export interface ImageGenInput {
   promptText: string;
   size?: ImageSize;
   quality?: ImageQuality;
+  /**
+   * Requested output format. Passed to upstream as `output_format`; many
+   * proxies ignore it. Callers must sniff the returned bytes to learn the
+   * actual format — `ImageGenOutcome.format` is the driver's best guess but
+   * domain layer re-sniffs before persisting.
+   */
+  format?: ImageFormat;
   n?: number;
   bypassModeration?: boolean;
   signal?: AbortSignal;
   /**
-   * Optional reference image bytes. When present, the driver calls
-   * `images.edit` (image + text) instead of `images.generate` (text only).
-   * Buffer ownership: caller decodes from generation file or base64 upload.
+   * Zero or more reference image bytes. When non-empty, the driver switches
+   * from `images.generate` (text-only) to `images.edit` (image + text) on
+   * the legacy `images` endpoint, or pushes multiple `input_image` content
+   * parts on the responses endpoint. Buffer ownership: caller decodes from
+   * generation file or base64 upload.
+   *
+   * Note: the legacy `images.edit` endpoint only supports a single reference
+   * image on most upstream models — the openai-compatible driver rejects
+   * arrays of length > 1 with a helpful error pointing at responses mode.
    */
-  referenceImage?: {
+  referenceImages?: Array<{
     buffer: Buffer;
     /** "image/png" | "image/jpeg" | "image/webp" */
     mimeType: string;
     /** Filename hint passed to OpenAI SDK toFile (extension matters). */
     filename: string;
-  };
+  }>;
 }
 
 export type AttemptErrorCode =

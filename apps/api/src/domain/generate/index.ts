@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ImagePrompt, ReferenceImage } from "@inkast/shared";
+import type { ImageFormat, ImagePrompt, ReferenceImage } from "@inkast/shared";
+import { MAX_REFERENCE_IMAGES } from "@inkast/shared";
 import { generateImage as drive } from "../../drivers/image/openai-compatible.js";
 import {
   ImageGenError,
@@ -25,12 +26,14 @@ export interface GenerateInput {
   prompt: ImagePrompt;
   size?: ImageGenInput["size"];
   quality?: ImageGenInput["quality"];
+  /** Requested output format; actual on-disk format is decided by magic-number sniff. */
+  format?: ImageFormat;
   bypassModeration?: boolean;
   signal?: AbortSignal;
   /** Bypass the structured-prompt JSON.stringify path; feed this text directly. */
   rawPrompt?: string;
-  /** Reference image (Gallery generation or fresh upload). */
-  referenceImage?: ReferenceImage;
+  /** Reference images (Gallery generations or fresh uploads). */
+  referenceImages?: ReferenceImage[];
   /** Original prose the user typed in the composer (persisted on the row). */
   prose?: string | null;
   /** Field names supplied by the LLM expansion (persisted on the row). */
@@ -55,34 +58,53 @@ export interface GenerateOutcome {
 export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
   const promptText = input.rawPrompt ?? JSON.stringify(input.prompt);
   const mode = input.rawPrompt ? "raw-prose" : "structured-json";
-  const referenceImage = input.referenceImage
-    ? await resolveReferenceImage(input.referenceImage)
+  const rawRefs = input.referenceImages ?? [];
+  if (rawRefs.length > MAX_REFERENCE_IMAGES) {
+    throw new ImageGenError(
+      "unknown",
+      `too many reference images (${rawRefs.length} > ${MAX_REFERENCE_IMAGES})`,
+    );
+  }
+  const referenceImages = rawRefs.length > 0
+    ? await Promise.all(rawRefs.map(resolveReferenceImage))
     : undefined;
   console.log(
-    `[generate] ▶ start · mode=${mode} · prompt-bytes=${promptText.length}${referenceImage ? ` · with-reference` : ""}`,
+    `[generate] ▶ start · mode=${mode} · prompt-bytes=${promptText.length}${referenceImages ? ` · refs=${referenceImages.length}` : ""}`,
   );
 
   const outcome = await drive({
     promptText,
     size: input.size,
     quality: input.quality,
+    format: input.format,
     bypassModeration: input.bypassModeration,
     signal: input.signal,
-    referenceImage,
+    referenceImages,
   });
 
-  const { relativePath, absolutePath } = imagePathFor(outcome.format);
+  // Decode once; sniff the real format from magic numbers rather than trust
+  // the driver/provider. Third-party OpenAI-compatible proxies frequently
+  // ignore `output_format` and return PNG bytes anyway — we'd rather store
+  // an honest extension than a misleading one.
+  const bytes = Buffer.from(outcome.imageB64, "base64");
+  const actualFormat = sniffImageFormat(bytes);
+  if (input.format && actualFormat !== input.format) {
+    console.log(
+      `[generate]   ⚠ provider returned ${actualFormat} despite request for ${input.format}`,
+    );
+  }
+  const { relativePath, absolutePath } = imagePathFor(actualFormat);
   const dir = absolutePath.slice(0, absolutePath.lastIndexOf("/"));
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const writeStart = Date.now();
-  await writeFile(absolutePath, Buffer.from(outcome.imageB64, "base64"));
+  await writeFile(absolutePath, bytes);
   console.log(`[generate]   ✓ wrote ${relativePath} in ${Date.now() - writeStart}ms`);
 
   const generation = createGeneration({
     promptSnapshot: input.prompt,
     promptText,
     imagePath: relativePath,
-    imageFormat: outcome.format,
+    imageFormat: actualFormat,
     size: input.size ?? "1024x1024",
     quality: input.quality ?? "high",
     providerId: outcome.providerId,
@@ -129,7 +151,7 @@ export async function runGenerationJob(
  */
 async function resolveReferenceImage(
   ref: ReferenceImage,
-): Promise<NonNullable<ImageGenInput["referenceImage"]>> {
+): Promise<NonNullable<ImageGenInput["referenceImages"]>[number]> {
   if (ref.kind === "generation") {
     const gen = getGeneration(ref.generationId);
     if (!gen) {
@@ -180,6 +202,39 @@ function sanitizeRelativePath(rel: string): string {
 
 function cryptoRandomId(): string {
   return globalThis.crypto.randomUUID();
+}
+
+/**
+ * Identify image bytes by magic number. Falls back to "png" for unknown bytes
+ * so we never crash, but the operator log line catches mismatches.
+ */
+function sniffImageFormat(buf: Buffer): ImageFormat {
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  ) {
+    return "png";
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return "jpeg";
+  }
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50
+  ) {
+    return "webp";
+  }
+  return "png";
 }
 
 export { ImageGenError };
