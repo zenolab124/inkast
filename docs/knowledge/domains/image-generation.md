@@ -78,6 +78,35 @@ driver 内部根据 `input.referenceImage` 是否存在,分流走 `client.images
 
 `generate()` 也接受 `rawPrompt?: string` —— "直接生图"路径绕过 prompt engine,把散文文本直接喂给图像模型,见 [generate-now-raw-prompt-path](../decisions/generate-now-raw-prompt-path.md)。
 
+## 两种 image mode 调度(images / responses)
+
+`drivers/image/openai-compatible.ts` 池循环里现在按 `capability.extras.mode` 派发,默认 `images`:
+
+```
+provider.extras.mode = "images"    → callProvider() = client.images.generate / images.edit
+                     = "responses" → callImageGenerationTool() = raw fetch /v1/responses + SSE
+```
+
+`responses` mode 是为接入"通用聊天模型 + image_generation 工具"(gpt-5.3-codex 等)新加的,**走完全不同的代码路径**——不用 OpenAI SDK,直接 fetch + 手写 SSE 解析。详见 [image-mode-coexistence](../decisions/image-mode-coexistence.md) 和 [responses-mode-raw-fetch-sse](../decisions/responses-mode-raw-fetch-sse.md)。
+
+错误分类、attempts 计数、fallback 切换在两个 mode 之间**共享**——池语义不变。
+
+## Size 三种 wire 形态翻译
+
+`input.size` 字段(类型 `ImageSize = string`)目前接受三种形态,driver 在传给上游前必须翻译:
+
+| Wire 值 | images mode | responses mode |
+| --- | --- | --- |
+| `"auto"` | `size: "auto"` 给 SDK | prompt 不加 dimension 提示 |
+| `"WxH"`(如 `1024x1536`) | `size: "1024x1536"` | prompt 加 `Target size: 1024x1536.` |
+| `"ratio:W:H"`(如 `ratio:9:16`) | **不传 size 参数** + prompt 加 `Target aspect ratio: 9:16.` | prompt 加 `Target aspect ratio: 9:16.` |
+
+详见 [ratio-wire-encoding](../decisions/ratio-wire-encoding.md)。
+
+## 批量生图
+
+前端"一次生 N 张"(滑块 1-20)通过 **前端 N 个并发 submitJob 调用**实现,**不**通过 driver 一次调用拿 N 张——`gpt-image-2` 官方 `n=1`,绕过这个限制最干净的方式是 fan-out 多 job。详见 [batch-fan-out-frontend](../decisions/batch-fan-out-frontend.md)。
+
 ## 关联条目
 
 - [async-job-pipeline](./async-job-pipeline.md) — 异步任务包装
@@ -85,6 +114,10 @@ driver 内部根据 `input.referenceImage` 是否存在,分流走 `client.images
 - [provider-pool](./provider-pool.md) — 池切换语义
 - [gallery](./gallery.md) — 看图
 - [openai-sdk-images](../integrations/openai-sdk-images.md) — SDK 调用细节
+- [image-mode-coexistence](../decisions/image-mode-coexistence.md) — images / responses 两模式并存
+- [responses-mode-raw-fetch-sse](../decisions/responses-mode-raw-fetch-sse.md) — responses driver 设计
+- [ratio-wire-encoding](../decisions/ratio-wire-encoding.md) — size 第三种形态
+- [batch-fan-out-frontend](../decisions/batch-fan-out-frontend.md) — N 张并发
 - [image-driver-timeout-chain](../pitfalls/image-driver-timeout-chain.md) — 超时设计
 - [sdk-output-format-missing](../pitfalls/sdk-output-format-missing.md) — output_format 字段的坑
 - [browser-idle-timeout-long-http](../pitfalls/browser-idle-timeout-long-http.md) — 推动异步化的根因

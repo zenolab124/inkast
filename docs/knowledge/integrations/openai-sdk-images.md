@@ -1,10 +1,12 @@
-# `openai` SDK — images.generate
+# `openai` SDK — images.generate(images mode 专用)
 
-OpenAI 官方 TS SDK,inkast 用它调 OpenAI 兼容图像端点。
+OpenAI 官方 TS SDK,inkast 用它调 OpenAI 兼容的 **`/v1/images/generations` 和 `/v1/images/edits`** 端点(`provider.extras.mode = "images"` 的 driver 走这里)。
+
+**注意**:`provider.extras.mode = "responses"` 的 driver **不**用 SDK,直接 raw fetch + 手写 SSE,见 [responses-mode-raw-fetch-sse](../decisions/responses-mode-raw-fetch-sse.md)。两条路并存。
 
 ## 选型原因
 
-见 [openai-sdk-over-fetch](../decisions/openai-sdk-over-fetch.md)。一句话:第三方代理对无 UA 的 raw fetch 经常 403,SDK 自带 User-Agent 才能稳定通过。
+见 [openai-sdk-over-fetch](../decisions/openai-sdk-over-fetch.md)。一句话:`/v1/images/*` 端点上,第三方代理对无 UA 的 raw fetch 经常 403,SDK 自带 User-Agent 才能稳定通过。`/v1/responses` 端点上 SDK 反过来太严格(详见 [sdk-responses-stream-strict](../pitfalls/sdk-responses-stream-strict.md)),所以分开。
 
 ## 使用方式
 
@@ -21,10 +23,16 @@ const client = new OpenAI({
   // maxRetries 用 SDK 默认 (2),透明重试 transient 网络错误
 });
 
+// Wire `ratio:W:H` → 不传 size 参数 + 拼到 prompt
+const useRatio = isRatioSize(input.size);
+const promptForUpstream = useRatio
+  ? `${input.promptText}\n\nTarget aspect ratio: ${extractRatio(input.size)}.`
+  : input.promptText;
+
 const body = {
   model: provider.model,
-  prompt: input.promptText,
-  size: input.size ?? "1024x1024",
+  prompt: promptForUpstream,
+  ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
   quality: input.quality ?? "high",
   output_format: "png",    // ⚠️ 必传,见 pitfalls/sdk-output-format-missing
   n: input.n ?? 1,
@@ -100,11 +108,14 @@ const response = await client.images.edit({
 
 ## 关联条目
 
-- [openai-sdk-over-fetch](../decisions/openai-sdk-over-fetch.md) — 选型故事
+- [openai-sdk-over-fetch](../decisions/openai-sdk-over-fetch.md) — 选型故事(images 端点)
+- [responses-mode-raw-fetch-sse](../decisions/responses-mode-raw-fetch-sse.md) — **对偶决策**:responses 端点反向不用 SDK
 - [image-generation](../domains/image-generation.md) — 调用方
 - [reference-image](../domains/reference-image.md) — `images.edit` 的消费方
 - [reference-image-via-edit](../decisions/reference-image-via-edit.md)
+- [ratio-wire-encoding](../decisions/ratio-wire-encoding.md) — size 三态翻译
 - [cdn-edge-403-without-ua](../pitfalls/cdn-edge-403-without-ua.md)
 - [sdk-output-format-missing](../pitfalls/sdk-output-format-missing.md)
 - [image-driver-timeout-chain](../pitfalls/image-driver-timeout-chain.md)
 - [reference-edit-endpoint-not-universal](../pitfalls/reference-edit-endpoint-not-universal.md)
+- [sdk-responses-stream-strict](../pitfalls/sdk-responses-stream-strict.md) — 为什么 SDK 在 responses 端点不工作

@@ -1,4 +1,6 @@
-# Image driver:用 `openai` SDK,不手搓 fetch
+# `/v1/images/*` 端点:用 `openai` SDK,不手搓 fetch
+
+**适用范围**:仅限 `provider.extras.mode = "images"` 的 driver(`/v1/images/generations` 和 `/v1/images/edits`)。**`mode = "responses"` 反向走 raw fetch + 手写 SSE**——SDK 的流式 parser 对第三方代理过严格,见 [responses-mode-raw-fetch-sse](./responses-mode-raw-fetch-sse.md)。
 
 ## 背景
 

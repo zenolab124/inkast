@@ -18,9 +18,11 @@ items: GenerationRecord[]
     │    搜索框(模糊匹配 type / style / subject)
     │    Type filter chips(取 items 里 count 前 8 的 type)
     │
-    ├─ Grid (responsive: 2/3/4/5/6 cols)
+    ├─ Masonry (react-masonry-css, row-major)
+    │    breakpoints: <640→2 / <768→3 / <1024→4 / <1280→5 / ≥1280→6
     │    GalleryCard × N
-    │      img + type/style/subject(2 行截断) + reuse / download
+    │      img: block w-full(按原图比例,不裁剪)
+    │      + type/style/subject(2 行截断) + reuse / download
     │      点击图打开详情弹窗
     │
     └─ GalleryDetailDialog(打开时)
@@ -33,9 +35,8 @@ items: GenerationRecord[]
 
 | 文件 | 职责 |
 | --- | --- |
-| [apps/web/src/features/gallery/GalleryPage.tsx](../../../apps/web/src/features/gallery/GalleryPage.tsx) | **独立 Tab 页面**:toolbar + 搜索 + type filter + 网格 + 详情弹窗 |
-| [apps/web/src/features/gallery/Gallery.tsx](../../../apps/web/src/features/gallery/Gallery.tsx) | 旧版网格组件(主页底部用),目前已不被 App 使用——保留供别处复用 |
-| [apps/web/src/features/gallery/GalleryDetailDialog.tsx](../../../apps/web/src/features/gallery/GalleryDetailDialog.tsx) | 详情弹窗 |
+| [apps/web/src/features/gallery/GalleryPage.tsx](../../../apps/web/src/features/gallery/GalleryPage.tsx) | **独立 Tab 页面**:toolbar + 搜索 + type filter + masonry + 详情弹窗 |
+| [apps/web/src/features/gallery/GalleryDetailDialog.tsx](../../../apps/web/src/features/gallery/GalleryDetailDialog.tsx) | 详情弹窗(prose 块 + AI 徽章 + 字段编辑器只读视图) |
 | [apps/web/src/features/gallery/api.ts](../../../apps/web/src/features/gallery/api.ts) | `listGenerations` / `generationImageUrl` / `generateImage` |
 
 ## 筛选 / 搜索
@@ -57,6 +58,15 @@ items: GenerationRecord[]
 4. `setTab("draft")` (切回起草)
 5. flash 提示 `reuseLoaded`
 
+## 详情弹窗:prose + AI 徽章
+
+`GalleryDetailDialog` 顶部:
+
+- **原始想法 (prose) 块** —— `GenerationRecord.prose` 不空时显示用户当初的散文输入,3 行 clamp,可展开。`null` 时(老历史行 / M2 跳过文本)显示"未记录"。
+- **字段编辑器 readOnly 视图** —— 字段如果在 `aiFilledFields` 数组里,旁边挂 "+ AI" 徽章,提示这是 AI 扩充的。
+
+详见 [prose-persisted-with-prompt](../decisions/prose-persisted-with-prompt.md)。
+
 ## Dialog scroll bug 修复
 
 详情弹窗历史上有过 grid 缺 `min-h-0` 导致**大图被裁 + 右侧字段编辑器不滚动**的问题。修复见 [pitfalls/dialog-grid-min-h-0](../pitfalls/dialog-grid-min-h-0.md)。
@@ -71,6 +81,11 @@ items: GenerationRecord[]
 - [session-workspace](./session-workspace.md) — 主页(起草 Tab)右栏的"本次工作区"(刷新清空)
 - [image-generation](./image-generation.md) — 数据从哪儿来
 - [field-editor](./field-editor.md) — `PromptFieldEditor readOnly` 复用
+- [react-masonry-css](../integrations/react-masonry-css.md) — 瀑布流库
+- [masonry-row-major-library](../decisions/masonry-row-major-library.md) — 为什么用库
+- [prose-persisted-with-prompt](../decisions/prose-persisted-with-prompt.md) — prose / aiFilledFields 字段
 - [shadcn-primitives](../shared/shadcn-primitives.md) — Dialog + Button
 - [shared-contracts](../shared/shared-contracts.md) — `GenerationRecord` 类型
+- [css-columns-column-major](../pitfalls/css-columns-column-major.md) — 不用 CSS columns 的原因
+- [gallery-aspect-square-crop](../pitfalls/gallery-aspect-square-crop.md) — 不裁剪原图比例
 - [dialog-grid-min-h-0](../pitfalls/dialog-grid-min-h-0.md) — 详情弹窗布局陷阱

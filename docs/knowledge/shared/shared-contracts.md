@@ -79,12 +79,77 @@ interface AmbiguityHint {
 
 `DraftPromptRequest` 加了 `lang?: OutputLang`。
 
+## Size wire 第三种形态 + Image mode 类型
+
+```ts
+// api.ts
+export const SIZE_AUTO = "auto";
+export const SIZE_RATIO_PREFIX = "ratio:";
+export type ImageGenerationMode = "images" | "responses";
+export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
+
+export function isRatioSize(v: string | null | undefined): boolean;
+export function extractRatio(v: string | null | undefined): string | null;
+export function makeRatioSize(ratio: string): string;
+```
+
+- `ImageSize = string` 故意宽松——三种形态(`"auto"` / `"WxH"` / `"ratio:W:H"`),driver 翻译,详见 [ratio-wire-encoding](../decisions/ratio-wire-encoding.md)
+- `ImageGenerationMode` 写在 `provider_capabilities.extras.mode` 字段里,driver 调度依据,详见 [image-mode-coexistence](../decisions/image-mode-coexistence.md)
+- 历史记录里的 `GenerationRecord.size` 是**当时用户选的 wire 值**,不是上游实际生成的尺寸——详见 [ratio-not-resolution-guarantee](../decisions/ratio-not-resolution-guarantee.md)
+
+## ProviderCapability 类型
+
+```ts
+export interface ProviderCapability {
+  kind: "image" | "llm";
+  model: string;
+  priority: number;
+  disabled: boolean;
+  extras: Record<string, unknown> | null;  // JSON blob, kind-specific
+}
+export interface ProviderSummary {
+  id: string;
+  name: string;
+  baseUrl: string;
+  keyMasked: string;
+  capabilities: ProviderCapability[];  // 一个 provider 多个 kind
+  createdAt: number;
+  updatedAt: number;
+}
+```
+
+`extras` 语义按 kind 分:
+
+| kind | extras 已知字段 |
+| --- | --- |
+| `image` | `mode: "images" \| "responses"` |
+| `llm` | `model / effort / thinking / fallbackModel / maxTurns`(详见 [llm-driver-knobs](../decisions/llm-driver-knobs.md)) |
+
+`BUILTIN_CLAUDE_CODE_PROVIDER_ID = "__builtin_claude_code__"` 是保留 id(详见 [claude-code-builtin-provider](../decisions/claude-code-builtin-provider.md))。
+
+## prose / aiFilledFields(记录用户原话 + AI 来源)
+
+`GenerationRecord` 和 `JobRecord` 都有:
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `prose` | `string \| null` | 用户在 composer 输入的原始散文 |
+| `aiFilledFields` | `string[] \| null` | 哪些字段是 AI 扩充填的(`["subject", "style"]` 等) |
+
+`GenerateImageRequest` 和 `SubmitJobRequest` 同时接 `prose?` 和 `aiFilledFields?`,从前端透传到后端入库。详见 [prose-persisted-with-prompt](../decisions/prose-persisted-with-prompt.md)。
+
 ## 关联条目
 
 - [prompt-engine](../domains/prompt-engine.md) — `PromptDraft` 的产出方
-- [provider-pool](../domains/provider-pool.md) — `ProviderSummary` 的消费方
+- [provider-pool](../domains/provider-pool.md) — `ProviderSummary` / `ProviderCapability` 的消费方
 - [image-generation](../domains/image-generation.md) — `GenerationRecord` 的产出方
 - [async-job-pipeline](../domains/async-job-pipeline.md) — `JobRecord` 的消费方
 - [reference-image](../domains/reference-image.md) — `ReferenceImage` 用法
 - [i18n](../domains/i18n.md) — `OutputLang`
 - [crypto-utils](./crypto-utils.md) — 为什么前端拿不到 plaintext
+- [ratio-wire-encoding](../decisions/ratio-wire-encoding.md) — `ratio:*` wire 形态
+- [image-mode-coexistence](../decisions/image-mode-coexistence.md) — `ImageGenerationMode`
+- [provider-capability-table-split](../decisions/provider-capability-table-split.md) — capability 类型来源
+- [llm-driver-knobs](../decisions/llm-driver-knobs.md) — LLM `extras` 字段
+- [prose-persisted-with-prompt](../decisions/prose-persisted-with-prompt.md) — prose / aiFilledFields
+- [claude-code-builtin-provider](../decisions/claude-code-builtin-provider.md) — `BUILTIN_CLAUDE_CODE_PROVIDER_ID`

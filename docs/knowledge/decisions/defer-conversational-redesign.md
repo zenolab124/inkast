@@ -57,5 +57,5 @@ Phase 1 段 1 实现的"输入框 + 起草 + hint 采纳追加"循环,**本质�
 
 ## 关联条目
 
-- [prompt-composer-loop](../domains/prompt-composer-loop.md) — 当前段 1 实现
+- [session-workspace](../domains/session-workspace.md) — 当前段 1 实现(composer 在三栏左栏的形态)
 - [prompt-engine](../domains/prompt-engine.md) — 后端引擎(会演进)

@@ -61,10 +61,13 @@ inkast 是本地优先的 AI 生图工具:把散文 → 结构化 JSON prompt �
 │     reference      resolveReferenceImage(ref) → Buffer + mimeType        │
 │                                                                          │
 │   drivers/                                                               │
-│     llm/claude-code            Agent SDK(默认 LLM 通道)                 │
-│     image/openai-compatible    openai SDK + 池故障切换                   │
-│                                  · 无 ref → images.generate              │
-│                                  · 有 ref → images.edit + toFile(buffer) │
+│     llm/claude-code            Agent SDK(内置 provider `__builtin_*`)    │
+│     llm/openai-compatible      OpenAI 兼容 Chat Completions(配置驱动)   │
+│     image/openai-compatible    池 walk + 错误分类 + mode dispatch         │
+│       mode="images"            openai SDK images.generate / images.edit  │
+│       mode="responses"         raw fetch /v1/responses + 手写 SSE parser │
+│                                  + force tool_choice=image_generation    │
+│                                  + size/ratio/quality 拼进 prompt 文本   │
 │                                                                          │
 │   storage/                                                               │
 │     db.ts             better-sqlite3 + schema.sql 启动幂等               │
@@ -77,8 +80,12 @@ inkast 是本地优先的 AI 生图工具:把散文 → 结构化 JSON prompt �
 ┌────────────────────────┐                ┌────────────────────────────┐
 │ 本机 ClaudeCode        │                │ OpenAI 兼容 provider 池     │
 │ (OAuth 凭据 / Keychain)│                │ (用户配置,加密入库)        │
-│ 用于 prompt 工程       │                │ /v1/images/generations      │
-│ 输出 zh / en JSON      │                │ /v1/images/edits (可选支持) │
+│ 用于 prompt 工程       │                │ mode=images:                │
+│ 输出 zh / en JSON      │                │   /v1/images/generations    │
+│                        │                │   /v1/images/edits          │
+│                        │                │ mode=responses (新):        │
+│                        │                │   /v1/responses (SSE)       │
+│                        │                │   + image_generation 工具   │
 └────────────────────────┘                └────────────────────────────┘
         │                                          │
         ▼                                          ▼
@@ -98,7 +105,9 @@ session 历史               凭据/历史/jobs row       图片落盘
 
 **手风琴布局切换**: 左栏 grid 从 `1.4fr` 缩到 `0.42fr`,中栏从 `0.42fr` 扩到 `1.4fr`,右栏始终 `0.6fr`。CSS `transition: grid-template-columns 0.3s`。M1 不触发,M2/M3 都触发。见 [three-column-accordion-layout](../decisions/three-column-accordion-layout.md)。
 
-**生图(异步)**: 用户点"生图"或"直接生图" → submitJob → POST `/api/jobs/generate` 立即返回 `jobId`。后端 `runGenerationJob` fire-and-forget:`markJobRunning` → provider 池故障切换调 `images.generate` 或 `images.edit`(有 reference 时)→ 图字节落盘 → `markJobSucceeded(generationId)` 或 `markJobFailed`。前端 `useJobs` 2s polling 看到任务从 active 移除 → `onSucceeded` 调用,把 `generationId` push 到 `sessionGenerationIds` state → SessionWorkspace 右栏立即出现新 tile / `onFailed` 弹错。
+**生图(异步)**: 用户点"生图"或"直接生图" → submitJob → POST `/api/jobs/generate` 立即返回 `jobId`。后端 `runGenerationJob` fire-and-forget:`markJobRunning` → provider 池故障切换。**按 `capability.extras.mode` 派发到两个 driver**:`images` 走 openai SDK `images.generate / images.edit`;`responses` 走 raw fetch `/v1/responses` + SSE 解析。图字节落盘 → `markJobSucceeded(generationId)` 或 `markJobFailed`。前端 `useJobs` 2s polling 看到任务从 active 移除 → `onSucceeded` 调用,把 `generationId` push 到 `sessionGenerationIds` state → SessionWorkspace 右栏立即出现新 tile / `onFailed` 弹错。
+
+**批量生图**: composer 的 count 滑块(1-20)让一次按钮**前端 fan-out N 个独立 job** 并发提交。每张图独立走 provider 池 fallback,互不影响。详见 [batch-fan-out-frontend](../decisions/batch-fan-out-frontend.md)。
 
 **本次工作区(右栏)**: jobs 直接渲染为 spinning placeholder tile 进 grid(不再有独立 ActiveJobs 卡片),完成后被实际图片 tile 替换。`sessionGenerationIds` 是 React state,**刷新清空**——历史看 [作品] Tab。见 [session-workspace](./session-workspace.md) 和 [jobs-as-placeholder-tiles](../decisions/jobs-as-placeholder-tiles.md)。
 

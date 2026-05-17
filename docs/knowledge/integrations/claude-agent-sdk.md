@@ -77,8 +77,18 @@ Result 消息也可能是失败子类型:`error_during_execution` / `error_max_t
 
 `^0.2.140`(2026-05 时的最新)。**peer dep 警告**:SDK 要 `zod@^4.0.0`,我们装 `zod@^3.25.0` 满足 `openai` 包要求 — warn 但不影响运行。
 
+## 冷启动 + driver knobs
+
+每次 `query()` SDK 会 spawn 一个 worker child process,首次约 7s。inkast 用 API 启动后 7s 跑一次 warmup 请求避开首次卡顿,详见 [llm-sdk-cold-start](../pitfalls/llm-sdk-cold-start.md)。
+
+5 个调用旋钮通过 `provider_capabilities.extras` 暴露给用户:`model / effort / thinking / fallbackModel / maxTurns`。默认值改为 `sonnet + medium + thinking:disabled`,对散文→JSON 任务质量足够、速度快得多。详见 [llm-driver-knobs](../decisions/llm-driver-knobs.md)。
+
 ## 关联条目
 
 - [claude-code-sdk-over-cli](../decisions/claude-code-sdk-over-cli.md)
 - [structured-output-json-schema](../decisions/structured-output-json-schema.md)
 - [prompt-engine](../domains/prompt-engine.md)
+- [claude-code-builtin-provider](../decisions/claude-code-builtin-provider.md) — 注册为内置 provider 行
+- [llm-driver-knobs](../decisions/llm-driver-knobs.md) — 5 个调用旋钮
+- [llm-sdk-cold-start](../pitfalls/llm-sdk-cold-start.md) — 冷启动 + warmup
+- [llm-as-accelerator-not-requirement](../decisions/llm-as-accelerator-not-requirement.md)

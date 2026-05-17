@@ -11,7 +11,7 @@
 
 ### 入门 / 项目说明
 
-- [CLAUDE.md](../../CLAUDE.md) — 项目宪法。覆盖五件事:(1) 项目血统(来自 gpt-image-canvas + imagegen);(2) 五条关键设计决策(LLM 双通道、provider 池语义、不用 tldraw、imagegen 方法论、本地优先);(3) 技术栈速查;(4) **Paper 主题视觉规范红线**(字体/颜色/形状/UI 组件库 4 套自检清单);(5) Phase 1 MVP 范围 + 不要做的事清单。**新增 "UI 组件库" 硬性规则段:UI 一律优先 shadcn,禁止手撸通用交互组件**,见 [shadcn-first-rule](decisions/shadcn-first-rule.md)。
+- [CLAUDE.md](../../CLAUDE.md) — 项目宪法。覆盖六件事:(1) 项目血统(来自 gpt-image-canvas + imagegen);(2) 五条关键设计决策(LLM 双通道、provider 池语义、不用 tldraw、imagegen 方法论、本地优先);(3) 技术栈速查;(4) **Paper 主题视觉规范红线**(字体/颜色/形状/UI 组件库 4 套自检清单);(5) Phase 1 MVP 范围 + 不要做的事清单;(6) **新增"第三方库准入"段** —— 明确"功能型库按需引入,不要被通用准则误导成项目级硬约束",见 [third-party-library-admission](decisions/third-party-library-admission.md)。**UI 组件库** 硬性规则段:UI 一律优先 shadcn,禁止手撸通用交互组件,见 [shadcn-first-rule](decisions/shadcn-first-rule.md)。
 <!-- codewise-docs:end -->
 
 <!-- codewise-interfaces:start -->
@@ -19,45 +19,50 @@
 
 inkast 所有对外调用入口的快速地图。**完整签名以代码为准**——本表只列"名 + 职责 + 入口位置"。
 
-### REST endpoints(12 个)
+### REST endpoints(16 个)
 
 | 方法 | 路径 | 职责 | 入口 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | 健康检查(`{status, service, version}`) | `apps/api/src/server/app.ts` |
-| POST | `/api/draft-prompt` | 散文 → 结构化 JSON prompt(走 ClaudeCode driver + lang 注入) | `apps/api/src/server/routes/prompt.ts` |
-| POST | `/api/generate-image` | **同步**生图(走 provider 池);前端已不调用,留作兜底 | `apps/api/src/server/routes/generate.ts` |
+| GET | `/api/health` | 健康检查 | `apps/api/src/server/app.ts` |
+| **POST** | **`/api/llm/warmup`** | **触发本机 ClaudeCode SDK 预热**(冷启动缓解,返回 `{durationMs}`) | `apps/api/src/server/routes/prompt.ts` |
+| POST | `/api/draft-prompt` | 散文 → 结构化 JSON prompt(LLM 驱动) | `apps/api/src/server/routes/prompt.ts` |
+| POST | `/api/generate-image` | **同步**生图;前端已不调用,留作兜底 | `apps/api/src/server/routes/generate.ts` |
 | GET | `/api/generations` | 历史列表(默认 100,可 `?limit=`) | `apps/api/src/server/routes/generate.ts` |
 | GET | `/api/generations/:id/image` | 返图片字节(`image/png` + 长缓存) | `apps/api/src/server/routes/generate.ts` |
-| GET | `/api/providers` | provider 列表(keyMasked) | `apps/api/src/server/routes/providers.ts` |
-| POST | `/api/providers` | 创建 provider(加密入库) | `apps/api/src/server/routes/providers.ts` |
-| PATCH | `/api/providers/:id` | 编辑 provider(apiKey 留空不变) | `apps/api/src/server/routes/providers.ts` |
-| DELETE | `/api/providers/:id` | 删除 provider(`generations.provider_id` SET NULL) | `apps/api/src/server/routes/providers.ts` |
-| **POST** | **`/api/jobs/generate`** | **异步**生图——立返 `jobId`,fire-and-forget 跑 runGenerationJob | `apps/api/src/server/routes/jobs.ts` |
-| **GET** | **`/api/jobs`** | 任务列表(支持 `?status=&since=&limit=`) | `apps/api/src/server/routes/jobs.ts` |
-| **GET** | **`/api/jobs/:id`** | 任务详情 | `apps/api/src/server/routes/jobs.ts` |
+| GET | `/api/providers` | provider 列表(keyMasked,内含 capabilities 数组) | `apps/api/src/server/routes/providers.ts` |
+| POST | `/api/providers` | 创建 provider(加密入库,接 capabilities 数组) | `apps/api/src/server/routes/providers.ts` |
+| PATCH | `/api/providers/:id` | 编辑 provider(apiKey 留空不变;capabilities 可 replace) | `apps/api/src/server/routes/providers.ts` |
+| **PATCH** | **`/api/providers/:id/capabilities/:kind`** | **改单个 capability**(model / disabled / extras) | `apps/api/src/server/routes/providers.ts` |
+| **POST** | **`/api/providers/reorder`** | **按 kind 批量重排 priority**(dnd-kit 拖拽用) | `apps/api/src/server/routes/providers.ts` |
+| DELETE | `/api/providers/:id` | 删除 provider(`__builtin_claude_code__` 拒绝) | `apps/api/src/server/routes/providers.ts` |
+| **POST** | **`/api/probe-models`** | **代理调 `<baseUrl>/models`** 返支持的模型列表 | `apps/api/src/server/routes/providers.ts` |
+| POST | `/api/jobs/generate` | 异步生图——立返 `jobId`,fire-and-forget runGenerationJob | `apps/api/src/server/routes/jobs.ts` |
+| GET | `/api/jobs` | 任务列表(支持 `?status=&since=&limit=`) | `apps/api/src/server/routes/jobs.ts` |
+| GET | `/api/jobs/:id` | 任务详情 | `apps/api/src/server/routes/jobs.ts` |
 
-**详情**: [async-job-pipeline](domains/async-job-pipeline.md) · [provider-pool](domains/provider-pool.md) · [image-generation](domains/image-generation.md) · [prompt-engine](domains/prompt-engine.md) · [reference-image](domains/reference-image.md)
+**详情**: [async-job-pipeline](domains/async-job-pipeline.md) · [provider-pool](domains/provider-pool.md) · [image-generation](domains/image-generation.md) · [prompt-engine](domains/prompt-engine.md) · [reference-image](domains/reference-image.md) · [probe-models-endpoint](decisions/probe-models-endpoint.md)
 
 ### 契约文件(前后端共享类型)
 
 | 文件 | 类型 | 关键导出 |
 | --- | --- | --- |
 | `packages/shared/src/prompt.ts` | TS types | `ImagePrompt` / `TextElement` / `AmbiguityHint` / `PromptDraft` |
-| `packages/shared/src/api.ts` | TS types | `OutputLang` / `DraftPromptRequest/Response` / `GenerateImageRequest/Response` / `ProviderSummary` / `GenerationRecord` / `ReferenceImage` / `JobStatus` / `JobRecord` / `SubmitJobRequest/Response` / `ListJobsResponse` |
+| `packages/shared/src/api.ts` | TS types + 常量 | `OutputLang` / `DraftPromptRequest/Response` / `GenerateImageRequest/Response` / `ProviderSummary` / `ProviderCapability` / `GenerationRecord` / `ReferenceImage` / `JobStatus` / `JobRecord` / `SubmitJobRequest/Response` / `ListJobsResponse` / **`ImageGenerationMode`** / `IMAGE_GENERATION_MODE_DEFAULT` / **`SIZE_AUTO` / `SIZE_RATIO_PREFIX`** / `isRatioSize()` / `extractRatio()` / `makeRatioSize()` / `BUILTIN_CLAUDE_CODE_PROVIDER_ID` |
 
 **详情**: [shared-contracts](shared/shared-contracts.md)
 
-### 数据库 Schema(3 表)
+### 数据库 Schema(4 表)
 
 `apps/api/src/storage/schema.sql` —— 启动时幂等 `CREATE TABLE IF NOT EXISTS`:
 
 | 表 | 用途 |
 | --- | --- |
 | `providers` | OpenAI 兼容 provider 凭据(AES-256-GCM 加密 BLOB) |
-| `generations` | 生图历史(`promptSnapshot / imagePath / providerId` FK 等) |
-| **`jobs`** | **异步任务**(status / promptSnapshot / generation_id FK / attempts / error / 时间戳) |
+| **`provider_capabilities`** | **per-kind 能力行**(`provider_id, kind, model, priority, disabled, extras`),复合索引 `(kind, priority)` |
+| `generations` | 生图历史(含 `prose` / `ai_filled_fields` 字段) |
+| `jobs` | 异步任务(同步加 `prose` / `ai_filled_fields`) |
 
-**详情**: [better-sqlite3](integrations/better-sqlite3.md) · [async-job-pipeline](domains/async-job-pipeline.md)
+**详情**: [better-sqlite3](integrations/better-sqlite3.md) · [async-job-pipeline](domains/async-job-pipeline.md) · [provider-capability-table-split](decisions/provider-capability-table-split.md)
 <!-- codewise-interfaces:end -->
 
 ---
@@ -92,47 +97,83 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 ## 设计决策
 
+### 架构 / 接口
+
 | 条目 | 一句话 |
 | --- | --- |
-| [three-column-accordion-layout](decisions/three-column-accordion-layout.md) | 主页三栏 + 左+中手风琴 · h-screen 锁视口 · 只列内滚动 |
-| [three-modes-progressive-disclosure](decisions/three-modes-progressive-disclosure.md) | M1 直接生图 / M2 字段精修 / M3 AI 扩充 三种模式渐进披露 |
-| [m2-entry-textless-only](decisions/m2-entry-textless-only.md) | M2 入口必须从无文本出发(语义解析依赖 LLM) |
-| [jobs-as-placeholder-tiles](decisions/jobs-as-placeholder-tiles.md) | 进行中任务作为占位 tile 进 grid,删 ActiveJobs 独立卡 |
-| [llm-as-accelerator-not-requirement](decisions/llm-as-accelerator-not-requirement.md) | 字段编辑器是核心,LLM 只是加速器 |
-| [shadcn-first-rule](decisions/shadcn-first-rule.md) | UI 一律优先 shadcn,禁止手撸通用交互组件 |
+| [image-mode-coexistence](decisions/image-mode-coexistence.md) | **images + responses 两 mode 共存**,extras.mode 分发 |
+| [responses-mode-raw-fetch-sse](decisions/responses-mode-raw-fetch-sse.md) | **`/v1/responses` 端点用 raw fetch + 手写 SSE**(SDK 太严格) |
+| [forced-tool-choice-plus-directive](decisions/forced-tool-choice-plus-directive.md) | **强制 tool_choice + prompt directive 双保险**让模型真调工具 |
+| [ratio-wire-encoding](decisions/ratio-wire-encoding.md) | **size 第三种形态 `ratio:W:H`**(锁比例放像素) |
+| [ratio-not-resolution-guarantee](decisions/ratio-not-resolution-guarantee.md) | **Inkast 保证比例,不保证像素**(代理兼容现实) |
+| [batch-fan-out-frontend](decisions/batch-fan-out-frontend.md) | **N 张并发 = 前端 N 个独立 job**(`gpt-image-2` n=1 受限) |
+| [openai-sdk-over-fetch](decisions/openai-sdk-over-fetch.md) | images 端点用 openai SDK(CDN 403 教训) |
+| [claude-code-sdk-over-cli](decisions/claude-code-sdk-over-cli.md) | LLM 通道用 Agent SDK 而非 spawn `claude` CLI |
+| [structured-output-json-schema](decisions/structured-output-json-schema.md) | 用 SDK schema 强制 JSON(80%→100% 输出可解析) |
+| [prompt-as-json-not-prose](decisions/prompt-as-json-not-prose.md) | `JSON.stringify(prompt)` 直接喂给生图模型 |
+| [reference-image-via-edit](decisions/reference-image-via-edit.md) | Reference image 走 `images.edit` 端点(images mode) |
 | [async-jobs-over-sync-http](decisions/async-jobs-over-sync-http.md) | 异步 jobs 取代同步 HTTP(浏览器 idle timeout) |
 | [reaper-abandoned-jobs](decisions/reaper-abandoned-jobs.md) | API 启动时 reap 残留 pending/running jobs |
 | [generate-now-raw-prompt-path](decisions/generate-now-raw-prompt-path.md) | "直接生图"绕过 prompt engine(M1 后端实现) |
-| [reference-image-via-edit](decisions/reference-image-via-edit.md) | Reference image 走 `images.edit` 端点 |
-| [sprite-sheets-over-per-option-images](decisions/sprite-sheets-over-per-option-images.md) | Sprite 大图分格 vs 每选项独立图 |
-| [edge-to-edge-no-border-prompts](decisions/edge-to-edge-no-border-prompts.md) | Sprite 提示词:严格边对边,无外框无 gridline |
-| [inset-zoom-on-sprite-slice](decisions/inset-zoom-on-sprite-slice.md) | Sprite 切片 4% inset 缩放 |
-| [square-sprite-cells](decisions/square-sprite-cells.md) | Sprite cells 一律 1:1 正方形(包括 Type) |
-| [claude-code-sdk-over-cli](decisions/claude-code-sdk-over-cli.md) | LLM 通道用 Agent SDK 而非 spawn `claude` CLI |
-| [structured-output-json-schema](decisions/structured-output-json-schema.md) | 用 SDK schema 强制 JSON,放弃 prompt 约束(80% → 100%) |
-| [openai-sdk-over-fetch](decisions/openai-sdk-over-fetch.md) | 用 openai SDK 不手搓 fetch(CDN 403 教训) |
+
+### Provider 池 / LLM 配置
+
+| 条目 | 一句话 |
+| --- | --- |
+| [provider-capability-table-split](decisions/provider-capability-table-split.md) | **providers + provider_capabilities 拆表**,per-kind 能力 |
+| [claude-code-builtin-provider](decisions/claude-code-builtin-provider.md) | **ClaudeCode 注册为内置 provider 行**(id `__builtin_claude_code__`) |
+| [drag-to-top-default](decisions/drag-to-top-default.md) | **拖到顶 = 默认**,无独立 "set default" radio |
+| [no-main-ui-backend-selector](decisions/no-main-ui-backend-selector.md) | 主 UI 不放 LLM 选择器,只显示"via X"标签 |
+| [probe-models-endpoint](decisions/probe-models-endpoint.md) | **`POST /api/probe-models`** + Combobox 替代手填 |
+| [llm-driver-knobs](decisions/llm-driver-knobs.md) | **5 个 LLM 旋钮**:model/effort/thinking/fallbackModel/maxTurns |
 | [sqlite-over-keychain](decisions/sqlite-over-keychain.md) | 跨平台 SQLite 凭据 vs macOS Keychain |
-| [prompt-as-json-not-prose](decisions/prompt-as-json-not-prose.md) | `JSON.stringify(prompt)` 直接喂给生图模型 |
+
+### UI / 主题 / 数据
+
+| 条目 | 一句话 |
+| --- | --- |
+| [three-column-accordion-layout](decisions/three-column-accordion-layout.md) | 主页三栏 + 左+中手风琴 · h-screen 锁视口 |
+| [three-modes-progressive-disclosure](decisions/three-modes-progressive-disclosure.md) | M1 / M2 / M3 三种模式渐进披露 |
+| [composer-six-four-vertical-split](decisions/composer-six-four-vertical-split.md) | **Composer 6:4 垂直比例**(`flex-[3]/[2]`) |
+| [m2-entry-textless-only](decisions/m2-entry-textless-only.md) | M2 入口必须从无文本出发 |
+| [jobs-as-placeholder-tiles](decisions/jobs-as-placeholder-tiles.md) | 进行中任务作为占位 tile 进 grid |
+| [llm-as-accelerator-not-requirement](decisions/llm-as-accelerator-not-requirement.md) | 字段编辑器是核心,LLM 只是加速器 |
+| [prose-persisted-with-prompt](decisions/prose-persisted-with-prompt.md) | **散文输入与 prompt 一起持久化**(prose / aiFilledFields) |
+| [masonry-row-major-library](decisions/masonry-row-major-library.md) | **Gallery 用 react-masonry-css**(行优先) |
 | [paper-theme-locked](decisions/paper-theme-locked.md) | 视觉规范红线锁定 + glass 主题留位 |
-| [defer-conversational-redesign](decisions/defer-conversational-redesign.md) | 段 1 重对话化推迟(已被字段编辑器路径覆盖 70%) |
+| [shadcn-first-rule](decisions/shadcn-first-rule.md) | UI 一律优先 shadcn,禁止手撸 |
+| [third-party-library-admission](decisions/third-party-library-admission.md) | **第三方功能型库按需引入**(CLAUDE.md 明文) |
+| [defer-conversational-redesign](decisions/defer-conversational-redesign.md) | 段 1 重对话化推迟(被字段编辑器覆盖 70%) |
+
+### Sprite 系列
+
+| 条目 | 一句话 |
+| --- | --- |
+| [sprite-sheets-over-per-option-images](decisions/sprite-sheets-over-per-option-images.md) | Sprite 大图分格 vs 每选项独立图 |
+| [edge-to-edge-no-border-prompts](decisions/edge-to-edge-no-border-prompts.md) | Sprite 提示词:严格边对边,无外框 |
+| [inset-zoom-on-sprite-slice](decisions/inset-zoom-on-sprite-slice.md) | Sprite 切片 4% inset 缩放 |
+| [square-sprite-cells](decisions/square-sprite-cells.md) | Sprite cells 一律 1:1 正方形 |
 
 ## 外部集成
 
 | 条目 | 一句话 |
 | --- | --- |
-| [claude-agent-sdk](integrations/claude-agent-sdk.md) | Agent SDK + OAuth + structured output + 禁用工具 |
-| [openai-sdk-images](integrations/openai-sdk-images.md) | OpenAI SDK images.generate + images.edit(reference image) + 兼容代理 |
+| [claude-agent-sdk](integrations/claude-agent-sdk.md) | Agent SDK + OAuth + structured output + 冷启动 + 5 个旋钮 |
+| [openai-sdk-images](integrations/openai-sdk-images.md) | OpenAI SDK images.generate + images.edit(**仅 images mode**) |
+| [react-masonry-css](integrations/react-masonry-css.md) | **行优先瀑布流库**(Gallery 用,代替 CSS columns) |
 | [shadcn-ui-radix-cmdk](integrations/shadcn-ui-radix-cmdk.md) | shadcn/ui own 模式 + radix-ui + cmdk |
-| [better-sqlite3](integrations/better-sqlite3.md) | better-sqlite3 用法 + WAL + native binding + 3 张表 |
+| [better-sqlite3](integrations/better-sqlite3.md) | better-sqlite3 用法 + WAL + native binding + 4 张表 |
 | [hono](integrations/hono.md) | Hono 路由 + cors + HTTPException |
 | [tailwind-v4](integrations/tailwind-v4.md) | Tailwind v4 CSS-first + `@theme inline` 映射 |
-| [vite-dev-proxy](integrations/vite-dev-proxy.md) | Vite dev proxy 超时(生图慢链路关键,异步后不再关键) |
+| [vite-dev-proxy](integrations/vite-dev-proxy.md) | Vite dev proxy 超时(异步化后不再关键) |
 | [lucide-react](integrations/lucide-react.md) | 图标库,strokeWidth 1.5/1.75 视觉约定 |
 
 ## 工作流
 
 | 条目 | 一句话 |
 | --- | --- |
+| [extend-image-mode](workflows/extend-image-mode.md) | **新增 image driver 模式**(images / responses 之后再加 X) |
+| [dnd-kit-row-pattern](workflows/dnd-kit-row-pattern.md) | **dnd-kit 行拖拽 + 嵌套交互**标准模式 |
 | [add-sprite-preview-sheet](workflows/add-sprite-preview-sheet.md) | 新增字段 / 刷新 sprite preview sheet 流程 |
 | [add-new-provider](workflows/add-new-provider.md) | 添加新 OpenAI 兼容 provider 步骤 |
 | [add-llm-driver](workflows/add-llm-driver.md) | 实现新 LLM driver(为 Phase 1.5 OpenAI Chat 铺路) |
@@ -140,28 +181,55 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 ## 踩坑记录
 
+### Responses-mode driver(本次迭代新坑)
+
 | 条目 | 一句话 |
 | --- | --- |
-| [dialog-grid-min-h-0](pitfalls/dialog-grid-min-h-0.md) | grid/flex 嵌套缺 min-h-0 → img max-h 失效 + overflow-y-auto 不滚 |
-| [hmr-restart-aborts-jobs](pitfalls/hmr-restart-aborts-jobs.md) | tsx watch 重启会丢 in-flight jobs,reaper 兜底 |
-| [browser-idle-timeout-long-http](pitfalls/browser-idle-timeout-long-http.md) | 浏览器 4-5min idle 断 fetch,后端实际成功 |
-| [asymmetric-cell-descriptions](pitfalls/asymmetric-cell-descriptions.md) | Sprite cells 描述长度不均 → 行高/列宽不等 |
-| [numbers-leak-into-sprite-cells](pitfalls/numbers-leak-into-sprite-cells.md) | 提示词用 "1./2./..." 数字编号会画进 cells |
-| [cream-paper-creates-outer-border](pitfalls/cream-paper-creates-outer-border.md) | "cream paper + gridlines" 提示词制造外层 paper 边框 |
-| [sprite-cell-edge-artifacts](pitfalls/sprite-cell-edge-artifacts.md) | Sprite cell 边缘像素瑕疵,4% inset 兜底 |
-| [object-shaped-subject-stringify](pitfalls/object-shaped-subject-stringify.md) | LLM 返回 object 形态 subject 渲染成 `[object Object]` |
-| [reference-edit-endpoint-not-universal](pitfalls/reference-edit-endpoint-not-universal.md) | OpenAI 兼容 `/v1/images/edits` 不一定都实现 |
-| [cdn-edge-403-without-ua](pitfalls/cdn-edge-403-without-ua.md) | raw fetch 无 UA 被 CDN 边缘拦截 |
-| [base-url-typo-silent-403](pitfalls/base-url-typo-silent-403.md) | provider base URL 错一个字 → 静默 403 |
-| [image-driver-timeout-chain](pitfalls/image-driver-timeout-chain.md) | driver / vite proxy / SDK 三层超时要协调 |
-| [llm-json-quote-escaping](pitfalls/llm-json-quote-escaping.md) | 模型字符串内未转义引号(用 schema 强制解决) |
-| [chinese-fallback-songti](pitfalls/chinese-fallback-songti.md) | 衬线字体让中文落到宋体(已锁规范) |
-| [dark-class-position-bug](pitfalls/dark-class-position-bug.md) | dark class 加错位置导致 body 不翻(已知未修) |
+| [sdk-responses-stream-strict](pitfalls/sdk-responses-stream-strict.md) | **SDK 流式 parser 严格**:必须以 `response.created` 开头,代理跳过就 throw |
+| [proxy-no-retrieve-endpoint](pitfalls/proxy-no-retrieve-endpoint.md) | **第三方代理不实现 `GET /v1/responses/:id`**,polling 路死 |
+| [responses-tool-not-invoked](pitfalls/responses-tool-not-invoked.md) | **模型不调工具**:JSON prompt 像 spec,需 forced tool_choice + directive |
+| [responses-stream-result-missing](pitfalls/responses-stream-result-missing.md) | **SSE 正常结束但没 base64**:代理吞掉了 `output_item.done` |
+
+### UI / Gallery / dnd-kit
+
+| 条目 | 一句话 |
+| --- | --- |
+| [css-columns-column-major](pitfalls/css-columns-column-major.md) | **CSS `columns-*` 是列优先填充**,瀑布流不能用 |
+| [gallery-aspect-square-crop](pitfalls/gallery-aspect-square-crop.md) | **`aspect-square + object-cover` 让所有图变正方形** |
+| [dnd-kit-drop-animation-jitter](pitfalls/dnd-kit-drop-animation-jitter.md) | **handleDragEnd 双 setState 中断 drop 动画** |
+| [paper-accent-shadcn-collision](pitfalls/paper-accent-shadcn-collision.md) | **paper `--accent` 与 shadcn 默认 hover 语义冲突** |
+| [dialog-grid-min-h-0](pitfalls/dialog-grid-min-h-0.md) | grid/flex 嵌套缺 min-h-0 → img max-h 失效 |
+| [chinese-fallback-songti](pitfalls/chinese-fallback-songti.md) | 衬线字体让中文落到宋体 |
+| [dark-class-position-bug](pitfalls/dark-class-position-bug.md) | dark class 加错位置 |
+
+### LLM / API / 数据
+
+| 条目 | 一句话 |
+| --- | --- |
+| [llm-sdk-cold-start](pitfalls/llm-sdk-cold-start.md) | **Claude Agent SDK 首次冷启动 ~7s**,warmup 缓解 |
+| [openai-image-api-no-seed](pitfalls/openai-image-api-no-seed.md) | **OpenAI Image API 不返回 seed**,UI 不能显示 |
+| [llm-json-quote-escaping](pitfalls/llm-json-quote-escaping.md) | 模型字符串内未转义引号(schema 解决) |
+| [hmr-restart-aborts-jobs](pitfalls/hmr-restart-aborts-jobs.md) | tsx watch 重启丢 in-flight jobs |
+| [browser-idle-timeout-long-http](pitfalls/browser-idle-timeout-long-http.md) | 浏览器 4-5min idle 断 fetch |
+| [reference-edit-endpoint-not-universal](pitfalls/reference-edit-endpoint-not-universal.md) | OpenAI 兼容 `/v1/images/edits` 不全 |
+| [cdn-edge-403-without-ua](pitfalls/cdn-edge-403-without-ua.md) | raw fetch 无 UA 被 CDN 拦 |
+| [base-url-typo-silent-403](pitfalls/base-url-typo-silent-403.md) | provider base URL 错字 → 静默 403 |
+| [image-driver-timeout-chain](pitfalls/image-driver-timeout-chain.md) | driver/proxy/SDK 三层超时协调 |
+| [object-shaped-subject-stringify](pitfalls/object-shaped-subject-stringify.md) | LLM 返 object subject 渲染成 `[object Object]` |
 | [sdk-output-format-missing](pitfalls/sdk-output-format-missing.md) | SDK 不传 output_format 走 URL 慢路径 |
 | [pool-moderation-no-fallover](pitfalls/pool-moderation-no-fallover.md) | 内容审查拒绝故意不切,防绕审 |
-| [schema-sql-path-resolution](pitfalls/schema-sql-path-resolution.md) | schema.sql 用 import.meta.url 解析(build 要复制) |
+| [schema-sql-path-resolution](pitfalls/schema-sql-path-resolution.md) | schema.sql 用 import.meta.url 解析 |
 | [tsx-watch-syntax-kill](pitfalls/tsx-watch-syntax-kill.md) | tsx watch 遇语法错会 kill 进程 |
-| [dev-server-port-collision](pitfalls/dev-server-port-collision.md) | 老进程没死透导致 8787 双 listen |
+| [dev-server-port-collision](pitfalls/dev-server-port-collision.md) | 老进程没死透 8787 双 listen |
+
+### Sprite
+
+| 条目 | 一句话 |
+| --- | --- |
+| [asymmetric-cell-descriptions](pitfalls/asymmetric-cell-descriptions.md) | Sprite cells 描述长度不均 → 行高/列宽不等 |
+| [numbers-leak-into-sprite-cells](pitfalls/numbers-leak-into-sprite-cells.md) | 提示词用 "1./2./..." 数字编号会画进 cells |
+| [cream-paper-creates-outer-border](pitfalls/cream-paper-creates-outer-border.md) | "cream paper + gridlines" 制造外层边框 |
+| [sprite-cell-edge-artifacts](pitfalls/sprite-cell-edge-artifacts.md) | Sprite cell 边缘像素瑕疵 |
 
 ---
 
@@ -225,8 +293,8 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `cf94fa004a026cad5550193cf7a3092f9612d00b`
-- **synced_at**: `2026-05-15T21:02:29+08:00`
+- **baseline_commit**: `031050c91e8780883cebe3bbdad2e734d092a756`
+- **synced_at**: `2026-05-17T04:39:07+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
 
