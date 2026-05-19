@@ -1,8 +1,25 @@
 import { writeFile } from "node:fs/promises";
 import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import sharp from "sharp";
 import type { ImageFormat, ImagePrompt, ReferenceImage } from "@inkast/shared";
 import { MAX_REFERENCE_IMAGES } from "@inkast/shared";
+
+/**
+ * Reference-image normalization tuning. Empirically the anyrouter proxy RSTs
+ * the socket at ~300s when the request body exceeds ~200KB total, well before
+ * upstream ever processes it. With 6 references that means each compressed
+ * image must stay below ~25KB raw (~33KB base64-inflated) — so we cap the
+ * long side and re-encode to webp at a moderate quality.
+ *
+ * Trade-off: 384px max side keeps faces / silhouettes recognizable for a
+ * gpt-image-style model while bringing typical card-art / portrait sources
+ * (1024+ px) down to 10-15KB. 256/q50 was smaller but lost too much detail
+ * for the model to read the reference. 384/q60 is the empirically-derived
+ * sweet spot for the IronMan card test set.
+ */
+const REF_MAX_DIMENSION = 384;
+const REF_WEBP_QUALITY = 60;
 import { generateImage as drive } from "../../drivers/image/openai-compatible.js";
 import {
   ImageGenError,
@@ -148,33 +165,56 @@ export async function runGenerationJob(
  * Resolve a wire-format ReferenceImage into the buffer/mimetype shape the
  * driver expects. For `generation` mode, reads the file from disk; for
  * `upload` mode, base64-decodes the payload.
+ *
+ * Critically: ALL references are re-compressed via sharp before reaching the
+ * driver. The anyrouter proxy RSTs at ~300s for request bodies > ~200KB
+ * (see REF_MAX_DIMENSION comment) — a 6-ref request with 80KB-each WebP
+ * inputs gets to ~600KB base64 and never makes it past the proxy queue.
+ * Down-scaling to 384px/q60 brings typical sources to 10-15KB so 6 of them
+ * fit comfortably under the body-size ceiling.
  */
 async function resolveReferenceImage(
   ref: ReferenceImage,
 ): Promise<NonNullable<ImageGenInput["referenceImages"]>[number]> {
+  let raw: Buffer;
   if (ref.kind === "generation") {
     const gen = getGeneration(ref.generationId);
     if (!gen) {
       throw new Error(`reference generation not found: ${ref.generationId}`);
     }
-    const buffer = readImageBytes(gen.imagePath);
-    const mimeType =
-      gen.imageFormat === "jpeg"
-        ? "image/jpeg"
-        : gen.imageFormat === "webp"
-          ? "image/webp"
-          : "image/png";
-    return { buffer, mimeType, filename: `reference.${gen.imageFormat}` };
+    raw = readImageBytes(gen.imagePath);
+  } else {
+    raw = Buffer.from(ref.dataBase64, "base64");
   }
-  // upload
-  const buffer = Buffer.from(ref.dataBase64, "base64");
-  const ext =
-    ref.mimeType === "image/jpeg"
-      ? "jpg"
-      : ref.mimeType === "image/webp"
-        ? "webp"
-        : "png";
-  return { buffer, mimeType: ref.mimeType, filename: `reference.${ext}` };
+  return await normalizeReferenceImage(raw);
+}
+
+/**
+ * Re-encode any input image (PNG / JPEG / WEBP / GIF) into a small webp
+ * sized for the upstream proxy's body-limit window. Logs the before/after
+ * sizes so operators can spot regressions if the compression ratio changes.
+ */
+async function normalizeReferenceImage(
+  rawBuffer: Buffer,
+): Promise<NonNullable<ImageGenInput["referenceImages"]>[number]> {
+  const startBytes = rawBuffer.length;
+  const compressed = await sharp(rawBuffer)
+    .resize({
+      width: REF_MAX_DIMENSION,
+      height: REF_MAX_DIMENSION,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({ quality: REF_WEBP_QUALITY })
+    .toBuffer();
+  console.log(
+    `[generate]   ref compressed: ${startBytes}B → ${compressed.length}B (${((compressed.length / startBytes) * 100).toFixed(0)}%)`,
+  );
+  return {
+    buffer: compressed,
+    mimeType: "image/webp",
+    filename: "reference.webp",
+  };
 }
 
 export function readImageBytes(relativePath: string): Buffer {

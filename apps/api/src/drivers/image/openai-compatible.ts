@@ -36,6 +36,20 @@ function resolveMode(capability: ProviderCapability): ImageGenerationMode {
 const DEFAULT_TIMEOUT_MS = 600_000;
 
 /**
+ * Per-provider transient-failure retry budget. Empirically the anyrouter
+ * proxy goes through brief windows where the image_generation tool fires but
+ * never emits a partial — the stream ends with 0 done items. These are not
+ * deterministic failures; a retry 5-10s later typically lands in a different
+ * upstream queue slot and succeeds. We retry up to this many times PER
+ * provider before falling over to the next one in the pool.
+ *
+ * Moderation, auth, and abort errors are NEVER retried — those are
+ * deterministic and a retry would just waste time.
+ */
+const PROVIDER_RETRY_LIMIT = 2;
+const PROVIDER_RETRY_BACKOFF_MS = 5_000;
+
+/**
  * OpenAI-compatible image generation, via the official `openai` SDK.
  *
  * Why SDK instead of raw fetch: third-party OpenAI-compatible proxies
@@ -64,71 +78,106 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       throw new ImageGenError("aborted", "image generation aborted by caller", attempts);
     }
 
-    const started = Date.now();
     const mode = resolveMode(capability);
-    console.log(
-      `[image] ▶ attempt ${idx + 1}/${pool.length}: ${provider.name} (priority=${capability.priority}, mode=${mode}) → ${provider.baseUrl} · model=${capability.model}`,
-    );
-    console.log(
-      `[image]   size=${input.size ?? "1024x1024"} quality=${input.quality ?? "high"} prompt-bytes=${input.promptText.length}`,
-    );
-    // Heartbeat so the operator can see the request is still alive while the
-    // upstream model is working. Every 15s.
-    const heartbeat = setInterval(() => {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.log(`[image]   …still waiting on ${provider.name} (${elapsedSec}s elapsed)`);
-    }, 15_000);
-    try {
-      const b64 =
-        mode === "responses"
-          ? await callImageGenerationTool(provider, capability, apiKey, input)
-          : await callProvider(provider, capability, apiKey, input);
-      clearInterval(heartbeat);
-      attempts.push({
-        providerId: provider.id,
-        providerName: provider.name,
-        ok: true,
-        durationMs: Date.now() - started,
-      });
-      console.log(
-        `[image] ✓ ${provider.name} succeeded in ${Date.now() - started}ms (image-b64-bytes=${b64.length})`,
-      );
-      return {
-        imageB64: b64,
-        format: "png",
-        providerId: provider.id,
-        providerName: provider.name,
-        attempts,
-        totalDurationMs: Date.now() - overallStart,
-      };
-    } catch (err) {
-      clearInterval(heartbeat);
-      const classified = classifyError(err);
-      attempts.push({
-        providerId: provider.id,
-        providerName: provider.name,
-        ok: false,
-        errorCode: classified.code,
-        errorMessage: classified.message,
-        durationMs: Date.now() - started,
-      });
-      console.log(
-        `[image] ✗ ${provider.name} failed (${classified.code}) in ${Date.now() - started}ms`,
-      );
+    const refsCount = (input.referenceImages ?? []).length;
+    let lastClassified: ClassifiedError | undefined;
 
-      if (classified.code === "moderation" && !input.bypassModeration) {
-        throw new ImageGenError(
-          "moderation_rejected",
-          `provider "${provider.name}" rejected on content moderation: ${classified.message}. Set bypassModeration to retry remaining providers.`,
-          attempts,
-          err,
+    for (let retry = 0; retry <= PROVIDER_RETRY_LIMIT; retry++) {
+      if (input.signal?.aborted) {
+        throw new ImageGenError("aborted", "image generation aborted by caller", attempts);
+      }
+      const started = Date.now();
+      const tryLabel =
+        retry === 0
+          ? `attempt ${idx + 1}/${pool.length}`
+          : `retry ${retry}/${PROVIDER_RETRY_LIMIT} on ${idx + 1}/${pool.length}`;
+      console.log(
+        `[image] ▶ ${tryLabel}: ${provider.name} (priority=${capability.priority}, mode=${mode}) → ${provider.baseUrl} · model=${capability.model}`,
+      );
+      console.log(
+        `[image]   size=${input.size ?? "1024x1024"} quality=${input.quality ?? "high"} prompt-bytes=${input.promptText.length}`,
+      );
+      // Heartbeat so the operator can see the request is still alive while
+      // the upstream model is working. Every 15s. Include mode + refs count
+      // so grepping logs from concurrent jobs stays sane.
+      const heartbeat = setInterval(() => {
+        const elapsedSec = Math.floor((Date.now() - started) / 1000);
+        console.log(
+          `[image]   …still waiting on ${provider.name} (mode=${mode}, refs=${refsCount}, ${elapsedSec}s elapsed)`,
         );
+      }, 15_000);
+      try {
+        const b64 =
+          mode === "responses"
+            ? await callImageGenerationTool(provider, capability, apiKey, input)
+            : await callProvider(provider, capability, apiKey, input);
+        clearInterval(heartbeat);
+        attempts.push({
+          providerId: provider.id,
+          providerName: provider.name,
+          ok: true,
+          durationMs: Date.now() - started,
+        });
+        console.log(
+          `[image] ✓ ${provider.name} succeeded in ${Date.now() - started}ms (image-b64-bytes=${b64.length})`,
+        );
+        return {
+          imageB64: b64,
+          format: "png",
+          providerId: provider.id,
+          providerName: provider.name,
+          attempts,
+          totalDurationMs: Date.now() - overallStart,
+        };
+      } catch (err) {
+        clearInterval(heartbeat);
+        const classified = classifyError(err);
+        lastClassified = classified;
+        attempts.push({
+          providerId: provider.id,
+          providerName: provider.name,
+          ok: false,
+          errorCode: classified.code,
+          errorMessage: classified.message,
+          durationMs: Date.now() - started,
+        });
+        console.log(
+          `[image] ✗ ${provider.name} failed (${classified.code}) in ${Date.now() - started}ms`,
+        );
+        if (classified.message) {
+          console.log(`[image]   reason: ${classified.message}`);
+        }
+
+        // Hard-stop errors — never retry these.
+        if (classified.code === "moderation" && !input.bypassModeration) {
+          throw new ImageGenError(
+            "moderation_rejected",
+            `provider "${provider.name}" rejected on content moderation: ${classified.message}. Set bypassModeration to retry remaining providers.`,
+            attempts,
+            err,
+          );
+        }
+        if (classified.code === "aborted") {
+          throw new ImageGenError("aborted", "image generation aborted by caller", attempts, err);
+        }
+        if (classified.code === "auth") {
+          // Wrong API key won't get better on retry. Fall over to next provider.
+          break;
+        }
+        // Transient — back off briefly, then retry on the same provider.
+        if (retry < PROVIDER_RETRY_LIMIT) {
+          console.log(
+            `[image]   …retrying ${provider.name} in ${PROVIDER_RETRY_BACKOFF_MS}ms (transient: ${classified.code})`,
+          );
+          await new Promise(rs => setTimeout(rs, PROVIDER_RETRY_BACKOFF_MS));
+        }
       }
-      if (classified.code === "aborted") {
-        throw new ImageGenError("aborted", "image generation aborted by caller", attempts, err);
-      }
-      continue;
     }
+
+    console.log(
+      `[image] ⤵ ${provider.name} exhausted ${PROVIDER_RETRY_LIMIT + 1} attempts (last: ${lastClassified?.code ?? "unknown"}), falling over`,
+    );
+    continue;
   }
 
   throw new ImageGenError(
@@ -148,10 +197,11 @@ async function callProvider(
     apiKey,
     baseURL: provider.baseUrl.replace(/\/+$/, ""),
     timeout: DEFAULT_TIMEOUT_MS,
-    // Leave maxRetries at the SDK default (2). Auto-retry on transient
-    // network errors mirrors gpt-image-canvas — only the FINAL failure
-    // surfaces to the pool walker, which then decides whether to fail
-    // over to the next provider.
+    // Disable SDK-internal retries (was default 2). Retries are invisible in
+    // logs and stack — one "failed" attempt can secretly be 3 round-trips of
+    // 5-10 minutes each. We already retry at the pool-walker layer with full
+    // visibility, so let the SDK fail loudly on the first attempt.
+    maxRetries: 0,
   });
 
   // gpt-image-2 accepts size values the openai SDK's TypeScript union does
@@ -284,8 +334,20 @@ function classifyError(err: unknown): ClassifiedError {
     return { code: "unknown", message: `HTTP ${status}: ${message}` };
   }
 
-  const message = err instanceof Error ? err.message : String(err);
-  if (/network|fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT/i.test(message)) {
+  // Node fetch typically wraps the real reason in `.cause`. Unwrap it so
+  // operators see UND_ERR_BODY_TIMEOUT / ECONNRESET / etc. instead of a
+  // generic "fetch failed".
+  const baseMessage = err instanceof Error ? err.message : String(err);
+  const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
+  let message = baseMessage;
+  if (cause !== undefined && cause !== null) {
+    const causeStr =
+      cause instanceof Error
+        ? `${cause.name}: ${cause.message}${(cause as Error & { code?: string }).code ? ` (code=${(cause as Error & { code?: string }).code})` : ""}`
+        : String(cause);
+    message = `${baseMessage} | cause: ${causeStr}`;
+  }
+  if (/network|fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|UND_ERR_|ECONNRESET/i.test(message)) {
     return { code: "network", message };
   }
   return { code: "unknown", message };
