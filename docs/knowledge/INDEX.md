@@ -88,6 +88,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | 条目 | 一句话 |
 | --- | --- |
 | [shared-contracts](shared/shared-contracts.md) | `@inkast/shared` 前后端共享类型契约 |
+| [http-agent](shared/http-agent.md) | **全局 undici dispatcher**(10 分钟超时,适配 CDN 排队) |
 | [shadcn-primitives](shared/shadcn-primitives.md) | 已 own 的 11 个 shadcn 原语 + 业务包装 |
 | [field-dictionary](shared/field-dictionary.md) | 6 字段选项词典 + 双语 + sprite 元数据 |
 | [i18n-dictionary](shared/i18n-dictionary.md) | `Translations` 类型 + zh/en 字典 + useLanguage hook |
@@ -103,6 +104,9 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | --- | --- |
 | [image-mode-coexistence](decisions/image-mode-coexistence.md) | **images + responses 两 mode 共存**,extras.mode 分发 |
 | [responses-mode-raw-fetch-sse](decisions/responses-mode-raw-fetch-sse.md) | **`/v1/responses` 端点用 raw fetch + 手写 SSE**(SDK 太严格) |
+| [diagnostics-first-not-fix](decisions/diagnostics-first-not-fix.md) | **诊断完整性 > 假装能修**(渠道无解时的工程态度) |
+| [auto-compress-references](decisions/auto-compress-references.md) | **driver 自动 sharp 压缩参考图**(384/q60,过 anyrouter 死亡线) |
+| [pool-retry-graded](decisions/pool-retry-graded.md) | **provider 内 retry × 2 分级**(按 classified.code 决定 retry/fallover) |
 | [forced-tool-choice-plus-directive](decisions/forced-tool-choice-plus-directive.md) | **强制 tool_choice + prompt directive 双保险**让模型真调工具 |
 | [ratio-wire-encoding](decisions/ratio-wire-encoding.md) | **size 第三种形态 `ratio:W:H`**(锁比例放像素) |
 | [ratio-not-resolution-guarantee](decisions/ratio-not-resolution-guarantee.md) | **Inkast 保证比例,不保证像素**(代理兼容现实) |
@@ -181,7 +185,17 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 ## 踩坑记录
 
-### Responses-mode driver(本次迭代新坑)
+### 渠道结构性问题(anyrouter + image_generation 调研产物)
+
+| 条目 | 一句话 |
+| --- | --- |
+| [anyrouter-complex-prompt-ceiling](pitfalls/anyrouter-complex-prompt-ceiling.md) | **复杂 prompt + 参考图 = 0% 成功**,渠道结构能力上限,driver 救不了 |
+| [anyrouter-body-size-cap](pitfalls/anyrouter-body-size-cap.md) | **body > ~200KB 直接 RST**(5 分钟整),必须压缩 refs |
+| [anyrouter-via-cdn-queue](pitfalls/anyrouter-via-cdn-queue.md) | **跨大洲 Akamai 5 跳排队 170-300s**,via 头暴露 |
+| [image-gen-requires-reasoning](pitfalls/image-gen-requires-reasoning.md) | **image_generation 锁死 reasoning_effort=minimal**(OpenAI 设计) |
+| [undici-default-timeout-short](pitfalls/undici-default-timeout-short.md) | **undici 默认 5 分钟超时**被 CDN 排队杀,要拉到 10 分钟 |
+
+### Responses-mode driver
 
 | 条目 | 一句话 |
 | --- | --- |
@@ -293,8 +307,8 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `031050c91e8780883cebe3bbdad2e734d092a756`
-- **synced_at**: `2026-05-17T04:39:07+08:00`
+- **baseline_commit**: `ac1a6bca526b8e95bd477db00fa0ae6ab1213a2c`
+- **synced_at**: `2026-05-19T18:10:41+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
 
