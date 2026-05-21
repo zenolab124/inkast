@@ -1,6 +1,8 @@
-# `moderation: "low"` 对二道贩子代理基本无效
+# `moderation: "low"` 对二道贩子代理基本无效(但默认开了)
 
 OpenAI `gpt-image-1`/`gpt-image-2` 的官方参数 `moderation: "low"`(对应 `"auto"`),想绕过 duck/cia2/ciallo 这类二道贩子代理的内容审查——**实测对全部三家都没明显帮助**,duck 反而出现新故障路径。
+
+**最终决策**:2026-05-22 起 inkast 默认开 `moderation: "low"`(写死在 images mode body 里,见 [drivers/image/openai-compatible.ts](../../../apps/api/src/drivers/image/openai-compatible.ts) `callProvider`)。对二道贩子无收益,但对**未来接 OpenAI 直连账号**的渠道是有用的;且没有副作用(实测 duck 加这参数后挂死那次,可能是当时该 worker 自己不稳,后续再观察)。
 
 ## What
 
@@ -25,10 +27,11 @@ ciallo / cia2(`ioll.pp.ua`)那两家根本没审查问题(prompt "a cat" 一样�
 
 ## Action
 
-**1. 不要加 `moderation: "low"` 想绕过 duck 拒漫威**——已验证无效,且把 duck 从"概率拒图"推到"完全挂死",比不加更糟
-**2. duck 的 false negative 是概率性的**(20% 漏审通过,见 [[duck-moderation-probabilistic]]),靠 retry 多次抽奖,不靠参数
-**3. 只对直连 OpenAI 的渠道(如官方 endpoint)考虑加 moderation 参数**——直接 OpenAI 才会真正按这字段放宽
+**1. 别指望 `moderation: "low"` 解决二道贩子的拒图**——参数已默认开,但 duck 的 false negative 还是靠 retry 抽奖
+**2. duck 的拒图本质是概率性**(20% 漏审通过,见 [[duck-moderation-probabilistic]]),per-capability retry 配 duck=3 是更可靠的手段
+**3. moderation 对 responses mode 无效**——OpenAI `/v1/responses` 协议不接受该字段,所以 cpa/any/🌿/ciallo(若 responses mode)等不受影响
 **4. ciallo / cia2 的真问题是上游慢 + CF 切断**,见 [[cf-120s-images-mode-only]],不是审查
+**5. 如果观察到 duck 因 moderation:low 又出现挂死,可以临时回滚这一行**——加在 [openai-compatible.ts:253] 附近,删一行即可
 
 ## 关联
 

@@ -250,6 +250,11 @@ async function callProvider(
     quality: input.quality ?? "high",
     output_format: requestedFormat,
     n: input.n ?? 1,
+    // 放宽 OpenAI 自家 moderation 层(对直连 OpenAI 的渠道有效;对二道贩子代理
+    // 是 best-effort —— 他们自家审查不读这个字段,但 OpenAI 上游层会按此放宽)。
+    // 协议层:仅 images mode (/v1/images/generations) 接受 moderation 字段;
+    // responses mode 协议本身不支持,所以这里只在 images 路径设。
+    moderation: "low",
   } as unknown as ImageGenerateParams;
 
   const refs = input.referenceImages ?? [];
