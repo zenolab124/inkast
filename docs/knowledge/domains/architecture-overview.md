@@ -151,3 +151,29 @@ session 历史               凭据/历史/jobs row       图片落盘
 - [llm-as-accelerator-not-requirement](../decisions/llm-as-accelerator-not-requirement.md)
 - [shadcn-first-rule](../decisions/shadcn-first-rule.md)
 - [async-jobs-over-sync-http](../decisions/async-jobs-over-sync-http.md)
+
+---
+
+## 第二条通道:Plugin Channel(对外接入)
+
+主 Web UI 之外,inkast 还提供一条**完全独立**的对外通道,给 snap-ub 这种外部业务系统调用。**路由 / 表 / 流程全部隔离**,只共享 LLM driver + image provider 池入口。
+
+```
+公网 → nginx /inkast/ 反代 → 127.0.0.1:8787
+                                      │
+                                      ├─ /plugins/v1/images/{submit,status}  ← v2 异步 callback 协议
+                                      └─ /admin/plugin-stats                  ← loopback only HTML dashboard
+
+Plugin 通道流程(submit → worker → callback):
+  POST submit(立返 task_id,≤100ms)
+    → plugin_tasks 表 + in-memory queue + concurrency cap=2
+    → worker: skip-LLM 或 LLM 拆解 → image driver 池 → JPEG transcode + 可选 resize
+    → markTaskSucceeded → POST callback_url(retry 5s/30s/5min × 3)
+    → 4 次失败 → callback_lost(调用方走 GET status/:id 兜底)
+
+Plugin 配置: JSON overlay(INKAST_PLUGIN_DIR/*.json + zod 校验) — 主仓 0 客户特化代码
+```
+
+- [plugin-channel](plugin-channel.md) — 完整架构 + 数据流
+- [admin-dashboard](admin-dashboard.md) — `/admin/plugin-stats` HTML dashboard
+- [json-overlay-vs-branch](../decisions/json-overlay-vs-branch.md) — 客户特化为何走 JSON overlay 而非 git fork
