@@ -36,6 +36,17 @@ loadTokensFromEnv():
 ## zod schema
 
 ```ts
+const ImageStorageSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("b64") }),
+  z.object({
+    kind: z.literal("r2"),
+    bucket: z.string().min(1),
+    publicBase: z.string().url().regex(/^https?:\/\//),
+    keyPrefix: z.string().default(""),
+    contentType: z.enum(["image/png", "image/jpeg"]).default("image/png"),
+  }),
+]);
+
 const InkastPluginSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9_-]*$/),
   name: z.string().min(1),
@@ -46,6 +57,7 @@ const InkastPluginSchema = z.object({
     quality: z.string().min(1).optional(),
     format: z.enum(["png", "jpeg", "webp"]).optional(),
   }),
+  imageStorage: ImageStorageSchema.optional(),   // v2.1 起,未设 = 默认 b64
   llmBackend: z.union([
     z.literal("claude-code"),
     z.object({ kind: z.literal("openai-compatible"), providerId: z.string() }),
@@ -59,6 +71,12 @@ const InkastPluginSchema = z.object({
   }).optional(),
 });
 ```
+
+### imageStorage 字段语义(v2.1 起)
+
+- 未设 / `{kind:"b64"}`:走 callback `b64_json` 老路径(v2 兼容)
+- `{kind:"r2", bucket, publicBase, keyPrefix, contentType}`:inkast 直接 PUT R2,callback 改返 `image_url`
+- **凭据不在这里**——R2 token 走 env(`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`),JSON 只配 routing。详见 [[cloudflare-r2]]
 
 ## Token 加载语义
 
@@ -79,3 +97,6 @@ const InkastPluginSchema = z.object({
 - [plugin-channel](../domains/plugin-channel.md) — 加载的 plugin 服务这个通道
 - [json-overlay-vs-branch](../decisions/json-overlay-vs-branch.md) — 这个机制的设计决策
 - [new-plugin-onboarding](../workflows/new-plugin-onboarding.md) — 部署侧使用流程
+- [r2-direct-upload-v2.1](../decisions/r2-direct-upload-v2.1.md) — imageStorage 字段的来源决策
+- [cloudflare-r2](../integrations/cloudflare-r2.md) — R2 routing 字段如何被 driver 使用
+- [snapub-overlay-jdc-only](../pitfalls/snapub-overlay-jdc-only.md) — overlay JSON 不在 git 的现状

@@ -52,7 +52,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | 方法 | 路径 | 职责 | 入口 |
 | --- | --- | --- | --- |
 | **POST** | **`/plugins/v1/images/submit`** | **v2 异步 submit**,立即返 task_id(≤100ms),inkast 后台跑完后 POST callback_url | `apps/api/src/server/routes/plugins.ts` |
-| **GET** | **`/plugins/v1/images/status/:id`** | **callback 兜底拉**,返当前状态 + b64_json(若已完成) | `apps/api/src/server/routes/plugins.ts` |
+| **GET** | **`/plugins/v1/images/status/:id`** | **callback 兜底拉**,返当前状态 + **`image_url`(v2.1 r2 模式)或 `b64_json`(v2 b64 模式)双协议兼容** | `apps/api/src/server/routes/plugins.ts` |
 
 **管理端(`/admin/*`,loopback only,nginx 不暴露)**:
 
@@ -83,7 +83,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | `provider_capabilities` | per-kind 能力行(`provider_id, kind, model, priority, disabled, extras`),复合索引 `(kind, priority)` |
 | `generations` | Web UI 生图历史(含 `prose` / `ai_filled_fields` 字段) |
 | `jobs` | Web UI 异步任务(同步加 `prose` / `ai_filled_fields`) |
-| **`plugin_tasks`** | **Plugin 通道异步任务**(独立于 jobs):状态 + b64_json + callback_url + callback_token + provider_id/name + 24h GC |
+| **`plugin_tasks`** | **Plugin 通道异步任务**(独立于 jobs):状态 + **`b64_json`(v2)** + **`image_url`(v2.1 起,r2 模式)** + callback_url + callback_token + provider_id/name + 24h GC |
 
 **详情**: [better-sqlite3](integrations/better-sqlite3.md) · [async-job-pipeline](domains/async-job-pipeline.md) · [plugin-channel](domains/plugin-channel.md) · [provider-capability-table-split](decisions/provider-capability-table-split.md)
 
@@ -93,11 +93,21 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 | 来源 | 作用 |
 | --- | --- |
-| `INKAST_PLUGIN_DIR/*.json` | 客户 overlay 业务配置(systemPromptPatch / enforceFields / imageDefaults / skipLlmExpansion / outputDimensions) |
+| `INKAST_PLUGIN_DIR/*.json` | 客户 overlay 业务配置(systemPromptPatch / enforceFields / imageDefaults / **imageStorage(v2.1)** / skipLlmExpansion / outputDimensions) |
 | `INKAST_PLUGIN_TOKEN_<UPPER_ID>` env | 每 plugin 一个 Bearer Token,**不进 JSON** |
 | `INKAST_DEFAULT_LLM_PROVIDER_ID` env | plugin 未指定 llmBackend 时回落 |
+| **`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` env** | **R2 直传凭据(v2.1 r2 模式必需)**,routing 字段在 plugin overlay JSON |
 
-**详情**: [plugin-overlay-loader](shared/plugin-overlay-loader.md) · [json-overlay-vs-branch](decisions/json-overlay-vs-branch.md)
+**详情**: [plugin-overlay-loader](shared/plugin-overlay-loader.md) · [json-overlay-vs-branch](decisions/json-overlay-vs-branch.md) · [cloudflare-r2](integrations/cloudflare-r2.md)
+
+### 外部对象存储(v2.1 起)
+
+| Bucket | 自定义域名 | 用途 |
+| --- | --- | --- |
+| `snap-ub-ai-variants` | `aivariants.124213.xyz` | snapub plugin 回写图(inkast 写 `aiVariants/ink-<uuid>.png`) |
+| `inkast-storage` | (未绑域名) | inkast 平台自用预留 |
+
+**详情**: [cloudflare-r2](integrations/cloudflare-r2.md) · cc 仓库 `servers/cloudflare-r2/README.md`
 <!-- codewise-interfaces:end -->
 
 ---
@@ -108,7 +118,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | --- | --- |
 | [architecture-overview](domains/architecture-overview.md) | 整体架构 + 数据流全景(Web UI 通道 + Plugin 通道) · **新人第一站** |
 | [plugin-channel](domains/plugin-channel.md) | **Plugin 通道(v2 异步 callback,对外接入)** · submit + status + worker + retry + transcode + recovery |
-| [admin-dashboard](domains/admin-dashboard.md) | **`/admin/plugin-stats` 服务端 HTML dashboard**(loopback only,7 张卡) |
+| [admin-dashboard](domains/admin-dashboard.md) | **`/admin/plugin-stats` 服务端 HTML dashboard**(loopback only,**两 section:Plugin 通道 + Web UI 通道**) |
 | [field-editor](domains/field-editor.md) | 字段编辑器中栏(collapsed/expanded 两态,lockMode 驱动) |
 | [session-workspace](domains/session-workspace.md) | 起草 Tab 右栏 · 本次会话作品 + jobs 占位 tile · 刷新清空 |
 | [async-job-pipeline](domains/async-job-pipeline.md) | Web UI 异步生图任务流水线 + polling + 重启 reaper |
@@ -136,13 +146,15 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 ## 设计决策
 
-### Plugin 通道 / 产品化(2026-05-21 新增)
+### Plugin 通道 / 产品化(2026-05-21 起持续)
 
 | 条目 | 一句话 |
 | --- | --- |
 | [json-overlay-vs-branch](decisions/json-overlay-vs-branch.md) | **客户特化走 JSON overlay 而非 git fork**(数据 vs 代码 fork) |
 | [v2-async-callback-protocol](decisions/v2-async-callback-protocol.md) | **Plugin 通道走 v2 异步 callback,不是 v1 同步**(60s 云函数硬约束 + 实测 533s 超长任务) |
 | [plugin-channel-isolation](decisions/plugin-channel-isolation.md) | **Plugin 通道与 Web UI 完全分离**(独立 plugin-async + plugin_tasks 表) |
+| **[r2-direct-upload-v2.1](decisions/r2-direct-upload-v2.1.md)** | **v2.1 R2 直传,callback 改返 image_url**(JDC 上行省 95% + uniCloud 出站归零) |
+| **[per-capability-retry-budget](decisions/per-capability-retry-budget.md)** | **每个 image provider 单独配 retry 次数**(0-5,默认 1) |
 
 ### 架构 / 接口
 
@@ -217,6 +229,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [tailwind-v4](integrations/tailwind-v4.md) | Tailwind v4 CSS-first + `@theme inline` 映射 |
 | [vite-dev-proxy](integrations/vite-dev-proxy.md) | Vite dev proxy 超时(异步化后不再关键) |
 | [lucide-react](integrations/lucide-react.md) | 图标库,strokeWidth 1.5/1.75 视觉约定 |
+| **[cloudflare-r2](integrations/cloudflare-r2.md)** | **R2 对象存储 + S3 兼容 SDK**(plugin v2.1 直传) |
 
 ## 工作流
 
@@ -232,7 +245,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 ## 踩坑记录
 
-### Plugin 通道 / 部署(2026-05-21 新增)
+### Plugin 通道 / 部署(2026-05-21 起持续)
 
 | 条目 | 一句话 |
 | --- | --- |
@@ -244,6 +257,17 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [anyrouter-channel-failed-not-network](pitfalls/anyrouter-channel-failed-not-network.md) | **anyrouter `get_channel_failed` 是模型负载满**,不是网络问题(认真读 error body 不要凭直觉) |
 | [plugin-task-no-deadline](pitfalls/plugin-task-no-deadline.md) | **Plugin 任务无任务级 deadline**,实测 533s 超长任务导致 inkast 显示成功但调用方已 timeout |
 | [nginx-fallthrough-200-misread](pitfalls/nginx-fallthrough-200-misread.md) | **nginx 默认 location 返 200 JSON 39B**,容易被误读为 admin 端点暴露 |
+| **[snapub-overlay-jdc-only](pitfalls/snapub-overlay-jdc-only.md)** | **snapub plugin overlay 不在 git,只在 jdc 手动维护**——改坏了没历史 |
+| **[plugin-pool-too-narrow-by-model](pitfalls/plugin-pool-too-narrow-by-model.md)** | **plugin 通道按 model/size 过滤后 pool 实际只剩 N/8 个**,某些 provider 故障时全 pool 失效 |
+
+### Provider 故障性质 / 渠道挑选(2026-05-22 实测产物)
+
+| 条目 | 一句话 |
+| --- | --- |
+| **[duck-moderation-probabilistic](pitfalls/duck-moderation-probabilistic.md)** | **duckcoding 漫威拒图是概率性 false negative**,5 次约 1 次过——靠 retry 多次抽签,不靠参数 |
+| **[anyrouter-pseudo-stream-deep-failure](pitfalls/anyrouter-pseudo-stream-deep-failure.md)** | **gpt-5.3-codex "假活流"是上游模型节点宕机**,retry 同 provider 浪费 600s——按 `[[per-capability-retry-budget]]` 给 cpa/any 配 retry=0 |
+| **[cf-120s-images-mode-only](pitfalls/cf-120s-images-mode-only.md)** | **CF 反代 120s 兜底 only 影响 images mode**,SSE 流式头立即返绕过——`ioll.pp.ua` 这类切到 responses+stream:true |
+| **[moderation-low-ineffective-on-resellers](pitfalls/moderation-low-ineffective-on-resellers.md)** | **moderation:"low" 对二道贩子代理无效**,duck 加这参数反而完全挂死——别用 |
 
 ### 渠道结构性问题(anyrouter + image_generation 调研产物)
 
@@ -344,19 +368,23 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
                                               │   │       │   是 → 拼 prompt + 约束块
                                               │   │       │   否 → draftPrompt + enforceFields 覆盖
                                               │   │       ├─ generateImage(走 provider 池)
-                                              │   │       ├─ sharp transcode → JPEG q80 + 可选 resize
-                                              │   │       └─ markTaskSucceeded
-                                              │   │           ↓
-                                              │   │       POST callback_url + X-Callback-Token
+                                              │   │       ├─ 按 plugin.imageStorage.kind 分两条路:
+                                              │   │       │   b64 → sharp JPEG q80 → markTaskSucceeded(b64Json)
+                                              │   │       │   r2  → sharp PNG → putImage(R2 retry 0.5/2/8s)
+                                              │   │       │        → markTaskSucceeded(imageUrl)
+                                              │   │       └─ POST callback_url + X-Callback-Token
+                                              │   │           body:b64 模式 {b64_json,mime,...}
+                                              │   │                r2 模式 {image_url,mime,...}
                                               │   │           ↓(非 2xx 退避重试 5s/30s/5min × 3)
                                               │   │       → 4 次失败 → callback_lost
                                               │
-                              GET /status/:id ─────→ 兜底拉:返当前 status + b64_json(若已完成)
+                              GET /status/:id ─────→ 兜底拉:image_url 优先,b64_json 兜底(v2.1 双协议)
 
 INKAST_PLUGIN_DIR/*.json (overlay) ──→ registry.ts (loader.ts + zod) ──→ in-memory plugins Map
 INKAST_PLUGIN_TOKEN_<UPPER_ID> env ──→ tokenToPluginId Map
+R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env ──→ r2.ts driver
 
-/admin/plugin-stats (loopback only) ──→ HTML dashboard(7 张卡,中文,meta refresh 60s)
+/admin/plugin-stats (loopback only) ──→ HTML dashboard(两 section:Plugin 通道 + Web UI 通道,中文,meta refresh 60s)
 ```
 
 ---
@@ -365,8 +393,8 @@ INKAST_PLUGIN_TOKEN_<UPPER_ID> env ──→ tokenToPluginId Map
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `34aea65bbd0c0270e893dadcdc2adbf5872111ae`
-- **synced_at**: `2026-05-21T18:58:58+08:00`
+- **baseline_commit**: `e63141b59ead9e6e32b1a048e0a3081e797ca499`
+- **synced_at**: `2026-05-22T01:49:43+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
 

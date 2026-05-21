@@ -26,11 +26,17 @@
    - outputDimensions: 是否 sharp resize
    - 业务约束: skipLlmConstraintsText 或 systemPromptPatch
    - enforceFields: LLM 模式兜底覆盖字段
+   - **imageStorage(v2.1 可选):走 b64 还是 R2 直传**
+     - 不设 / `{kind:"b64"}` = 老路径(callback 推 b64_json)
+     - `{kind:"r2", bucket, publicBase, keyPrefix, contentType}` = inkast 直传客户 R2 bucket
+     - 选 r2 时,部署机需配 `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`
 
 4. 部署
    - rsync plugins/<id>.json → server:/etc/inkast/plugins/<id>.json
    - chown root:root + chmod 644
    - 在部署机生成 token 写 inkast-api.env
+   - 如选 R2 模式,凭据从 keychain 走 stdin pipe 写 env(不经 shell var):
+     `{ printf "R2_ACCESS_KEY_ID="; security find-generic-password -s api-r2-<id>-access-key -w; } | ssh <host> 'cat >> /root/inkast/inkast-api.env'`
    - systemctl restart inkast-api
 
 5. 给对方接入信息
@@ -62,6 +68,9 @@
 
 ## 关联条目
 
-- [plugin-overlay-loader](../shared/plugin-overlay-loader.md) — JSON loader 实现
+- [plugin-overlay-loader](../shared/plugin-overlay-loader.md) — JSON loader 实现 + zod schema 全字段
 - [json-overlay-vs-branch](../decisions/json-overlay-vs-branch.md) — 为何走 overlay 不走 branch
 - [plugin-channel](../domains/plugin-channel.md) — 通道整体架构
+- [r2-direct-upload-v2.1](../decisions/r2-direct-upload-v2.1.md) — v2.1 R2 直传决策(决定 imageStorage 字段填什么)
+- [cloudflare-r2](../integrations/cloudflare-r2.md) — R2 凭据与路径约定
+- [snapub-overlay-jdc-only](../pitfalls/snapub-overlay-jdc-only.md) — 反例:snapub 现在没走独立 overlay 仓,改成手动维护
