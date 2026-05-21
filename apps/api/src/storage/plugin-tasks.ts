@@ -21,7 +21,14 @@ export interface PluginTaskRow {
    */
   callbackToken: string;
   status: PluginTaskStatus;
+  /**
+   * Mutually exclusive with `imageUrl` — exactly one is set on succeeded,
+   * driven by the plugin's `imageStorage.kind`:
+   *   - "b64" (default): b64Json set, imageUrl null
+   *   - "r2":            imageUrl set (public URL on plugin-configured CDN), b64Json null
+   */
   b64Json: string | null;
+  imageUrl: string | null;
   mime: string | null;
   promptJson: string | null;
   errorCode: string | null;
@@ -45,6 +52,7 @@ interface DbRow {
   callback_token: string;
   status: PluginTaskStatus;
   b64_json: string | null;
+  image_url: string | null;
   mime: string | null;
   prompt_json: string | null;
   error_code: string | null;
@@ -69,6 +77,7 @@ function rowToTask(row: DbRow): PluginTaskRow {
     callbackToken: row.callback_token,
     status: row.status,
     b64Json: row.b64_json,
+    imageUrl: row.image_url,
     mime: row.mime,
     promptJson: row.prompt_json,
     errorCode: row.error_code,
@@ -110,6 +119,7 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
     callbackToken: input.callbackToken,
     status: "queued",
     b64Json: null,
+    imageUrl: null,
     mime: null,
     promptJson: null,
     errorCode: null,
@@ -130,28 +140,48 @@ export function markTaskRunning(id: string): void {
   db().prepare(`UPDATE plugin_tasks SET status = 'running' WHERE id = ?`).run(id);
 }
 
-export interface MarkSucceededInput {
-  b64Json: string;
-  mime: string;
-  promptJson: string;
-  llmDurationMs: number;
-  imageDurationMs: number;
-  providerId: string;
-  providerName: string;
-}
+/**
+ * Exactly one of `b64Json` / `imageUrl` must be set, driven by the plugin's
+ * imageStorage.kind. mime is always set so callers know the bytes' format
+ * (even when bytes are remote — useful for client-side Content-Type assertions).
+ */
+export type MarkSucceededInput =
+  | {
+      kind: "b64";
+      b64Json: string;
+      mime: string;
+      promptJson: string;
+      llmDurationMs: number;
+      imageDurationMs: number;
+      providerId: string;
+      providerName: string;
+    }
+  | {
+      kind: "r2";
+      imageUrl: string;
+      mime: string;
+      promptJson: string;
+      llmDurationMs: number;
+      imageDurationMs: number;
+      providerId: string;
+      providerName: string;
+    };
 
 export function markTaskSucceeded(id: string, input: MarkSucceededInput): void {
+  const b64Json = input.kind === "b64" ? input.b64Json : null;
+  const imageUrl = input.kind === "r2" ? input.imageUrl : null;
   db()
     .prepare(
       `UPDATE plugin_tasks
-       SET status = 'succeeded', b64_json = ?, mime = ?, prompt_json = ?,
+       SET status = 'succeeded', b64_json = ?, image_url = ?, mime = ?, prompt_json = ?,
            llm_duration_ms = ?, image_duration_ms = ?,
            provider_id = ?, provider_name = ?,
            completed_at = ?
        WHERE id = ?`,
     )
     .run(
-      input.b64Json,
+      b64Json,
+      imageUrl,
       input.mime,
       input.promptJson,
       input.llmDurationMs,

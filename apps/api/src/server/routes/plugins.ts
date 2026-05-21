@@ -149,15 +149,30 @@ pluginRoutes.get("/v1/images/status/:id", c => {
 
   // succeeded — or callback_lost (which still has the image, callback delivery
   // just failed). Both surface to the caller as a successful payload.
-  if ((task.status === "succeeded" || task.status === "callback_lost") && task.b64Json && task.mime) {
-    return c.json({
-      task_id: task.id,
-      status: "succeeded",
-      b64_json: task.b64Json,
-      mime: task.mime,
-      prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
-      completed_at: completedAt,
-    });
+  // Payload shape depends on plugin's imageStorage.kind:
+  //   - "r2": image_url + mime (v2.1 protocol)
+  //   - "b64": b64_json + mime (v2 protocol)
+  if (task.status === "succeeded" || task.status === "callback_lost") {
+    if (task.imageUrl && task.mime) {
+      return c.json({
+        task_id: task.id,
+        status: "succeeded",
+        image_url: task.imageUrl,
+        mime: task.mime,
+        prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
+        completed_at: completedAt,
+      });
+    }
+    if (task.b64Json && task.mime) {
+      return c.json({
+        task_id: task.id,
+        status: "succeeded",
+        b64_json: task.b64Json,
+        mime: task.mime,
+        prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
+        completed_at: completedAt,
+      });
+    }
   }
 
   // failed (no image)

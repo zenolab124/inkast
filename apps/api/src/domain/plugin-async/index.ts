@@ -3,11 +3,12 @@ import type { ImagePrompt } from "@inkast/shared";
 
 import { draftPrompt } from "../prompt-engine/index.js";
 import { generateImage } from "../../drivers/image/openai-compatible.js";
+import { putImage, R2UploadError } from "../../drivers/storage/r2.js";
 import {
   listRegisteredPlugins,
   resolveLlmBackend,
 } from "../../plugins/registry.js";
-import type { InkastPlugin } from "../../plugins/types.js";
+import type { InkastPlugin, PluginImageStorage } from "../../plugins/types.js";
 import { toOpenAiError } from "../../plugins/errors.js";
 import {
   createPluginTask,
@@ -172,25 +173,72 @@ async function runTask(taskId: string): Promise<void> {
     });
     imageDurationMs = Date.now() - imageStart;
 
-    // 4. JPEG transcode + 可选 resize(plugin 通道默认输出 JPEG;若 plugin
-    //    配了 outputDimensions,顺便 sharp cover-fit resize 到目标尺寸)
-    const { b64Json, mime } = await transcodeToJpeg(
-      imageOutcome.imageB64,
-      plugin.outputDimensions,
-    );
+    // 4. 出图持久化:按 plugin.imageStorage 分两条路
+    //    - "b64"(默认):JPEG transcode(payload 缩 5x)+ DB b64_json 字段
+    //    - "r2":可选 resize 后保留 PNG → R2 PUT → DB image_url 字段
+    const storage: PluginImageStorage = plugin.imageStorage ?? { kind: "b64" };
 
-    markTaskSucceeded(taskId, {
-      b64Json,
-      mime,
-      promptJson: promptJsonStr,
-      llmDurationMs,
-      imageDurationMs,
-      providerId: imageOutcome.providerId,
-      providerName: imageOutcome.providerName,
-    });
-    console.log(
-      `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms total=${Date.now() - overallStart}ms`,
-    );
+    if (storage.kind === "r2") {
+      const bodyBytes = await prepareImageForR2(
+        imageOutcome.imageB64,
+        plugin.outputDimensions,
+        storage.contentType,
+      );
+      const ext = storage.contentType === "image/png" ? "png" : "jpg";
+      const key = `${storage.keyPrefix}${taskId}.${ext}`;
+      try {
+        const r2Out = await putImage({
+          bucket: storage.bucket,
+          key,
+          body: bodyBytes,
+          contentType: storage.contentType,
+        });
+        const imageUrl = `${storage.publicBase.replace(/\/+$/, "")}/${key}`;
+        markTaskSucceeded(taskId, {
+          kind: "r2",
+          imageUrl,
+          mime: storage.contentType,
+          promptJson: promptJsonStr,
+          llmDurationMs,
+          imageDurationMs,
+          providerId: imageOutcome.providerId,
+          providerName: imageOutcome.providerName,
+        });
+        console.log(
+          `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms r2=${r2Out.durationMs}ms(att=${r2Out.attempts}) total=${Date.now() - overallStart}ms url=${imageUrl}`,
+        );
+      } catch (err) {
+        // R2 上传失败 → 任务标 failed,callback 走 r2_upload_failed,不 fallback b64
+        // (避免两套路径并存;snap-ub 端会按 status:failed 自动退能量)
+        const isR2Err = err instanceof R2UploadError;
+        const msg = err instanceof Error ? err.message : String(err);
+        markTaskFailed(taskId, {
+          errorCode: isR2Err ? "r2_upload_failed" : "internal_error",
+          errorMsg: msg,
+          llmDurationMs,
+          imageDurationMs,
+        });
+        console.warn(`[plugin-async] ✗ task=${taskId} r2_upload_failed: ${msg}`);
+      }
+    } else {
+      const { b64Json, mime } = await transcodeToJpeg(
+        imageOutcome.imageB64,
+        plugin.outputDimensions,
+      );
+      markTaskSucceeded(taskId, {
+        kind: "b64",
+        b64Json,
+        mime,
+        promptJson: promptJsonStr,
+        llmDurationMs,
+        imageDurationMs,
+        providerId: imageOutcome.providerId,
+        providerName: imageOutcome.providerName,
+      });
+      console.log(
+        `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms total=${Date.now() - overallStart}ms`,
+      );
+    }
   } catch (err) {
     const mapped = toOpenAiError(err);
     markTaskFailed(taskId, {
@@ -268,6 +316,37 @@ async function transcodeToJpeg(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// R2 upload bytes preparation
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 为 R2 上传准备字节流:保留 PNG 原图(callback 不再需要 b64 缩 payload),
+ * 仅在 plugin 配了 outputDimensions 或目标 contentType ≠ image/png 时
+ * 用 sharp 处理(resize cover-fit / format re-encode)。image driver 当前
+ * 总是返 PNG,所以 (contentType=png && !resize) 走 passthrough。
+ */
+async function prepareImageForR2(
+  srcB64: string,
+  outputDims: { width: number; height: number } | undefined,
+  contentType: "image/png" | "image/jpeg",
+): Promise<Buffer> {
+  const srcBytes = Buffer.from(srcB64, "base64");
+  if (!outputDims && contentType === "image/png") {
+    return srcBytes;
+  }
+  let pipeline = sharp(srcBytes);
+  if (outputDims) {
+    pipeline = pipeline.resize(outputDims.width, outputDims.height, {
+      fit: "cover",
+      position: "center",
+    });
+  }
+  return contentType === "image/png"
+    ? pipeline.png().toBuffer()
+    : pipeline.jpeg({ quality: 80 }).toBuffer();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Callback delivery + retry
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -340,6 +419,7 @@ interface CallbackBody {
   task_id: string;
   status: "succeeded" | "failed";
   b64_json?: string;
+  image_url?: string;
   mime?: string;
   prompt_json?: unknown;
   error_code?: string;
@@ -349,15 +429,29 @@ interface CallbackBody {
 
 function buildCallbackBody(task: PluginTaskRow): CallbackBody {
   const completed_at = Math.floor((task.completedAt ?? Date.now()) / 1000);
-  if (task.status === "succeeded" && task.b64Json && task.mime) {
-    return {
-      task_id: task.id,
-      status: "succeeded",
-      b64_json: task.b64Json,
-      mime: task.mime,
-      prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
-      completed_at,
-    };
+  if (task.status === "succeeded" && task.mime) {
+    // r2 路径:image_url 优先(v2.1 协议)
+    if (task.imageUrl) {
+      return {
+        task_id: task.id,
+        status: "succeeded",
+        image_url: task.imageUrl,
+        mime: task.mime,
+        prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
+        completed_at,
+      };
+    }
+    // b64 路径(v2 协议)
+    if (task.b64Json) {
+      return {
+        task_id: task.id,
+        status: "succeeded",
+        b64_json: task.b64Json,
+        mime: task.mime,
+        prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
+        completed_at,
+      };
+    }
   }
   return {
     task_id: task.id,

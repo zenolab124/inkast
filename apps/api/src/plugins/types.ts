@@ -12,9 +12,20 @@ import type { LlmBackendDescriptor } from "../drivers/llm/index.js";
  * Web UI 走 `/api/*` 路由,plugin 走 `/plugins/*` 路由 — 两者共享底层
  * LLM driver 和 image provider 池,但请求路径、鉴权、持久化策略均隔离。
  *
- * plugin 通道不向磁盘持久化生成的图片字节(jdc 磁盘紧张),只把 b64_json
- * 流给调用方,inkast 这边无状态。
+ * 持久化策略由 plugin overlay 的 `imageStorage` 字段决定:
+ *   - "b64"(默认):字节流走 plugin_tasks.b64_json + callback b64_json 推给调用方
+ *   - "r2":字节流上传 R2(bucket/path 由配置指定),callback 只发 image_url
+ * jdc 磁盘上仍然不长期落地任何生成图,只 24h 内的 plugin_tasks 行作为投递兜底。
  */
+export type PluginImageStorage =
+  | { kind: "b64" }
+  | {
+      kind: "r2";
+      bucket: string;
+      publicBase: string;          // e.g. "https://aivariants.124213.xyz"
+      keyPrefix: string;           // e.g. "aiVariants/", "" for bucket root
+      contentType: "image/png" | "image/jpeg";
+    };
 export interface InkastPlugin {
   readonly id: string;
   readonly name: string;
@@ -37,6 +48,12 @@ export interface InkastPlugin {
     quality?: ImageQuality;
     format?: ImageFormat;
   };
+  /**
+   * 出图后字节流的去向。不设时默认 `{kind:"b64"}` — 走 callback b64_json
+   * 路径(v2 协议默认)。设 `{kind:"r2", ...}` 切到 R2 直传(v2.1 协议)。
+   * 凭据(account_id / access_key / secret) 走 env,不进 plugin overlay。
+   */
+  readonly imageStorage?: PluginImageStorage;
   /**
    * LLM 通道描述符。未指定时回落到 `INKAST_DEFAULT_LLM_PROVIDER_ID` env
    * 指向的 openai-compatible provider;再没有则用 "claude-code"。jdc 部署

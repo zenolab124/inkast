@@ -25,6 +25,30 @@ const ImageSizeSchema = z.string().min(1);
 const ImageQualitySchema = z.string().min(1);
 const ImageFormatSchema = z.enum(["png", "jpeg", "webp"]);
 
+/**
+ * Where the generated image bytes land + how the callback addresses them.
+ *
+ *   - "b64" (default): bytes go into plugin_tasks.b64_json, callback body
+ *      carries `b64_json` + `mime`. Legacy v2 behavior.
+ *   - "r2":  bytes uploaded to R2 (bucket/path from this config block),
+ *      callback body carries `image_url` + `mime`. Token comes from env
+ *      (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY), so a
+ *      plugin only ever declares non-secret routing here.
+ */
+const ImageStorageSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("b64") }),
+  z.object({
+    kind: z.literal("r2"),
+    bucket: z.string().min(1),
+    publicBase: z
+      .string()
+      .url()
+      .regex(/^https?:\/\//, "publicBase must be a full URL with scheme"),
+    keyPrefix: z.string().default(""),
+    contentType: z.enum(["image/png", "image/jpeg"]).default("image/png"),
+  }),
+]);
+
 const LlmBackendDescriptorSchema = z.union([
   z.literal("claude-code"),
   z.object({
@@ -45,6 +69,7 @@ const InkastPluginSchema = z.object({
     quality: ImageQualitySchema.optional(),
     format: ImageFormatSchema.optional(),
   }),
+  imageStorage: ImageStorageSchema.optional(),
   llmBackend: LlmBackendDescriptorSchema.optional(),
   lang: z.enum(["zh", "en"]).optional(),
   skipLlmExpansion: z.boolean().optional(),

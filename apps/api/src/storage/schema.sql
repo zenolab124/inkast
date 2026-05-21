@@ -105,7 +105,8 @@ CREATE TABLE IF NOT EXISTS plugin_tasks (
   callback_url         TEXT NOT NULL,
   callback_token       TEXT NOT NULL,         -- caller-supplied one-time token; outbound on X-Callback-Token header
   status               TEXT NOT NULL,         -- queued | running | succeeded | failed | callback_lost
-  b64_json             TEXT,                  -- succeeded only
+  b64_json             TEXT,                  -- succeeded only, mutually exclusive with image_url (set by imageStorage.kind='b64' plugins)
+  image_url            TEXT,                  -- succeeded only, mutually exclusive with b64_json (set by imageStorage.kind='r2' plugins)
   mime                 TEXT,                  -- 'image/jpeg' or 'image/png'
   prompt_json          TEXT,                  -- succeeded only: JSON.stringify of merged ImagePrompt
   error_code           TEXT,                  -- failed/interrupted only

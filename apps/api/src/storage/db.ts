@@ -50,6 +50,7 @@ function migrate(conn: Database.Database): void {
   addColumnIfMissing(conn, "jobs", "ai_filled_fields", "TEXT");
   addColumnIfMissing(conn, "plugin_tasks", "provider_id", "TEXT");
   addColumnIfMissing(conn, "plugin_tasks", "provider_name", "TEXT");
+  addColumnIfMissing(conn, "plugin_tasks", "image_url", "TEXT");
 
   backfillCapabilities(conn);
   seedBuiltinClaudeCode(conn);
