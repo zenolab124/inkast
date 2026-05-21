@@ -255,6 +255,11 @@ export const en: Translations = {
       hintResponses:
         "POST /v1/responses with the image_generation tool — lets general chat models (gpt-5.3-codex etc.) emit images. Size/quality get appended to the prompt.",
     },
+    imageRetry: {
+      label: "Retry attempts",
+      hint: "Retries on this provider after a failure (0–5). Empty = follow global default (1). 0 = fail over to next provider immediately.",
+      placeholder: "default",
+    },
   },
   picker: {
     titlePrefix: "Select",

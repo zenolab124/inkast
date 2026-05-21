@@ -244,6 +244,11 @@ export interface Translations {
       hintImages: string;
       hintResponses: string;
     };
+    imageRetry: {
+      label: string;
+      hint: string;
+      placeholder: string;
+    };
   };
   picker: {
     titlePrefix: string;

@@ -37,21 +37,36 @@ const DEFAULT_TIMEOUT_MS = 600_000;
 
 /**
  * Per-provider transient-failure retry budget. Total attempts per provider =
- * PROVIDER_RETRY_LIMIT + 1 (initial attempt + N retries).
+ * retryLimit + 1 (initial attempt + N retries).
  *
- * Set to 1 (total 2 attempts) because most "transient" failures we actually
- * observe in production are provider-side model-level outages (e.g. stream
- * ends with 0 done items — the upstream model node is wedged, not the queue
- * slot). Retrying the same provider beyond a single bounce just doubles the
- * wait before we fall over to a healthier provider. The empirical
- * "different queue slot on retry" wins are rare enough that 1 retry covers
- * them; further retries pay the full 600s ceiling for nothing.
+ * Default is 1 (total 2 attempts): most "transient" failures we observe in
+ * production are provider-side model-level outages (e.g. stream ends with 0
+ * done items — the upstream model node is wedged, not the queue slot).
+ * Retrying the same provider beyond a single bounce just doubles the wait
+ * before we fall over to a healthier provider.
  *
- * Moderation, auth, and abort errors are NEVER retried — those are
- * deterministic and a retry would just waste time.
+ * Per-capability override: each provider can set `extras.retryLimit` (0-5)
+ * in the Web UI. 0 = no retry (fast-fail to next provider on first error);
+ * higher values for providers that genuinely benefit from queue-slot lottery.
+ *
+ * Moderation, auth, and abort errors are NEVER retried regardless of limit.
  */
-const PROVIDER_RETRY_LIMIT = 1;
+const PROVIDER_RETRY_LIMIT_DEFAULT = 1;
+const PROVIDER_RETRY_LIMIT_MAX = 5;
 const PROVIDER_RETRY_BACKOFF_MS = 5_000;
+
+function resolveRetryLimit(capability: ProviderCapability): number {
+  const raw = capability.extras?.retryLimit;
+  if (
+    typeof raw === "number" &&
+    Number.isInteger(raw) &&
+    raw >= 0 &&
+    raw <= PROVIDER_RETRY_LIMIT_MAX
+  ) {
+    return raw;
+  }
+  return PROVIDER_RETRY_LIMIT_DEFAULT;
+}
 
 /**
  * OpenAI-compatible image generation, via the official `openai` SDK.
@@ -83,10 +98,11 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
     }
 
     const mode = resolveMode(capability);
+    const retryLimit = resolveRetryLimit(capability);
     const refsCount = (input.referenceImages ?? []).length;
     let lastClassified: ClassifiedError | undefined;
 
-    for (let retry = 0; retry <= PROVIDER_RETRY_LIMIT; retry++) {
+    for (let retry = 0; retry <= retryLimit; retry++) {
       if (input.signal?.aborted) {
         throw new ImageGenError("aborted", "image generation aborted by caller", attempts);
       }
@@ -94,7 +110,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       const tryLabel =
         retry === 0
           ? `attempt ${idx + 1}/${pool.length}`
-          : `retry ${retry}/${PROVIDER_RETRY_LIMIT} on ${idx + 1}/${pool.length}`;
+          : `retry ${retry}/${retryLimit} on ${idx + 1}/${pool.length}`;
       console.log(
         `[image] ▶ ${tryLabel}: ${provider.name} (priority=${capability.priority}, mode=${mode}) → ${provider.baseUrl} · model=${capability.model}`,
       );
@@ -169,7 +185,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           break;
         }
         // Transient — back off briefly, then retry on the same provider.
-        if (retry < PROVIDER_RETRY_LIMIT) {
+        if (retry < retryLimit) {
           console.log(
             `[image]   …retrying ${provider.name} in ${PROVIDER_RETRY_BACKOFF_MS}ms (transient: ${classified.code})`,
           );
@@ -179,7 +195,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
     }
 
     console.log(
-      `[image] ⤵ ${provider.name} exhausted ${PROVIDER_RETRY_LIMIT + 1} attempts (last: ${lastClassified?.code ?? "unknown"}), falling over`,
+      `[image] ⤵ ${provider.name} exhausted ${retryLimit + 1} attempts (last: ${lastClassified?.code ?? "unknown"}), falling over`,
     );
     continue;
   }

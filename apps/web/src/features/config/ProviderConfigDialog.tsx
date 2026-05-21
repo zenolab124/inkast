@@ -76,7 +76,22 @@ interface FormState {
   // Per-kind model fields. Empty string means the kind is not selected.
   imageModel: string;
   imageMode: ImageGenerationMode;
+  /**
+   * 0-5,或 "" 表示"用全局默认"。控件用 string 存方便区分"空"和"0"
+   * (number 类型下 0 和 NaN 都掉成 undefined,会丢"用户显式选 0"的信号)。
+   */
+  imageRetryLimit: string;
   llmModel: string;
+}
+
+const RETRY_LIMIT_MAX = 5;
+
+function readRetryLimit(cap: ProviderCapability | undefined): string {
+  const raw = cap?.extras?.retryLimit;
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw <= RETRY_LIMIT_MAX) {
+    return String(raw);
+  }
+  return "";
 }
 
 const DEFAULT_MODEL: Record<ProviderKind, string> = {
@@ -108,6 +123,7 @@ function emptyForm(): FormState {
     apiKey: "",
     imageModel: DEFAULT_MODEL.image,
     imageMode: IMAGE_GENERATION_MODE_DEFAULT,
+    imageRetryLimit: "",
     llmModel: "",
   };
 }
@@ -122,6 +138,7 @@ function buildFormFromProvider(p: ProviderSummary): FormState {
     apiKey: "",
     imageModel: image?.model ?? "",
     imageMode: readImageMode(image),
+    imageRetryLimit: readRetryLimit(image),
     llmModel: llm?.model ?? "",
   };
 }
@@ -129,9 +146,21 @@ function buildFormFromProvider(p: ProviderSummary): FormState {
 function formToCapabilities(form: FormState): CapabilityInput[] {
   const caps: CapabilityInput[] = [];
   if (form.imageModel.trim()) {
-    const extras =
-      form.imageMode === IMAGE_GENERATION_MODE_DEFAULT ? null : { mode: form.imageMode };
-    caps.push({ kind: "image", model: form.imageModel.trim(), extras });
+    const extras: Record<string, unknown> = {};
+    if (form.imageMode !== IMAGE_GENERATION_MODE_DEFAULT) {
+      extras.mode = form.imageMode;
+    }
+    if (form.imageRetryLimit !== "") {
+      const n = Number(form.imageRetryLimit);
+      if (Number.isInteger(n) && n >= 0 && n <= RETRY_LIMIT_MAX) {
+        extras.retryLimit = n;
+      }
+    }
+    caps.push({
+      kind: "image",
+      model: form.imageModel.trim(),
+      extras: Object.keys(extras).length > 0 ? extras : null,
+    });
   }
   if (form.llmModel.trim()) {
     caps.push({ kind: "llm", model: form.llmModel.trim() });
@@ -459,21 +488,27 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                       options={modelOptions}
                     />
                     {form.imageModel.trim().length > 0 && (
-                      <ImageModeRow
-                        mode={form.imageMode}
-                        onChange={mode =>
-                          setForm(prev => {
-                            if (!prev) return prev;
-                            const previousDefault = DEFAULT_IMAGE_MODEL_FOR_MODE[prev.imageMode];
-                            const swapModel = prev.imageModel.trim() === previousDefault;
-                            return {
-                              ...prev,
-                              imageMode: mode,
-                              imageModel: swapModel ? DEFAULT_IMAGE_MODEL_FOR_MODE[mode] : prev.imageModel,
-                            };
-                          })
-                        }
-                      />
+                      <>
+                        <ImageModeRow
+                          mode={form.imageMode}
+                          onChange={mode =>
+                            setForm(prev => {
+                              if (!prev) return prev;
+                              const previousDefault = DEFAULT_IMAGE_MODEL_FOR_MODE[prev.imageMode];
+                              const swapModel = prev.imageModel.trim() === previousDefault;
+                              return {
+                                ...prev,
+                                imageMode: mode,
+                                imageModel: swapModel ? DEFAULT_IMAGE_MODEL_FOR_MODE[mode] : prev.imageModel,
+                              };
+                            })
+                          }
+                        />
+                        <ImageRetryRow
+                          value={form.imageRetryLimit}
+                          onChange={v => setForm(prev => (prev ? { ...prev, imageRetryLimit: v } : prev))}
+                        />
+                      </>
                     )}
                   </div>
                   <KindRow
@@ -723,6 +758,45 @@ function ImageModeRow({
           {t.config.imageMode.responses}
         </ToggleGroupItem>
       </ToggleGroup>
+    </div>
+  );
+}
+
+/**
+ * Per-provider retry limit (image kind). 0-5 整数,空 = 跟全局默认走。
+ * 文案 / 默认值在 i18n 里。
+ */
+function ImageRetryRow({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const { t } = useLanguage();
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium text-foreground">{t.config.imageRetry.label}</span>
+        <span className="text-[11px] text-muted-foreground">{t.config.imageRetry.hint}</span>
+      </div>
+      <input
+        type="number"
+        min={0}
+        max={RETRY_LIMIT_MAX}
+        step={1}
+        inputMode="numeric"
+        value={value}
+        placeholder={t.config.imageRetry.placeholder}
+        onChange={e => {
+          const raw = e.target.value;
+          if (raw === "") return onChange("");
+          // clamp 到 [0, RETRY_LIMIT_MAX],非整数/非数字忽略
+          const n = Number(raw);
+          if (Number.isInteger(n) && n >= 0 && n <= RETRY_LIMIT_MAX) onChange(String(n));
+        }}
+        className="h-7 w-16 rounded-sm border border-border bg-background px-2 text-right text-xs font-mono tabular-nums focus:outline-none focus:ring-1 focus:ring-primary/40"
+      />
     </div>
   );
 }

@@ -245,6 +245,11 @@ export const zh: Translations = {
       hintImages: "POST /v1/images/generations,适用于 gpt-image-2 等专用生图模型,支持 size/quality 参数。",
       hintResponses: "POST /v1/responses + image_generation 工具,让通用模型(如 gpt-5.3-codex)调工具出图;size/quality 会自动拼到提示词。",
     },
+    imageRetry: {
+      label: "重试次数",
+      hint: "单渠道失败后在该渠道重试的次数(0-5)。留空跟随全局默认 1。0 = 失败立即切下一个渠道。",
+      placeholder: "默认",
+    },
   },
   picker: {
     titlePrefix: "选择",
