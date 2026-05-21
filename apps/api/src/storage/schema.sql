@@ -85,3 +85,41 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at DESC);
+
+-- Plugin channel async tasks (v2 protocol). Independent of `jobs` (Web UI
+-- channel) — different schema, different lifecycle, different ownership.
+--
+-- Lifecycle: queued → running → (succeeded | failed) → callback retry → (final terminal)
+--   - queued     : submitted, not yet picked up by worker
+--   - running    : LLM + image driver in flight
+--   - succeeded  : b64_json + mime populated; callback may be pending/retrying
+--   - failed     : error_code + error_msg populated; callback may be pending/retrying
+--   - callback_lost : final terminal IFF callback retries exhausted on a succeeded task.
+--                     The task body is still valid; caller can fetch via /status/:id
+--
+-- 24h retention. GC deletes rows where created_at < now-24h AND status in terminal set.
+CREATE TABLE IF NOT EXISTS plugin_tasks (
+  id                   TEXT PRIMARY KEY,
+  plugin_id            TEXT NOT NULL,
+  prompt               TEXT NOT NULL,
+  callback_url         TEXT NOT NULL,
+  callback_token       TEXT NOT NULL,         -- caller-supplied one-time token; outbound on X-Callback-Token header
+  status               TEXT NOT NULL,         -- queued | running | succeeded | failed | callback_lost
+  b64_json             TEXT,                  -- succeeded only
+  mime                 TEXT,                  -- 'image/jpeg' or 'image/png'
+  prompt_json          TEXT,                  -- succeeded only: JSON.stringify of merged ImagePrompt
+  error_code           TEXT,                  -- failed/interrupted only
+  error_msg            TEXT,
+  callback_attempts    INTEGER NOT NULL DEFAULT 0,
+  last_callback_at     INTEGER,
+  callback_lost        INTEGER NOT NULL DEFAULT 0,
+  llm_duration_ms      INTEGER,
+  image_duration_ms    INTEGER,
+  provider_id          TEXT,                  -- image provider id that actually fulfilled (null if failed before reaching driver)
+  provider_name        TEXT,                  -- image provider name (cached for human-readable stats; provider row may be deleted later)
+  created_at           INTEGER NOT NULL,
+  completed_at         INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_tasks_status ON plugin_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_plugin_tasks_created_at ON plugin_tasks(created_at);

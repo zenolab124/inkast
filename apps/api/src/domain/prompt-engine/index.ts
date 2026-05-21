@@ -6,6 +6,14 @@ export interface DraftPromptInput {
   input: string;
   backend?: LlmBackendDescriptor;
   lang?: OutputLang;
+  /**
+   * Optional system prompt suffix appended after the engine's base instructions.
+   * Used by the plugin channel to inject per-caller business constraints
+   * (e.g. snapub's "no text / no frame / SFW" patch). Web UI callers do not
+   * pass this — they get the unmodified imagegen methodology prompt.
+   */
+  systemPromptSuffix?: string;
+  signal?: AbortSignal;
 }
 
 export interface DraftPromptOutcome {
@@ -34,10 +42,16 @@ export async function draftPrompt(input: DraftPromptInput): Promise<DraftPromptO
   const lang = input.lang ?? "zh";
   const driver = getLlmDriver(backend);
 
+  const baseSystemPrompt = getPromptEngineSystemPrompt(lang);
+  const systemPrompt = input.systemPromptSuffix
+    ? `${baseSystemPrompt}\n\n${input.systemPromptSuffix}`
+    : baseSystemPrompt;
+
   const result = await driver.completeJson<PromptDraft>({
-    systemPrompt: getPromptEngineSystemPrompt(lang),
+    systemPrompt,
     userPrompt: trimmed,
     timeoutMs: 60_000,
+    signal: input.signal,
   });
 
   const draft = result.data;

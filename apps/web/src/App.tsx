@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Activity,
   AlertCircle,
   CheckCircle2,
   Feather,
@@ -594,6 +595,18 @@ function Header({
         >
           <Languages strokeWidth={1.5} />
           {lang === "zh" ? t.header.langEn : t.header.langZh}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          asChild
+          title="Plugin 通道统计 (内部 / loopback only)"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <a href="/admin/plugin-stats" target="_blank" rel="noopener noreferrer">
+            <Activity strokeWidth={1.5} />
+            Stats
+          </a>
         </Button>
         <Button
           variant="outline"
