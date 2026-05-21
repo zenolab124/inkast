@@ -36,17 +36,21 @@ function resolveMode(capability: ProviderCapability): ImageGenerationMode {
 const DEFAULT_TIMEOUT_MS = 600_000;
 
 /**
- * Per-provider transient-failure retry budget. Empirically the anyrouter
- * proxy goes through brief windows where the image_generation tool fires but
- * never emits a partial — the stream ends with 0 done items. These are not
- * deterministic failures; a retry 5-10s later typically lands in a different
- * upstream queue slot and succeeds. We retry up to this many times PER
- * provider before falling over to the next one in the pool.
+ * Per-provider transient-failure retry budget. Total attempts per provider =
+ * PROVIDER_RETRY_LIMIT + 1 (initial attempt + N retries).
+ *
+ * Set to 1 (total 2 attempts) because most "transient" failures we actually
+ * observe in production are provider-side model-level outages (e.g. stream
+ * ends with 0 done items — the upstream model node is wedged, not the queue
+ * slot). Retrying the same provider beyond a single bounce just doubles the
+ * wait before we fall over to a healthier provider. The empirical
+ * "different queue slot on retry" wins are rare enough that 1 retry covers
+ * them; further retries pay the full 600s ceiling for nothing.
  *
  * Moderation, auth, and abort errors are NEVER retried — those are
  * deterministic and a retry would just waste time.
  */
-const PROVIDER_RETRY_LIMIT = 2;
+const PROVIDER_RETRY_LIMIT = 1;
 const PROVIDER_RETRY_BACKOFF_MS = 5_000;
 
 /**

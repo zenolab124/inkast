@@ -15,6 +15,18 @@ import {
   type ProviderBreakdownRow,
   type RecentTaskRow,
 } from "../../storage/plugin-stats.js";
+import {
+  getJobsHourBuckets,
+  getJobsLatency,
+  getJobsOverview,
+  getJobsTopErrorCodes,
+  getRecentJobs,
+  type JobErrorCodeRow,
+  type JobHourBucket,
+  type JobLatencyStats,
+  type JobOverviewStats,
+  type RecentJobRow,
+} from "../../storage/job-stats.js";
 
 /**
  * Admin dashboard for the plugin channel. Loopback-only — `nginx /inkast/`
@@ -47,8 +59,29 @@ adminRoutes.get("/plugin-stats", c => {
   const buckets = getHourBuckets(Date.now() - 24 * 60 * 60 * 1000); // 24h 趋势固定
   const recent = getRecentTasks(50);
 
+  // Web UI 通道(jobs 表)— 与 plugin_tasks 完全独立
+  const webOverview = getJobsOverview(since);
+  const webLatency = getJobsLatency(since);
+  const webErrors = getJobsTopErrorCodes(since, 10);
+  const webBuckets = getJobsHourBuckets(Date.now() - 24 * 60 * 60 * 1000);
+  const webRecent = getRecentJobs(50);
+
   return c.html(
-    renderHtml({ window, overview, latency, callback, errors, providers, buckets, recent }),
+    renderHtml({
+      window,
+      overview,
+      latency,
+      callback,
+      errors,
+      providers,
+      buckets,
+      recent,
+      webOverview,
+      webLatency,
+      webErrors,
+      webBuckets,
+      webRecent,
+    }),
   );
 });
 
@@ -65,11 +98,17 @@ interface RenderInput {
   providers: ProviderBreakdownRow[];
   buckets: HourBucket[];
   recent: RecentTaskRow[];
+  webOverview: JobOverviewStats;
+  webLatency: JobLatencyStats;
+  webErrors: JobErrorCodeRow[];
+  webBuckets: JobHourBucket[];
+  webRecent: RecentJobRow[];
 }
 
 const STATUS_ZH: Record<string, string> = {
   queued: "排队中",
   running: "进行中",
+  pending: "排队中",
   succeeded: "成功",
   failed: "失败",
   callback_lost: "回调丢失",
@@ -184,17 +223,63 @@ function renderHtml(d: RenderInput): string {
     })
     .join("");
 
+  // ── Web UI 通道(jobs)对应变量 ─────────────────────────────────────────
+  const webOverviewStatusRows = Object.entries(d.webOverview.byStatus)
+    .map(
+      ([s, n]) =>
+        `<div class="row"><span class="key">${statusBadge(s)}</span><span class="val num">${n}</span></div>`,
+    )
+    .join("");
+
+  const webErrorRows = d.webErrors.length
+    ? d.webErrors
+        .map(
+          e =>
+            `<div class="row"><span class="key"><code>${escapeText(e.code)}</code></span><span class="val num">${e.count}</span></div>`,
+        )
+        .join("")
+    : `<div class="meta">(窗口内无失败任务)</div>`;
+
+  const webMaxBucket = Math.max(1, ...d.webBuckets.map(b => b.total));
+  const webBarlineHtml = d.webBuckets
+    .map(b => {
+      const totalH = Math.round((b.total / webMaxBucket) * 100);
+      const failH = b.total > 0 ? Math.round((b.failed / b.total) * totalH) : 0;
+      return `<div class="barcol" title="${escapeAttr(b.hour)}: 总=${b.total} 成功=${b.succeeded} 失败=${b.failed}">
+        <div class="bar fail" style="height:${failH}%"></div>
+        <div class="bar ok" style="height:${totalH - failH}%"></div>
+      </div>`;
+    })
+    .join("");
+
+  const webRecentRows = d.webRecent
+    .map(r => {
+      const created = new Date(r.createdAt).toISOString().replace("T", " ").slice(5, 19);
+      const total = r.totalDurationMs != null ? fmtMs(r.totalDurationMs) : "—";
+      return `<tr>
+        <td><code title="${escapeAttr(r.id)}">${escapeText(r.id.slice(0, 14))}…</code></td>
+        <td>${statusBadge(r.status)}</td>
+        <td><code>${escapeText(r.size)}</code></td>
+        <td><code>${escapeText(r.quality)}</code></td>
+        <td class="num">${total}</td>
+        <td>${r.errorCode ? `<code>${escapeText(r.errorCode)}</code>` : "—"}</td>
+        <td class="num meta-time">${escapeText(created)}</td>
+      </tr>`;
+    })
+    .join("");
+
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="60">
-<title>inkast plugin 通道 · 统计</title>
+<title>inkast · 任务统计</title>
 <style>
 * { box-sizing: border-box; }
 body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; margin: 0; padding: 20px; background: #F2EBDC; color: #2A2620; }
 h1 { font-size: 18px; margin: 0 0 6px; font-weight: 600; letter-spacing: -0.012em; }
+h2.section { font-size: 14px; margin: 20px 0 10px; font-weight: 600; letter-spacing: 0.02em; color: #3A5A40; border-bottom: 1px solid rgba(58,90,64,0.18); padding-bottom: 4px; }
 .topmeta { color: #7A6F5E; font-size: 12px; margin-bottom: 20px; }
 .topmeta a { color: #3A5A40; margin: 0 4px; text-decoration: none; padding: 2px 8px; border-radius: 3px; }
 .topmeta a.active { background: #3A5A40; color: #FBF6EA; }
@@ -230,12 +315,13 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
 </style>
 </head>
 <body>
-<h1>inkast plugin 通道 · 统计</h1>
+<h1>inkast · 任务统计</h1>
 <div class="topmeta">
   生成时间 ${now} · 60 秒自动刷新 · 时间窗口:
   ${winLink("24h", "最近 24 小时")} ${winLink("7d", "最近 7 天")} ${winLink("30d", "最近 30 天")} ${winLink("all", "全部")}
 </div>
 
+<h2 class="section">Plugin 通道(外部客户)</h2>
 <div class="grid">
 
   <div class="card">
@@ -297,6 +383,51 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
     <table>
       <thead><tr><th>任务 ID</th><th>Plugin</th><th>状态</th><th>渠道</th><th>LLM</th><th>生图</th><th>总耗时</th><th>回调次数</th><th>错误</th><th>回调主机</th><th>创建时间</th></tr></thead>
       <tbody>${recentRows || '<tr><td colspan="11" class="meta">(暂无任务)</td></tr>'}</tbody>
+    </table>
+  </div>
+
+</div>
+
+<h2 class="section">Web UI 通道(本机生图)</h2>
+<div class="grid">
+
+  <div class="card">
+    <h2>总览</h2>
+    <div class="big">${d.webOverview.total}</div>
+    <div class="meta">时间窗口内任务数</div>
+    <div style="margin-top:10px">
+      ${webOverviewStatusRows || '<div class="meta">(无任务)</div>'}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>总耗时 · 毫秒</h2>
+    <div class="meta">仅成功任务;Web UI 通道未拆分 LLM/生图阶段</div>
+    <div class="num" style="font-size:13px;margin-top:6px">
+      n=${d.webLatency.count}<br>
+      p50 ${fmtMs(d.webLatency.p50)}<br>
+      p90 ${fmtMs(d.webLatency.p90)}<br>
+      p99 ${fmtMs(d.webLatency.p99)}<br>
+      max ${fmtMs(d.webLatency.max)}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>错误码 Top 10</h2>
+    ${webErrorRows}
+  </div>
+
+  <div class="card wide">
+    <h2>最近 24 小时趋势(按小时)</h2>
+    <div class="meta">绿 = 成功 · 红 = 失败 · 悬停柱状条看详情</div>
+    <div class="barline">${webBarlineHtml || '<div class="meta">(无数据)</div>'}</div>
+  </div>
+
+  <div class="card wide">
+    <h2>最近任务(最近 50 条,不限时间窗口)</h2>
+    <table>
+      <thead><tr><th>任务 ID</th><th>状态</th><th>尺寸</th><th>质量</th><th>总耗时</th><th>错误</th><th>创建时间</th></tr></thead>
+      <tbody>${webRecentRows || '<tr><td colspan="7" class="meta">(暂无任务)</td></tr>'}</tbody>
     </table>
   </div>
 
