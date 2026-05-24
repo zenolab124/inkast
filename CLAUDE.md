@@ -181,6 +181,17 @@ LLM 备选通道（OpenAI 兼容 Chat）可以 Phase 1 一起做，也可以 Pha
 - 不要在 Phase 1 做云备份（COS / R2）。
 - 不要 spawn `claude` CLI，用 SDK。
 
+## 故障排查
+
+用户报告 "失败了 / 出错了 / 效果不对" 这种模糊问题时,**先读 [`docs/debugging-playbook.md`](docs/debugging-playbook.md)**,按里面的 SOP 走:
+
+1. 通道速记 (SnapUB plugin / Web UI)
+2. 信息源三件套 (DB / journal / 用户描述)
+3. 决策树 (Q1-Q6 关键判定问题)
+4. 附录:image provider 池现状、rewrite chain 速记、部署节奏、凭据红线、常用 grep 关键字
+
+不读 = 重复踩坑 = 在错误方向上挖。这份 playbook 沉淀了多次实战排查经验,**禁止依赖记忆瞎试**。
+
 ## 参考资料
 
 - gpt-image-canvas 中文说明：`~/workspace/cc-clone/gpt-image-canvas/README.zh-CN.md`
