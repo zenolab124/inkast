@@ -8,6 +8,7 @@ export const zh: Translations = {
   tabs: {
     draft: "起草",
     gallery: "作品",
+    pluginGallery: "插件作品",
   },
   header: {
     config: "配置",

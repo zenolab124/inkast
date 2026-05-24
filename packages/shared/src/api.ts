@@ -364,6 +364,19 @@ export interface GenerateImageAttempt {
   errorCode?: string;
   errorMessage?: string;
   durationMs: number;
+  /** Upstream HTTP status when the attempt was an APIError (4xx/5xx). */
+  httpStatus?: number;
+  /** Upstream request id, when available (e.g. `x-request-id` header). */
+  requestId?: string;
+  /**
+   * Raw response body the upstream returned for this attempt. Object when the
+   * upstream sent valid JSON (e.g. APIError parsed body); string when it sent
+   * HTML / plaintext / unparseable JSON. Truncated to ~4KB before persisting
+   * to keep the attempts column bounded. Empty / undefined when the attempt
+   * succeeded or the error was purely client-side (e.g. AbortError) with no
+   * upstream payload.
+   */
+  errorBody?: unknown;
 }
 
 export interface GenerateImageResponse {
@@ -398,6 +411,10 @@ export interface JobRecord {
   attempts: GenerateImageAttempt[];
   errorCode: string | null;
   errorMessage: string | null;
+  /** Final image provider id that succeeded. Null when the job failed. */
+  providerId: string | null;
+  /** Cached display name (provider row may be deleted later). */
+  providerName: string | null;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
@@ -412,4 +429,32 @@ export interface SubmitJobResponse {
 
 export interface ListJobsResponse {
   jobs: JobRecord[];
+}
+
+/**
+ * Single row of the plugin-channel gallery view served at
+ * `GET /admin/plugin-gallery.json`. One row per succeeded plugin task that has
+ * an R2-hosted image. Used by the loopback-only admin gallery page (a Tab in
+ * the main web UI) — not exposed publicly.
+ */
+export interface PluginGalleryItem {
+  /** plugin_tasks.id (e.g. `ink-<uuid>`). */
+  id: string;
+  pluginId: string;
+  providerName: string | null;
+  /** Public R2 URL — `aivariants.124213.xyz/aiVariants/ink-…png` etc. */
+  imageUrl: string;
+  /** `image/png` / `image/jpeg`. */
+  mime: string | null;
+  /** Original caller prompt (free-form prose; may include marker prefixes). */
+  prompt: string;
+  /** LLM-expanded prompt JSON when available; null for skip-LLM plugins. */
+  promptJson: unknown | null;
+  llmDurationMs: number | null;
+  imageDurationMs: number | null;
+  createdAt: number;
+}
+
+export interface ListPluginGalleryResponse {
+  items: PluginGalleryItem[];
 }

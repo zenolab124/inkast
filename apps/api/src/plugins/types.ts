@@ -24,7 +24,7 @@ export type PluginImageStorage =
       bucket: string;
       publicBase: string;          // e.g. "https://aivariants.124213.xyz"
       keyPrefix: string;           // e.g. "aiVariants/", "" for bucket root
-      contentType: "image/png" | "image/jpeg";
+      contentType: "image/png" | "image/jpeg" | "image/webp";
     };
 export interface InkastPlugin {
   readonly id: string;

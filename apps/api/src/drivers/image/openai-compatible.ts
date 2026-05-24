@@ -15,6 +15,7 @@ import {
   type Provider,
   type ProviderCapability,
 } from "../../storage/providers.js";
+import { acquireProviderSlot } from "../../lib/throttle.js";
 import { callImageGenerationTool } from "./openai-responses.js";
 import {
   ImageGenError,
@@ -69,6 +70,47 @@ function resolveRetryLimit(capability: ProviderCapability): number {
 }
 
 /**
+ * Resolve the per-provider minimum interval (ms) between dispatched
+ * requests. Precedence:
+ *   1. capability.extras.min_interval_ms  (per-provider override; we follow
+ *      the same pattern as retryLimit even though rate budget is really a
+ *      per-API-key property — in practice each provider has one image
+ *      capability so this is effectively per-provider)
+ *   2. env INKAST_PROVIDER_MIN_INTERVAL_MS_DEFAULT  (process-wide default)
+ *   3. 0  (no throttling)
+ */
+function resolveProviderMinIntervalMs(capability: ProviderCapability): number {
+  const overrideRaw = capability.extras?.min_interval_ms;
+  if (typeof overrideRaw === "number" && Number.isFinite(overrideRaw) && overrideRaw >= 0) {
+    return overrideRaw;
+  }
+  const envRaw = process.env.INKAST_PROVIDER_MIN_INTERVAL_MS_DEFAULT;
+  if (envRaw) {
+    const parsed = Number.parseInt(envRaw, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return 0;
+}
+
+/**
+ * Read `extras.headers` off a capability. Useful for proxies that gate on
+ * a specific User-Agent or custom auth header (e.g. Codex backends that
+ * only accept "official client" headers). Filters to string-valued entries
+ * to keep the fetch/SDK contracts honest.
+ */
+export function resolveExtraHeaders(
+  capability: ProviderCapability,
+): Record<string, string> | undefined {
+  const raw = capability.extras?.headers;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "string" && v.length > 0) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
  * OpenAI-compatible image generation, via the official `openai` SDK.
  *
  * Why SDK instead of raw fetch: third-party OpenAI-compatible proxies
@@ -81,11 +123,22 @@ function resolveRetryLimit(capability: ProviderCapability): number {
  * Pool semantics match imagegen/scripts/generate.py — see types.ts header.
  */
 export async function generateImage(input: ImageGenInput): Promise<ImageGenOutcome> {
-  const pool = listEnabledCapabilities("image");
+  const fullPool = listEnabledCapabilities("image");
+  const excludeSet = new Set(input.excludeProviderIds ?? []);
+  let pool = excludeSet.size > 0
+    ? fullPool.filter(p => !excludeSet.has(p.provider.id))
+    : fullPool;
+  if (input.requireMode) {
+    pool = pool.filter(p => resolveMode(p.capability) === input.requireMode);
+  }
   if (pool.length === 0) {
     throw new ImageGenError(
       "no_providers",
-      "no providers configured — add one in the provider config dialog",
+      fullPool.length === 0
+        ? "no providers configured — add one in the provider config dialog"
+        : input.requireMode
+          ? `no provider matching mode=${input.requireMode} after excludes`
+          : `all ${fullPool.length} provider(s) are excluded from this run`,
     );
   }
 
@@ -103,6 +156,13 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
     let lastClassified: ClassifiedError | undefined;
 
     for (let retry = 0; retry <= retryLimit; retry++) {
+      if (input.signal?.aborted) {
+        throw new ImageGenError("aborted", "image generation aborted by caller", attempts);
+      }
+      // Per-provider rate limit. Blocks until this provider's slot opens
+      // (serialized with other in-flight calls to the same providerId).
+      // No-op when min_interval_ms is 0.
+      await acquireProviderSlot(provider.id, resolveProviderMinIntervalMs(capability));
       if (input.signal?.aborted) {
         throw new ImageGenError("aborted", "image generation aborted by caller", attempts);
       }
@@ -160,6 +220,9 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           errorCode: classified.code,
           errorMessage: classified.message,
           durationMs: Date.now() - started,
+          httpStatus: classified.httpStatus,
+          requestId: classified.requestId,
+          errorBody: truncateErrorBody(classified.body),
         });
         console.log(
           `[image] ✗ ${provider.name} failed (${classified.code}) in ${Date.now() - started}ms`,
@@ -169,19 +232,37 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
         }
 
         // Hard-stop errors — never retry these.
-        if (classified.code === "moderation" && !input.bypassModeration) {
-          throw new ImageGenError(
-            "moderation_rejected",
-            `provider "${provider.name}" rejected on content moderation: ${classified.message}. Set bypassModeration to retry remaining providers.`,
-            attempts,
-            err,
-          );
+        if (classified.code === "moderation") {
+          // Same hard-stop semantics as provider_blocked_content / upstream_
+          // safety_rejected: rerunning the same prompt on the same provider
+          // will keep being moderation-rejected. Fall over to the next
+          // provider; the rewrite wrapper will pick up this trigger code
+          // and start an LLM rewrite if any later provider also surfaces a
+          // trigger-coded failure.
+          //
+          // (Used to throw ImageGenError("moderation_rejected") here, which
+          // bypassed the rewrite wrapper entirely. That was wrong: most
+          // "moderation" classifications come from upstream proxies' own
+          // image-review layers, NOT OpenAI's content-policy moderation —
+          // rewriting the prompt can actually move past them.)
+          break;
         }
         if (classified.code === "aborted") {
           throw new ImageGenError("aborted", "image generation aborted by caller", attempts, err);
         }
         if (classified.code === "auth") {
           // Wrong API key won't get better on retry. Fall over to next provider.
+          break;
+        }
+        if (classified.code === "provider_blocked_content") {
+          // Gateway keyword filter — same prompt will fail every time on this
+          // provider. Skip remaining retries and fall over.
+          break;
+        }
+        if (classified.code === "upstream_safety_rejected") {
+          // OpenAI model-layer safety reject — same prompt won't pass next
+          // time either. Skip retries, fall over (and the rewrite wrapper
+          // will pick this attempt up via the cumulative attempts trail).
           break;
         }
         // Transient — back off briefly, then retry on the same provider.
@@ -213,6 +294,7 @@ async function callProvider(
   apiKey: string,
   input: ImageGenInput,
 ): Promise<string> {
+  const extraHeaders = resolveExtraHeaders(capability);
   const client = new OpenAI({
     apiKey,
     baseURL: provider.baseUrl.replace(/\/+$/, ""),
@@ -222,6 +304,7 @@ async function callProvider(
     // 5-10 minutes each. We already retry at the pool-walker layer with full
     // visibility, so let the SDK fail loudly on the first attempt.
     maxRetries: 0,
+    ...(extraHeaders ? { defaultHeaders: extraHeaders } : {}),
   });
 
   // gpt-image-2 accepts size values the openai SDK's TypeScript union does
@@ -335,6 +418,70 @@ async function buildEditBody(
 interface ClassifiedError {
   code: AttemptErrorCode;
   message: string;
+  /** Set for APIError; left undefined for network/abort/unknown branches. */
+  httpStatus?: number;
+  /** Set when SDK exposed it on the APIError instance. */
+  requestId?: string;
+  /**
+   * Raw upstream response body (already JSON-parsed by SDK when possible).
+   * String when upstream sent HTML or non-JSON; serialized + truncated
+   * downstream before persisting. May be undefined for purely client-side
+   * errors (abort, classifier-only failures) where no upstream payload exists.
+   */
+  body?: unknown;
+}
+
+/**
+ * Cap on JSON-serialized errorBody size before it's stored in the attempts
+ * column. Gateways returning HTML error pages can produce multi-KB bodies; we
+ * don't want one wedged provider to balloon the DB. 4KB is enough to capture
+ * an OpenAI APIError shape plus a moderate proxy-side trace block.
+ */
+const ERROR_BODY_MAX_BYTES = 4096;
+
+/**
+ * Best-effort grab of the upstream request id off an APIError. OpenAI SDK
+ * normally promotes it onto `err.requestID`, but some compat proxies return it
+ * only in raw response headers (`x-request-id` / `cf-ray` / `x-trace-id`).
+ */
+function extractRequestId(err: APIError): string | undefined {
+  const direct = (err as unknown as { requestID?: string }).requestID;
+  if (direct) return direct;
+  const headers = (err as unknown as { headers?: Record<string, string> }).headers;
+  if (headers && typeof headers === "object") {
+    return (
+      headers["x-request-id"] ??
+      headers["x-trace-id"] ??
+      headers["cf-ray"] ??
+      undefined
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Serialize any value to a string within the byte budget. Objects get
+ * pretty-printed for dashboard readability; oversized values get the trailing
+ * portion replaced with a marker so the truncation is obvious to operators.
+ */
+export function truncateErrorBody(body: unknown): unknown {
+  if (body === undefined || body === null) return body;
+  let serialized: string;
+  if (typeof body === "string") {
+    serialized = body;
+  } else {
+    try {
+      serialized = JSON.stringify(body, null, 2);
+    } catch {
+      serialized = String(body);
+    }
+  }
+  if (serialized.length <= ERROR_BODY_MAX_BYTES) {
+    // For object inputs that fit, keep the structured shape so the dashboard
+    // can render it natively rather than re-parsing a string.
+    return typeof body === "string" ? body : body;
+  }
+  return `${serialized.slice(0, ERROR_BODY_MAX_BYTES)}\n…[truncated ${serialized.length - ERROR_BODY_MAX_BYTES} bytes]`;
 }
 
 function classifyError(err: unknown): ClassifiedError {
@@ -348,15 +495,32 @@ function classifyError(err: unknown): ClassifiedError {
       typeof err.error === "object" && err.error && "message" in err.error
         ? String((err.error as { message?: unknown }).message ?? err.message)
         : err.message;
+    const requestId = extractRequestId(err);
+    // err.error is the SDK-parsed body when upstream sent JSON; fall back to
+    // err.message envelope so the operator at least sees the SDK's framing
+    // (status code / error class) instead of an empty body.
+    const body =
+      err.error !== undefined && err.error !== null
+        ? err.error
+        : { message: err.message, status: err.status };
     const isModeration =
       err.code === "content_policy_violation" ||
       err.type === "content_policy_violation" ||
       /content[_ ]policy|moderation|safety/i.test(message);
-    if (isModeration) return { code: "moderation", message };
-    if (status === 401 || status === 403) return { code: "auth", message: `HTTP ${status}: ${message}` };
-    if (status === 429) return { code: "rate_limit", message };
-    if (status && status >= 500) return { code: "server", message: `HTTP ${status}: ${message}` };
-    return { code: "unknown", message: `HTTP ${status}: ${message}` };
+    if (isModeration) return { code: "moderation", message, httpStatus: status, requestId, body };
+    // Gateway-level keyword filter (not upstream model safety). Some Chinese
+    // proxies wrap a policy refusal in HTTP 5xx with a Chinese message and a
+    // traceid; retrying the same gateway with the same prompt is pointless,
+    // so the pool walker treats this as a hard-fallover to the next provider.
+    const isProviderBlocked =
+      /违反.*?(平台|内容).*?(政策|规则)|内容.*?违规|提交.*?违反/.test(message);
+    if (isProviderBlocked) {
+      return { code: "provider_blocked_content", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
+    }
+    if (status === 401 || status === 403) return { code: "auth", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
+    if (status === 429) return { code: "rate_limit", message, httpStatus: status, requestId, body };
+    if (status && status >= 500) return { code: "server", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
+    return { code: "unknown", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
   }
 
   // Node fetch typically wraps the real reason in `.cause`. Unwrap it so
@@ -365,15 +529,55 @@ function classifyError(err: unknown): ClassifiedError {
   const baseMessage = err instanceof Error ? err.message : String(err);
   const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
   let message = baseMessage;
+  let causeRepr: unknown = undefined;
   if (cause !== undefined && cause !== null) {
     const causeStr =
       cause instanceof Error
         ? `${cause.name}: ${cause.message}${(cause as Error & { code?: string }).code ? ` (code=${(cause as Error & { code?: string }).code})` : ""}`
         : String(cause);
     message = `${baseMessage} | cause: ${causeStr}`;
+    causeRepr =
+      cause instanceof Error
+        ? {
+            name: cause.name,
+            message: cause.message,
+            code: (cause as Error & { code?: string }).code,
+          }
+        : cause;
   }
+  // No upstream HTTP body to surface for these branches, but still expose the
+  // wrapped error shape — operators want to see e.g. the undici cause code.
+  const body =
+    err instanceof Error
+      ? { name: err.name, message: baseMessage, cause: causeRepr, stack: err.stack }
+      : { value: String(err) };
   if (/network|fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|UND_ERR_|ECONNRESET/i.test(message)) {
-    return { code: "network", message };
+    return { code: "network", message, body };
   }
-  return { code: "unknown", message };
+  // Same gateway-level filter check as the APIError branch above — covers
+  // responses-mode failures (which throw plain Error, not APIError).
+  if (/违反.*?(平台|内容).*?(政策|规则)|内容.*?违规|提交.*?违反/.test(message)) {
+    return { code: "provider_blocked_content", message, body };
+  }
+  // OpenAI model-layer safety reject — typically surfaced through the SSE
+  // `response.failed` event in responses-mode. The driver wraps it inside
+  // the inkast diag message ("...Upstream errors: [response.failed: Your
+  // request was rejected by the safety system. ...]"). Treat the same as
+  // provider_blocked_content: hard-stop the current provider's retry, and
+  // trigger LLM rewrite (model layer can change its mind once we degrade
+  // the prompt's IP-identifying fingerprints).
+  if (/rejected by the safety system|response\.failed.*safety|content[_ ]policy_violation/i.test(message)) {
+    return { code: "upstream_safety_rejected", message, body };
+  }
+  // responses-mode driver throws plain Error with shape `HTTP <status>: ...`;
+  // give the pool walker the same retry/fallover semantics it gets from the
+  // SDK's APIError branch above by recovering the status code from the text.
+  const httpMatch = message.match(/^HTTP (\d{3}):/);
+  if (httpMatch) {
+    const httpStatus = parseInt(httpMatch[1]!, 10);
+    if (httpStatus === 401 || httpStatus === 403) return { code: "auth", message, httpStatus, body };
+    if (httpStatus === 429) return { code: "rate_limit", message, httpStatus, body };
+    if (httpStatus >= 500) return { code: "server", message, httpStatus, body };
+  }
+  return { code: "unknown", message, body };
 }

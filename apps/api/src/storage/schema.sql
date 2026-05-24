@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   attempts           TEXT NOT NULL DEFAULT '[]',
   error_code         TEXT,
   error_message      TEXT,
+  provider_id        TEXT,                 -- final image provider that succeeded (null if failed); used by admin dashboard
+  provider_name      TEXT,                 -- cached for human-readable stats; provider row may be deleted later
   prose              TEXT,                 -- carried through onto the generation row when succeeded
   ai_filled_fields   TEXT,                 -- JSON array, carried through to the generation row
   created_at         INTEGER NOT NULL,
@@ -109,6 +111,9 @@ CREATE TABLE IF NOT EXISTS plugin_tasks (
   image_url            TEXT,                  -- succeeded only, mutually exclusive with b64_json (set by imageStorage.kind='r2' plugins)
   mime                 TEXT,                  -- 'image/jpeg' or 'image/png'
   prompt_json          TEXT,                  -- succeeded only: JSON.stringify of merged ImagePrompt
+  rewritten_prompt     TEXT,                  -- JSON array string[]; one entry per LLM rewrite round actually performed; empty/null when no rewrite happened
+  success_round        INTEGER,               -- succeeded only: 0=round 0 (original prompt) | 1=round 1 LLM vision rewrite | 2=fingerprint-degrade | 3=color-only anchor
+  post_review_edited   INTEGER,               -- succeeded only: 0=post-review didn't run OR ran but didn't change image; 1=image was replaced by post-review edit
   error_code           TEXT,                  -- failed/interrupted only
   error_msg            TEXT,
   callback_attempts    INTEGER NOT NULL DEFAULT 0,
@@ -118,6 +123,7 @@ CREATE TABLE IF NOT EXISTS plugin_tasks (
   image_duration_ms    INTEGER,
   provider_id          TEXT,                  -- image provider id that actually fulfilled (null if failed before reaching driver)
   provider_name        TEXT,                  -- image provider name (cached for human-readable stats; provider row may be deleted later)
+  attempts             TEXT NOT NULL DEFAULT '[]',  -- JSON array of every provider attempt (ok + failures), driver-provided ImageGenAttempt[]
   created_at           INTEGER NOT NULL,
   completed_at         INTEGER
 );

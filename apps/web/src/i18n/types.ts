@@ -8,6 +8,7 @@ export interface Translations {
   tabs: {
     draft: string;
     gallery: string;
+    pluginGallery: string;
   };
   header: {
     config: string;

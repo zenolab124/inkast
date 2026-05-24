@@ -106,6 +106,8 @@ export function useJobs({ onSucceeded, onFailed }: UseJobsOptions = {}): UseJobs
         attempts: [],
         errorCode: null,
         errorMessage: null,
+        providerId: null,
+        providerName: null,
         createdAt: Date.now(),
         startedAt: null,
         completedAt: null,

@@ -6,6 +6,7 @@ import {
   Feather,
   ImageIcon,
   Languages,
+  Plug,
   Settings,
   Sparkles,
   X,
@@ -33,12 +34,25 @@ import { draftPrompt, warmupLlm, type DraftPromptError } from "./features/prompt
 import { useEffectiveLlmBackend } from "./features/prompt/useDefaultLlmBackend.js";
 import { ProviderConfigDialog } from "./features/config/ProviderConfigDialog.js";
 import { GalleryPage } from "./features/gallery/GalleryPage.js";
+import { PluginGalleryPage } from "./features/plugin-gallery/PluginGalleryPage.js";
 import { SessionWorkspace } from "./features/workspace/SessionWorkspace.js";
 import { useJobs } from "./features/jobs/useJobs.js";
 
 const EMPTY_PROMPT: ImagePrompt = { type: "", style: "", subject: "" };
 
-type AppTab = "draft" | "gallery";
+type AppTab = "draft" | "gallery" | "plugin-gallery";
+
+/**
+ * Resolve the initial tab from `?tab=` so admin dashboard links like
+ * `/?tab=plugin-gallery` open the right page. Unknown values fall back to
+ * draft. SSR-safe (window undefined → draft).
+ */
+function readTabFromUrl(): AppTab {
+  if (typeof window === "undefined") return "draft";
+  const v = new URLSearchParams(window.location.search).get("tab");
+  if (v === "gallery" || v === "plugin-gallery" || v === "draft") return v;
+  return "draft";
+}
 
 interface FlashMessage {
   kind: "success" | "error";
@@ -48,7 +62,21 @@ interface FlashMessage {
 export function App() {
   const { t, lang } = useLanguage();
   const [dark, setDark] = useState(false);
-  const [tab, setTab] = useState<AppTab>("draft");
+  const [tab, setTab] = useState<AppTab>(() => readTabFromUrl());
+
+  // Mirror tab state into the URL so the user can bookmark / refresh / link
+  // a specific tab (e.g. admin dashboard link → `/?tab=plugin-gallery`).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (tab === "draft") params.delete("tab");
+    else params.set("tab", tab);
+    const qs = params.toString();
+    const next = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, "", next);
+    }
+  }, [tab]);
 
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -412,6 +440,12 @@ export function App() {
           </div>
         )}
 
+        {tab === "plugin-gallery" && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <PluginGalleryPage />
+          </div>
+        )}
+
         <Footer />
       </div>
 
@@ -572,6 +606,13 @@ function Header({
             icon={<ImageIcon className="size-3.5" strokeWidth={1.5} />}
           >
             {t.tabs.gallery}
+          </TabButton>
+          <TabButton
+            active={tab === "plugin-gallery"}
+            onClick={() => onTab("plugin-gallery")}
+            icon={<Plug className="size-3.5" strokeWidth={1.5} />}
+          >
+            {t.tabs.pluginGallery}
           </TabButton>
         </nav>
       </div>

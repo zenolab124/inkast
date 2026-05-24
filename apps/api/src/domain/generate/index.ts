@@ -20,12 +20,12 @@ import { MAX_REFERENCE_IMAGES } from "@inkast/shared";
  */
 const REF_MAX_DIMENSION = 384;
 const REF_WEBP_QUALITY = 60;
-import { generateImage as drive } from "../../drivers/image/openai-compatible.js";
 import {
   ImageGenError,
   type ImageGenInput,
   type ImageGenOutcome,
 } from "../../drivers/image/types.js";
+import { driveWithRewriteFallback } from "./with-rewrite.js";
 import { imagesDir } from "../../storage/runtime.js";
 import {
   createGeneration,
@@ -73,7 +73,7 @@ export interface GenerateOutcome {
  * adapter (Phase 2+) can mirror them unchanged.
  */
 export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
-  const promptText = input.rawPrompt ?? JSON.stringify(input.prompt);
+  const originalPromptText = input.rawPrompt ?? JSON.stringify(input.prompt);
   const mode = input.rawPrompt ? "raw-prose" : "structured-json";
   const rawRefs = input.referenceImages ?? [];
   if (rawRefs.length > MAX_REFERENCE_IMAGES) {
@@ -86,11 +86,11 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
     ? await Promise.all(rawRefs.map(resolveReferenceImage))
     : undefined;
   console.log(
-    `[generate] ▶ start · mode=${mode} · prompt-bytes=${promptText.length}${referenceImages ? ` · refs=${referenceImages.length}` : ""}`,
+    `[generate] ▶ start · mode=${mode} · prompt-bytes=${originalPromptText.length}${referenceImages ? ` · refs=${referenceImages.length}` : ""}`,
   );
 
-  const outcome = await drive({
-    promptText,
+  const outcome = await driveWithRewriteFallback({
+    promptText: originalPromptText,
     size: input.size,
     quality: input.quality,
     format: input.format,
@@ -98,6 +98,10 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
     signal: input.signal,
     referenceImages,
   });
+  const promptText =
+    outcome.rewrittenPromptHistory.length > 0
+      ? outcome.rewrittenPromptHistory[outcome.rewrittenPromptHistory.length - 1]!
+      : originalPromptText;
 
   // Decode once; sniff the real format from magic numbers rather than trust
   // the driver/provider. Third-party OpenAI-compatible proxies frequently
@@ -147,7 +151,12 @@ export async function runGenerationJob(
   try {
     const outcome = await generate(input);
     updateJobAttempts(jobId, outcome.driver.attempts);
-    markJobSucceeded(jobId, outcome.generation.id);
+    markJobSucceeded(
+      jobId,
+      outcome.generation.id,
+      outcome.driver.providerId,
+      outcome.driver.providerName,
+    );
     console.log(`[job] ✓ ${jobId} succeeded (generation=${outcome.generation.id})`);
   } catch (err) {
     if (err instanceof ImageGenError) {

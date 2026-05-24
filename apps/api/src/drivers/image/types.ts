@@ -55,11 +55,26 @@ export interface ImageGenInput {
     /** Filename hint passed to OpenAI SDK toFile (extension matters). */
     filename: string;
   }>;
+  /**
+   * Provider IDs to skip on this run. Used by the rewrite-on-block retry path
+   * to avoid burning more time on a provider that already rejected the prompt
+   * with `provider_blocked_content`.
+   */
+  excludeProviderIds?: string[];
+  /**
+   * Restrict the pool walk to providers whose effective mode matches this
+   * value. Used by the post-review edit flow, which uses `images.edit` SDK
+   * route — only available on images-mode providers (responses-mode
+   * providers don't accept reference-based edits the same way).
+   */
+  requireMode?: "images" | "responses";
 }
 
 export type AttemptErrorCode =
   | "network"
   | "moderation"
+  | "provider_blocked_content"
+  | "upstream_safety_rejected"
   | "rate_limit"
   | "auth"
   | "server"
@@ -73,6 +88,16 @@ export interface ImageGenAttempt {
   errorCode?: AttemptErrorCode;
   errorMessage?: string;
   durationMs: number;
+  /** HTTP status when the upstream returned an APIError (4xx/5xx). */
+  httpStatus?: number;
+  /** Upstream request id (`x-request-id` header etc.), when SDK exposes it. */
+  requestId?: string;
+  /**
+   * Full upstream response body for the attempt. See GenerateImageAttempt
+   * (shared) for the truncation + shape contract. Persisted to plugin_tasks
+   * and jobs `attempts` JSON column for dashboard inspection.
+   */
+  errorBody?: unknown;
 }
 
 export interface ImageGenOutcome {
@@ -88,6 +113,7 @@ export interface ImageGenOutcome {
 export type ImageGenErrorCode =
   | "no_providers"             // pool is empty
   | "all_providers_failed"     // exhausted pool, none worked
+  | "all_providers_failed_after_rewrite" // even after LLM-rewriting the prompt, no provider worked
   | "moderation_rejected"      // pool stopped on a moderation rejection
   | "aborted"
   | "unknown";
@@ -99,6 +125,13 @@ export class ImageGenError extends Error {
     message: string,
     public readonly attempts: ImageGenAttempt[] = [],
     override readonly cause?: unknown,
+    /**
+     * One entry per LLM rewrite round actually performed before this error
+     * was thrown. Empty unless this error came from driveWithRewriteFallback.
+     * Persisted on plugin_tasks so the dashboard can show each round's
+     * output even on failure.
+     */
+    public readonly rewrittenPromptHistory: string[] = [],
   ) {
     super(message);
   }

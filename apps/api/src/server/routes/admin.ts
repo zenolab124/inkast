@@ -1,10 +1,16 @@
+import type {
+  GenerateImageAttempt,
+  ListPluginGalleryResponse,
+} from "@inkast/shared";
 import { Hono } from "hono";
+import { listSucceededPluginImages } from "../../storage/plugin-tasks.js";
 import {
   getCallbackHealth,
   getHourBuckets,
   getLatency,
   getOverview,
   getProviderBreakdown,
+  getProviderFailures,
   getRecentTasks,
   getTopErrorCodes,
   type CallbackHealth,
@@ -13,12 +19,15 @@ import {
   type LatencyStats,
   type OverviewStats,
   type ProviderBreakdownRow,
+  type ProviderFailureRow,
   type RecentTaskRow,
 } from "../../storage/plugin-stats.js";
 import {
   getJobsHourBuckets,
   getJobsLatency,
   getJobsOverview,
+  getJobsProviderBreakdown,
+  getJobsProviderFailures,
   getJobsTopErrorCodes,
   getRecentJobs,
   type JobErrorCodeRow,
@@ -56,6 +65,7 @@ adminRoutes.get("/plugin-stats", c => {
   const callback = getCallbackHealth(since);
   const errors = getTopErrorCodes(since, 10);
   const providers = getProviderBreakdown(since);
+  const providerFailures = getProviderFailures(since);
   const buckets = getHourBuckets(Date.now() - 24 * 60 * 60 * 1000); // 24h 趋势固定
   const recent = getRecentTasks(50);
 
@@ -63,6 +73,8 @@ adminRoutes.get("/plugin-stats", c => {
   const webOverview = getJobsOverview(since);
   const webLatency = getJobsLatency(since);
   const webErrors = getJobsTopErrorCodes(since, 10);
+  const webProviders = getJobsProviderBreakdown(since);
+  const webProviderFailures = getJobsProviderFailures(since);
   const webBuckets = getJobsHourBuckets(Date.now() - 24 * 60 * 60 * 1000);
   const webRecent = getRecentJobs(50);
 
@@ -74,16 +86,56 @@ adminRoutes.get("/plugin-stats", c => {
       callback,
       errors,
       providers,
+      providerFailures,
       buckets,
       recent,
       webOverview,
       webLatency,
       webErrors,
+      webProviders,
+      webProviderFailures,
       webBuckets,
       webRecent,
     }),
   );
 });
+
+/**
+ * Loopback-only JSON feed for the admin plugin-gallery page (rendered in the
+ * main React UI as a Tab — `?tab=plugin-gallery`). Returns the most recent
+ * succeeded plugin tasks that have an R2-hosted image. Both `succeeded` and
+ * `callback_lost` count: the image is real either way (callback_lost only
+ * means the caller never acked).
+ *
+ * Sits under `/admin/*` for the same reason as `plugin-stats`: nginx's public
+ * vhost only proxies `/plugins/v1/*`, so `/admin/*` is loopback-only.
+ */
+adminRoutes.get("/plugin-gallery.json", c => {
+  const limitRaw = c.req.query("limit");
+  const limit = Math.min(2000, Math.max(1, Number(limitRaw) || 500));
+  const items = listSucceededPluginImages(limit).map(r => ({
+    id: r.id,
+    pluginId: r.pluginId,
+    providerName: r.providerName,
+    imageUrl: r.imageUrl,
+    mime: r.mime,
+    prompt: r.prompt,
+    promptJson: r.promptJson ? safeParseJson(r.promptJson) : null,
+    llmDurationMs: r.llmDurationMs,
+    imageDurationMs: r.imageDurationMs,
+    createdAt: r.createdAt,
+  }));
+  const body: ListPluginGalleryResponse = { items };
+  return c.json(body);
+});
+
+function safeParseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // HTML 渲染
@@ -96,11 +148,14 @@ interface RenderInput {
   callback: CallbackHealth;
   errors: ErrorCodeRow[];
   providers: ProviderBreakdownRow[];
+  providerFailures: ProviderFailureRow[];
   buckets: HourBucket[];
   recent: RecentTaskRow[];
   webOverview: JobOverviewStats;
   webLatency: JobLatencyStats;
   webErrors: JobErrorCodeRow[];
+  webProviders: ProviderBreakdownRow[];
+  webProviderFailures: ProviderFailureRow[];
   webBuckets: JobHourBucket[];
   webRecent: RecentJobRow[];
 }
@@ -124,6 +179,53 @@ function renderHtml(d: RenderInput): string {
 
   const statusBadge = (s: string): string =>
     `<span class="badge b-${escapeAttr(s)}">${escapeText(STATUS_ZH[s] ?? s)}</span>`;
+
+  // 渠道链:把 ImageGenAttempt[] 渲染成 "p1 ✓ · p2 ✗server · p3 ✗moderation"
+  // 这种横向徽章序列。失败徽章 hover 时弹一个 CSS 浮层(.tip 子元素),
+  // 里面 pretty-print 完整 raw body(httpStatus / requestId / errorBody)。
+  // 当 attempts 为空时,用最终 provider_name 兜底显示(老数据/失败到达 driver 前)。
+  const renderAttemptChain = (
+    finalProvider: string | null,
+    attempts: GenerateImageAttempt[],
+  ): string => {
+    if (attempts.length === 0) {
+      return finalProvider
+        ? `<code>${escapeText(finalProvider)}</code>`
+        : "—";
+    }
+    const parts = attempts.map(a => {
+      if (a.ok) {
+        return `<span class="att att-ok" title="${escapeAttr(`${a.providerName} · ${a.durationMs}ms`)}"><code>${escapeText(a.providerName)}</code> ✓</span>`;
+      }
+      const code = a.errorCode ?? "unknown";
+      return `<span class="att att-fail"><code>${escapeText(a.providerName)}</code> ✗<span class="att-code">${escapeText(code)}</span>${renderAttemptTip(a)}</span>`;
+    });
+    return `<div class="chain">${parts.join('<span class="att-sep">·</span>')}</div>`;
+  };
+
+  const renderProviderFailures = (rows: ProviderFailureRow[]): string => {
+    if (rows.length === 0) {
+      return `<tr><td colspan="4" class="meta">(窗口内无 attempt 记录)</td></tr>`;
+    }
+    return rows
+      .map(r => {
+        const failRate =
+          r.totalAttempts > 0
+            ? ((r.failedAttempts / r.totalAttempts) * 100).toFixed(0)
+            : "—";
+        const codes = Object.entries(r.byErrorCode)
+          .sort(([, a], [, b]) => b - a)
+          .map(([code, n]) => `<code title="${escapeAttr(code)}">${escapeText(code)}</code>×${n}`)
+          .join(" ");
+        return `<tr>
+          <td><code>${escapeText(r.providerName)}</code></td>
+          <td class="num">${r.totalAttempts}</td>
+          <td class="num">${r.failedAttempts} (${failRate}%)</td>
+          <td>${codes || "—"}</td>
+        </tr>`;
+      })
+      .join("");
+  };
 
   const overviewStatusRows = Object.entries(d.overview.byStatus)
     .map(
@@ -206,22 +308,27 @@ function renderHtml(d: RenderInput): string {
       const llm = r.llmDurationMs ? fmtMs(r.llmDurationMs) : "—";
       const img = r.imageDurationMs ? fmtMs(r.imageDurationMs) : "—";
       const lostMark = r.callbackLost ? `<span title="回调重试已耗尽">⚠</span>` : "";
-      const provider = r.providerName ? `<code>${escapeText(r.providerName)}</code>` : "—";
+      const chain = renderAttemptChain(r.providerName, r.attempts);
+      const errCell = r.errorCode
+        ? `<code title="${escapeAttr(r.errorMsg ?? "")}">${escapeText(r.errorCode)}</code>`
+        : "—";
       return `<tr>
         <td><code title="${escapeAttr(r.id)}">${escapeText(r.id.slice(0, 14))}…</code></td>
         <td><code>${escapeText(r.pluginId)}</code></td>
         <td>${statusBadge(r.status)}</td>
-        <td>${provider}</td>
+        <td>${chain}</td>
         <td class="num">${llm}</td>
         <td class="num">${img}</td>
         <td class="num">${total}</td>
         <td class="num">${r.callbackAttempts}${lostMark}</td>
-        <td>${r.errorCode ? `<code>${escapeText(r.errorCode)}</code>` : "—"}</td>
+        <td>${errCell}</td>
         <td><span class="meta-host" title="${escapeAttr(r.callbackHost)}">${escapeText(r.callbackHost)}</span></td>
         <td class="num meta-time">${escapeText(created)}</td>
       </tr>`;
     })
     .join("");
+
+  const providerFailureRows = renderProviderFailures(d.providerFailures);
 
   // ── Web UI 通道(jobs)对应变量 ─────────────────────────────────────────
   const webOverviewStatusRows = Object.entries(d.webOverview.byStatus)
@@ -256,17 +363,36 @@ function renderHtml(d: RenderInput): string {
     .map(r => {
       const created = new Date(r.createdAt).toISOString().replace("T", " ").slice(5, 19);
       const total = r.totalDurationMs != null ? fmtMs(r.totalDurationMs) : "—";
+      const chain = renderAttemptChain(r.providerName, r.attempts);
+      const errCell = r.errorCode
+        ? `<code title="${escapeAttr(r.errorMessage ?? "")}">${escapeText(r.errorCode)}</code>`
+        : "—";
       return `<tr>
         <td><code title="${escapeAttr(r.id)}">${escapeText(r.id.slice(0, 14))}…</code></td>
         <td>${statusBadge(r.status)}</td>
         <td><code>${escapeText(r.size)}</code></td>
         <td><code>${escapeText(r.quality)}</code></td>
+        <td>${chain}</td>
         <td class="num">${total}</td>
-        <td>${r.errorCode ? `<code>${escapeText(r.errorCode)}</code>` : "—"}</td>
+        <td>${errCell}</td>
         <td class="num meta-time">${escapeText(created)}</td>
       </tr>`;
     })
     .join("");
+
+  const webProviderRows = d.webProviders.length
+    ? d.webProviders
+        .map(
+          p => `<tr>
+        <td><code>${escapeText(p.providerName)}</code></td>
+        <td class="num">${p.succeeded}</td>
+        <td class="num">${fmtMs(p.avgImageMs)}</td>
+      </tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="3" class="meta">(窗口内无成功出图)</td></tr>`;
+
+  const webProviderFailureRows = renderProviderFailures(d.webProviderFailures);
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -283,6 +409,8 @@ h2.section { font-size: 14px; margin: 20px 0 10px; font-weight: 600; letter-spac
 .topmeta { color: #7A6F5E; font-size: 12px; margin-bottom: 20px; }
 .topmeta a { color: #3A5A40; margin: 0 4px; text-decoration: none; padding: 2px 8px; border-radius: 3px; }
 .topmeta a.active { background: #3A5A40; color: #FBF6EA; }
+.topmeta a.tabjump { background: #A4453B; color: #FBF6EA; }
+.topmeta a.tabjump:hover { background: #8C3A33; }
 .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-bottom: 14px; }
 .card { background: #FBF6EA; padding: 14px 16px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(70,45,20,0.08), 0 1px 3px rgba(70,45,20,0.06); }
 .card.wide { grid-column: 1 / -1; }
@@ -312,6 +440,26 @@ table tr:hover td { background: rgba(70,45,20,0.03); }
 .bar.fail { background: #A4453B; }
 code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px; background: rgba(70,45,20,0.06); padding: 1px 4px; border-radius: 2px; }
 .meta { color: #7A6F5E; font-size: 11px; margin: 4px 0; }
+.chain { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; line-height: 1.5; }
+.att { position: relative; display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; border-radius: 3px; font-size: 11px; white-space: nowrap; cursor: default; }
+.att-ok { background: rgba(58,90,64,0.12); color: #2A4A2E; }
+.att-fail { background: rgba(164,69,59,0.10); color: #6B2620; cursor: help; }
+.att-code { font-size: 10px; opacity: 0.85; font-family: "SF Mono", Menlo, "Courier New", monospace; }
+.att-sep { color: #B5A88E; font-size: 10px; }
+.att code { background: transparent; padding: 0; }
+/* Hover-floating detail panel for failed attempts. CSS-only — no JS.
+   .att-fail::after is a transparent bridge so hover survives the gap between
+   badge and tip. Otherwise moving the mouse down loses hover and tip closes. */
+.att-fail::after { content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 6px; }
+.att-fail .tip { display: none; position: absolute; top: calc(100% + 4px); left: 0; z-index: 1000; background: #FBF6EA; color: #2A2620; border: 1px solid rgba(70,45,20,0.15); border-radius: 4px; padding: 10px 12px; min-width: 320px; max-width: 560px; max-height: 380px; overflow: auto; box-shadow: 0 6px 22px rgba(70,45,20,0.20), 0 0 0 1px rgba(255,255,255,0.6) inset; white-space: normal; text-align: left; }
+.att-fail:hover .tip { display: block; }
+.tip-header { font-weight: 600; font-size: 12px; color: #6B2620; margin-bottom: 4px; }
+.tip-meta { font-size: 11px; color: #7A6F5E; margin-bottom: 6px; font-family: "SF Mono", Menlo, "Courier New", monospace; }
+.tip-message { font-size: 11px; color: #2A2620; margin: 6px 0; padding: 4px 6px; background: rgba(164,69,59,0.06); border-radius: 3px; word-break: break-word; }
+.tip-body { font-size: 11px; font-family: "SF Mono", Menlo, "Courier New", monospace; background: rgba(70,45,20,0.04); padding: 6px 8px; border-radius: 3px; margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 280px; overflow: auto; }
+/* table cells must allow the tip to escape — overflow:visible is default but
+   spell it out so future themes don't accidentally clip with overflow:hidden */
+table td { overflow: visible; }
 </style>
 </head>
 <body>
@@ -319,6 +467,7 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
 <div class="topmeta">
   生成时间 ${now} · 60 秒自动刷新 · 时间窗口:
   ${winLink("24h", "最近 24 小时")} ${winLink("7d", "最近 7 天")} ${winLink("30d", "最近 30 天")} ${winLink("all", "全部")}
+  · <a href="/?tab=plugin-gallery" target="_blank" rel="noreferrer" class="tabjump">插件作品图 →</a>
 </div>
 
 <h2 class="section">Plugin 通道(外部客户)</h2>
@@ -361,6 +510,15 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
     <table>
       <thead><tr><th>渠道(provider)</th><th>成功出图数</th><th>平均生图耗时</th></tr></thead>
       <tbody>${providerRows}</tbody>
+    </table>
+  </div>
+
+  <div class="card wide">
+    <h2>渠道失败 Top(按 attempt 维度)</h2>
+    <div class="meta">从每条任务的 attempts 链聚合,包含 retry 内 + provider 切换。鼠标悬停错误码可看 raw 字符串</div>
+    <table>
+      <thead><tr><th>渠道(provider)</th><th>总 attempt</th><th>失败 attempt(率)</th><th>错误码分布</th></tr></thead>
+      <tbody>${providerFailureRows}</tbody>
     </table>
   </div>
 
@@ -418,6 +576,24 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
   </div>
 
   <div class="card wide">
+    <h2>渠道分布(出图来源)</h2>
+    <div class="meta">仅统计 succeeded;平均耗时含排队 + LLM + 生图(Web UI 通道未拆段点)</div>
+    <table>
+      <thead><tr><th>渠道(provider)</th><th>成功出图数</th><th>平均耗时</th></tr></thead>
+      <tbody>${webProviderRows}</tbody>
+    </table>
+  </div>
+
+  <div class="card wide">
+    <h2>渠道失败 Top(按 attempt 维度)</h2>
+    <div class="meta">从每条 job 的 attempts 链聚合,包含 retry 内 + provider 切换</div>
+    <table>
+      <thead><tr><th>渠道(provider)</th><th>总 attempt</th><th>失败 attempt(率)</th><th>错误码分布</th></tr></thead>
+      <tbody>${webProviderFailureRows}</tbody>
+    </table>
+  </div>
+
+  <div class="card wide">
     <h2>最近 24 小时趋势(按小时)</h2>
     <div class="meta">绿 = 成功 · 红 = 失败 · 悬停柱状条看详情</div>
     <div class="barline">${webBarlineHtml || '<div class="meta">(无数据)</div>'}</div>
@@ -426,14 +602,54 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
   <div class="card wide">
     <h2>最近任务(最近 50 条,不限时间窗口)</h2>
     <table>
-      <thead><tr><th>任务 ID</th><th>状态</th><th>尺寸</th><th>质量</th><th>总耗时</th><th>错误</th><th>创建时间</th></tr></thead>
-      <tbody>${webRecentRows || '<tr><td colspan="7" class="meta">(暂无任务)</td></tr>'}</tbody>
+      <thead><tr><th>任务 ID</th><th>状态</th><th>尺寸</th><th>质量</th><th>渠道</th><th>总耗时</th><th>错误</th><th>创建时间</th></tr></thead>
+      <tbody>${webRecentRows || '<tr><td colspan="8" class="meta">(暂无任务)</td></tr>'}</tbody>
     </table>
   </div>
 
 </div>
 </body>
 </html>`;
+}
+
+/**
+ * Render the hover-floating detail panel for a failed attempt. Three blocks:
+ *   - header line:provider · errorCode · durationMs
+ *   - meta line:HTTP status + request id(when present)
+ *   - body block:errorMessage + pretty-printed raw upstream JSON
+ *
+ * Designed to be inert when attempts succeed (renderAttemptChain skips this
+ * branch). HTML must be fully escaped — body content comes from the upstream.
+ */
+function renderAttemptTip(a: GenerateImageAttempt): string {
+  const code = a.errorCode ?? "unknown";
+  const headerParts = [`${a.providerName}`, `✗ ${code}`, `${a.durationMs}ms`];
+  const metaBits: string[] = [];
+  if (a.httpStatus != null) metaBits.push(`HTTP ${a.httpStatus}`);
+  if (a.requestId) metaBits.push(`req-id: ${a.requestId}`);
+  const metaLine = metaBits.length ? metaBits.join(" · ") : "";
+
+  let bodyBlock = "";
+  if (a.errorBody !== undefined && a.errorBody !== null) {
+    let pretty: string;
+    if (typeof a.errorBody === "string") {
+      pretty = a.errorBody;
+    } else {
+      try {
+        pretty = JSON.stringify(a.errorBody, null, 2);
+      } catch {
+        pretty = String(a.errorBody);
+      }
+    }
+    bodyBlock = `<pre class="tip-body">${escapeText(pretty)}</pre>`;
+  }
+
+  return `<span class="tip">
+    <div class="tip-header">${escapeText(headerParts.join(" · "))}</div>
+    ${metaLine ? `<div class="tip-meta">${escapeText(metaLine)}</div>` : ""}
+    ${a.errorMessage ? `<div class="tip-message">${escapeText(a.errorMessage)}</div>` : ""}
+    ${bodyBlock}
+  </span>`;
 }
 
 function escapeText(s: string | null | undefined): string {

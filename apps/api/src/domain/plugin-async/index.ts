@@ -2,7 +2,9 @@ import sharp from "sharp";
 import type { ImagePrompt } from "@inkast/shared";
 
 import { draftPrompt } from "../prompt-engine/index.js";
-import { generateImage } from "../../drivers/image/openai-compatible.js";
+import { driveWithRewriteFallback } from "../generate/with-rewrite.js";
+import { reviewAndMaybeEdit } from "../post-review-edit/index.js";
+import { ImageGenError } from "../../drivers/image/types.js";
 import { putImage, R2UploadError } from "../../drivers/storage/r2.js";
 import {
   listRegisteredPlugins,
@@ -38,7 +40,7 @@ import {
  * 状态机:queued → running → succeeded | failed → callback retry → final terminal
  */
 
-const MAX_CONCURRENT = 2;
+const MAX_CONCURRENT = 25;
 const CALLBACK_DELAYS_MS = [5_000, 30_000, 300_000];      // 5s / 30s / 5min
 const MAX_CALLBACK_ATTEMPTS = 1 + CALLBACK_DELAYS_MS.length;  // 4 = 1 immediate + 3 retries
 
@@ -57,12 +59,36 @@ function getPluginById(id: string): InkastPlugin | undefined {
 // Public entry: submit
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Caller-controllable pipeline policy. Surfaces through the plugin v1 submit
+ * endpoint as `pipeline_policy`. All fields optional — see route handler for
+ * wire field names + validation.
+ */
+export interface PipelinePolicy {
+  /** Skip round 0 (caller's literal prompt) and start at round 1 (LLM vision rewrite). Useful for obscure characters where the image model doesn't know the IP. */
+  skipOriginal?: boolean;
+  /** Highest rewrite round allowed. 0 = no rewrite at all; 3 = full chain (default). */
+  maxRound?: 0 | 1 | 2 | 3;
+  /** Run an LLM-judged post-review + image edit pass after a round-2 or round-3 success. round 0/1 successes are not reviewed. */
+  postReviewEdit?: boolean;
+}
+
 export interface SubmitInput {
   plugin: InkastPlugin;
   prompt: string;
   callbackUrl: string;
   callbackToken: string;
+  pipelinePolicy?: PipelinePolicy;
 }
+
+/**
+ * In-memory taskId → policy map. Worker picks it up when running the task.
+ * Cleared after the task terminates. Not persisted — if inkast restarts mid-
+ * flight, the recovered task runs with default policy (the worst case is a
+ * task running with too-permissive defaults; the caller's failure-mode
+ * preference is then ignored on that specific recovery, which is acceptable).
+ */
+const taskPolicies = new Map<string, PipelinePolicy>();
 
 /**
  * Persist a task, schedule its async work, return the task row immediately.
@@ -77,8 +103,11 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
     callbackUrl: input.callbackUrl,
     callbackToken: input.callbackToken,
   });
+  if (input.pipelinePolicy && Object.keys(input.pipelinePolicy).length > 0) {
+    taskPolicies.set(task.id, input.pipelinePolicy);
+  }
   console.log(
-    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}`,
+    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}${input.pipelinePolicy ? ` policy=${JSON.stringify(input.pipelinePolicy)}` : ""}`,
   );
   enqueueTask(task.id);
   return task;
@@ -164,14 +193,68 @@ async function runTask(taskId: string): Promise<void> {
     }
 
     // 3. 出图(走 image driver 池)— 两种模式共享
+    // driveWithRewriteFallback 会按 pipeline_policy 控制的策略跑 round 0 → 3,
+    // 内容相关失败(provider_blocked_content / upstream_safety_rejected /
+    // moderation)触发 LLM 改写后重试。policy.skipOriginal 跳过 round 0,
+    // policy.maxRound 控制最高轮次。
+    const callerPolicy = taskPolicies.get(taskId);
     const imageStart = Date.now();
-    const imageOutcome = await generateImage({
-      promptText,
-      size: plugin.imageDefaults.size,
-      quality: plugin.imageDefaults.quality,
-      format: plugin.imageDefaults.format,
-    });
-    imageDurationMs = Date.now() - imageStart;
+    let imageOutcome;
+    try {
+      imageOutcome = await driveWithRewriteFallback(
+        {
+          promptText,
+          size: plugin.imageDefaults.size,
+          quality: plugin.imageDefaults.quality,
+          format: plugin.imageDefaults.format,
+        },
+        {
+          skipOriginal: callerPolicy?.skipOriginal,
+          maxRound: callerPolicy?.maxRound,
+        },
+      );
+    } finally {
+      imageDurationMs = Date.now() - imageStart;
+    }
+
+    // 3.5 出图后审查 + 编辑(可选, 仅 round ≥ 2 且 caller 显式开启)
+    // round 0/1 出图质量本身就高, 跳过 review 省 token/时间。仅 round 2/3
+    // 这种"降级出图"路径才走 review — 如果 LLM 觉得不像参考图, 触发一次
+    // image edit (强制 images-mode provider, references=刚生成的图,
+    // prompt=LLM 给的"把 X 改成 Y"指令)。edit 失败 fallback 用 review 前
+    // 的原图 — 永远不让 review 步骤把成功 task 变成失败 task。
+    let postReviewEdited = false;
+    if (
+      callerPolicy?.postReviewEdit === true &&
+      (imageOutcome.successRound === 2 || imageOutcome.successRound === 3)
+    ) {
+      const reviewOutcome = await reviewAndMaybeEdit({
+        originalPromptText: promptText,
+        currentImageB64: imageOutcome.imageB64,
+        currentImageMime: "image/png",
+        imageInputBase: {
+          size: plugin.imageDefaults.size,
+          quality: plugin.imageDefaults.quality,
+          format: plugin.imageDefaults.format,
+        },
+      });
+      if (reviewOutcome.editApplied) {
+        // Splice the edit result back into the outcome we'll persist + callback.
+        imageOutcome = {
+          ...imageOutcome,
+          imageB64: reviewOutcome.imageB64,
+          attempts: [
+            ...imageOutcome.attempts,
+            ...(reviewOutcome.editDriverOutcome?.attempts ?? []),
+          ],
+        };
+        imageDurationMs += reviewOutcome.editDurationMs;
+        postReviewEdited = true;
+      }
+      console.log(
+        `[post-review] task=${taskId} looks_like_target=${reviewOutcome.looksLikeTarget} editApplied=${reviewOutcome.editApplied}${reviewOutcome.fallbackReason ? ` fallback=${reviewOutcome.fallbackReason}` : ""}`,
+      );
+    }
 
     // 4. 出图持久化:按 plugin.imageStorage 分两条路
     //    - "b64"(默认):JPEG transcode(payload 缩 5x)+ DB b64_json 字段
@@ -184,7 +267,12 @@ async function runTask(taskId: string): Promise<void> {
         plugin.outputDimensions,
         storage.contentType,
       );
-      const ext = storage.contentType === "image/png" ? "png" : "jpg";
+      const ext =
+        storage.contentType === "image/png"
+          ? "png"
+          : storage.contentType === "image/webp"
+            ? "webp"
+            : "jpg";
       const key = `${storage.keyPrefix}${taskId}.${ext}`;
       try {
         const r2Out = await putImage({
@@ -203,6 +291,10 @@ async function runTask(taskId: string): Promise<void> {
           imageDurationMs,
           providerId: imageOutcome.providerId,
           providerName: imageOutcome.providerName,
+          attempts: imageOutcome.attempts,
+          rewrittenPrompts: imageOutcome.rewrittenPromptHistory,
+          successRound: imageOutcome.successRound,
+          postReviewEdited,
         });
         console.log(
           `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms r2=${r2Out.durationMs}ms(att=${r2Out.attempts}) total=${Date.now() - overallStart}ms url=${imageUrl}`,
@@ -217,6 +309,11 @@ async function runTask(taskId: string): Promise<void> {
           errorMsg: msg,
           llmDurationMs,
           imageDurationMs,
+          // Driver succeeded — its attempt trail is preserved so the dashboard
+          // can still show which provider produced the bytes (and any prior
+          // failed attempts during failover), even though we couldn't upload.
+          attempts: imageOutcome.attempts,
+          rewrittenPrompts: imageOutcome.rewrittenPromptHistory,
         });
         console.warn(`[plugin-async] ✗ task=${taskId} r2_upload_failed: ${msg}`);
       }
@@ -234,6 +331,10 @@ async function runTask(taskId: string): Promise<void> {
         imageDurationMs,
         providerId: imageOutcome.providerId,
         providerName: imageOutcome.providerName,
+        attempts: imageOutcome.attempts,
+        rewrittenPrompts: imageOutcome.rewrittenPromptHistory,
+        successRound: imageOutcome.successRound,
+        postReviewEdited,
       });
       console.log(
         `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms total=${Date.now() - overallStart}ms`,
@@ -241,15 +342,32 @@ async function runTask(taskId: string): Promise<void> {
     }
   } catch (err) {
     const mapped = toOpenAiError(err);
+    // When the image driver exhausted its provider pool it throws ImageGenError
+    // with the full attempts array attached — surface it on the task so the
+    // dashboard shows the failover trail even on terminal failure.
+    const attempts = err instanceof ImageGenError ? err.attempts : undefined;
+    // rewrite history is also attached to ImageGenError when the rewrite
+    // wrapper threw (all_providers_failed_after_rewrite or LLM mid-flight
+    // failure). Persisting it on failure rows is precisely what the operator
+    // needs for diagnostics — "what did the rewrite say before giving up".
+    const rewrittenPrompts =
+      err instanceof ImageGenError ? err.rewrittenPromptHistory : undefined;
     markTaskFailed(taskId, {
       errorCode: mapped.body.error.code,
       errorMsg: mapped.body.error.message,
       llmDurationMs: llmDurationMs || null,
       imageDurationMs: imageDurationMs || null,
+      attempts,
+      rewrittenPrompts,
     });
     console.warn(
       `[plugin-async] ✗ task=${taskId} ${mapped.body.error.code}: ${mapped.body.error.message}`,
     );
+  } finally {
+    // Always drop the policy entry once the task reaches a terminal state,
+    // even if we hit an unexpected throw. Leaving entries around would slow-
+    // leak memory across long-running inkast processes.
+    taskPolicies.delete(taskId);
   }
 
   void deliverCallback(taskId, 0);
@@ -309,7 +427,16 @@ async function transcodeToJpeg(
 
   let pipeline = sharp(srcBytes);
   if (outputDims) {
-    pipeline = pipeline.resize(outputDims.width, outputDims.height, { fit: "cover" });
+    // position: "top" instead of "center" — for portrait-aspect plugin
+    // outputs (SnapUB 622×866) the model often returns a taller-than-target
+    // image (1024×1536) and "center" cover crops ~33px off both top AND
+    // bottom, frequently shaving the character's head/hair. "top" pins to
+    // the top edge so only the bottom is cropped — losing feet hurts much
+    // less than losing heads in portrait cards.
+    pipeline = pipeline.resize(outputDims.width, outputDims.height, {
+      fit: "cover",
+      position: "top",
+    });
   }
   const jpegBytes = await pipeline.jpeg({ quality: 80, progressive: false }).toBuffer();
   return { b64Json: jpegBytes.toString("base64"), mime: "image/jpeg" };
@@ -328,7 +455,7 @@ async function transcodeToJpeg(
 async function prepareImageForR2(
   srcB64: string,
   outputDims: { width: number; height: number } | undefined,
-  contentType: "image/png" | "image/jpeg",
+  contentType: "image/png" | "image/jpeg" | "image/webp",
 ): Promise<Buffer> {
   const srcBytes = Buffer.from(srcB64, "base64");
   if (!outputDims && contentType === "image/png") {
@@ -336,14 +463,17 @@ async function prepareImageForR2(
   }
   let pipeline = sharp(srcBytes);
   if (outputDims) {
+    // See transcodeToJpeg above — same reasoning for "top" over "center".
     pipeline = pipeline.resize(outputDims.width, outputDims.height, {
       fit: "cover",
-      position: "center",
+      position: "top",
     });
   }
-  return contentType === "image/png"
-    ? pipeline.png().toBuffer()
-    : pipeline.jpeg({ quality: 80 }).toBuffer();
+  if (contentType === "image/png") return pipeline.png().toBuffer();
+  if (contentType === "image/jpeg") return pipeline.jpeg({ quality: 80 }).toBuffer();
+  // image/webp — lossy q=85 hits ~5-10x compression vs PNG with no
+  // perceivable quality drop for character art / illustrations.
+  return pipeline.webp({ quality: 85 }).toBuffer();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -425,11 +555,32 @@ interface CallbackBody {
   error_code?: string;
   error_msg?: string;
   completed_at: number;
+  /**
+   * Which rewrite round produced the final image. Sent only on `succeeded`.
+   *   0 = caller's literal prompt (no rewrite happened)
+   *   1 = LLM vision rewrite (identity-feature)
+   *   2 = fingerprint-degrade
+   *   3 = color-only anchor
+   * Callers can use this to label the result UX-wise (e.g. round 0 = "精准",
+   * round 3 = "风格化").
+   */
+  success_round?: 0 | 1 | 2 | 3;
+  /**
+   * True iff the optional post-review edit step (only enabled when the
+   * caller passes `pipeline_policy.post_review_edit=true`) actually
+   * replaced the image bytes. Sent only on `succeeded`. Lets the caller
+   * distinguish "raw round-N output" from "round-N then post-review-edited".
+   */
+  post_review_edited?: boolean;
 }
 
 function buildCallbackBody(task: PluginTaskRow): CallbackBody {
   const completed_at = Math.floor((task.completedAt ?? Date.now()) / 1000);
   if (task.status === "succeeded" && task.mime) {
+    const successFields = {
+      success_round: task.successRound ?? undefined,
+      post_review_edited: task.postReviewEdited ?? undefined,
+    } as const;
     // r2 路径:image_url 优先(v2.1 协议)
     if (task.imageUrl) {
       return {
@@ -439,6 +590,7 @@ function buildCallbackBody(task: PluginTaskRow): CallbackBody {
         mime: task.mime,
         prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
         completed_at,
+        ...successFields,
       };
     }
     // b64 路径(v2 协议)
@@ -450,6 +602,7 @@ function buildCallbackBody(task: PluginTaskRow): CallbackBody {
         mime: task.mime,
         prompt_json: task.promptJson ? safeParseJson(task.promptJson) : undefined,
         completed_at,
+        ...successFields,
       };
     }
   }

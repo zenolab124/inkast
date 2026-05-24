@@ -109,12 +109,21 @@ export class OpenAiCompatibleDriver implements LlmDriver {
     });
 
     try {
+      const userContent = opts.images && opts.images.length > 0
+        ? [
+            { type: "text" as const, text: opts.userPrompt },
+            ...opts.images.map(img => ({
+              type: "image_url" as const,
+              image_url: { url: img.url },
+            })),
+          ]
+        : opts.userPrompt;
       const completion = await client.chat.completions.create(
         {
           model: record.capability.model,
           messages: [
             { role: "system", content: opts.systemPrompt },
-            { role: "user", content: opts.userPrompt },
+            { role: "user", content: userContent },
           ],
           response_format: {
             type: "json_schema",

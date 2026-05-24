@@ -30,6 +30,8 @@ interface JobRow {
   attempts: string;
   error_code: string | null;
   error_message: string | null;
+  provider_id: string | null;
+  provider_name: string | null;
   prose: string | null;
   ai_filled_fields: string | null;
   created_at: number;
@@ -52,6 +54,8 @@ function rowToJob(row: JobRow): JobRecord {
     attempts: JSON.parse(row.attempts) as GenerateImageAttempt[],
     errorCode: row.error_code,
     errorMessage: row.error_message,
+    providerId: row.provider_id,
+    providerName: row.provider_name,
     createdAt: row.created_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
@@ -95,6 +99,8 @@ export function createJob(input: CreateJobInput): JobRecord {
     attempts: [],
     errorCode: null,
     errorMessage: null,
+    providerId: null,
+    providerName: null,
     createdAt: now,
     startedAt: null,
     completedAt: null,
@@ -116,13 +122,19 @@ export function updateJobAttempts(
     .run(JSON.stringify(attempts), id);
 }
 
-export function markJobSucceeded(id: string, generationId: string): void {
+export function markJobSucceeded(
+  id: string,
+  generationId: string,
+  providerId: string,
+  providerName: string,
+): void {
   db()
     .prepare(
-      `UPDATE jobs SET status = 'succeeded', generation_id = ?, completed_at = ?
+      `UPDATE jobs SET status = 'succeeded', generation_id = ?,
+                       provider_id = ?, provider_name = ?, completed_at = ?
        WHERE id = ?`,
     )
-    .run(generationId, Date.now(), id);
+    .run(generationId, providerId, providerName, Date.now(), id);
 }
 
 export function markJobFailed(

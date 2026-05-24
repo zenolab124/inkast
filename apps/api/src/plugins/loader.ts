@@ -45,7 +45,7 @@ const ImageStorageSchema = z.discriminatedUnion("kind", [
       .url()
       .regex(/^https?:\/\//, "publicBase must be a full URL with scheme"),
     keyPrefix: z.string().default(""),
-    contentType: z.enum(["image/png", "image/jpeg"]).default("image/png"),
+    contentType: z.enum(["image/png", "image/jpeg", "image/webp"]).default("image/png"),
   }),
 ]);
 

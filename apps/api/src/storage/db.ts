@@ -51,6 +51,12 @@ function migrate(conn: Database.Database): void {
   addColumnIfMissing(conn, "plugin_tasks", "provider_id", "TEXT");
   addColumnIfMissing(conn, "plugin_tasks", "provider_name", "TEXT");
   addColumnIfMissing(conn, "plugin_tasks", "image_url", "TEXT");
+  addColumnIfMissing(conn, "plugin_tasks", "attempts", "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing(conn, "plugin_tasks", "rewritten_prompt", "TEXT");
+  addColumnIfMissing(conn, "plugin_tasks", "success_round", "INTEGER");
+  addColumnIfMissing(conn, "plugin_tasks", "post_review_edited", "INTEGER");
+  addColumnIfMissing(conn, "jobs", "provider_id", "TEXT");
+  addColumnIfMissing(conn, "jobs", "provider_name", "TEXT");
 
   backfillCapabilities(conn);
   seedBuiltinClaudeCode(conn);

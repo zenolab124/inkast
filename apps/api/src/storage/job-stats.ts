@@ -1,4 +1,10 @@
+import type { GenerateImageAttempt } from "@inkast/shared";
 import { db } from "./db.js";
+import {
+  aggregateAttempts,
+  type ProviderBreakdownRow,
+  type ProviderFailureRow,
+} from "./plugin-stats.js";
 
 /**
  * Aggregate queries for the Web UI channel (jobs table) — sibling of
@@ -37,7 +43,10 @@ export interface RecentJobRow {
   size: string;
   quality: string;
   errorCode: string | null;
+  errorMessage: string | null;
+  providerName: string | null;
   totalDurationMs: number | null;
+  attempts: GenerateImageAttempt[];
   createdAt: number;
 }
 
@@ -115,7 +124,8 @@ export function getJobsHourBuckets(sinceMs: number): JobHourBucket[] {
 export function getRecentJobs(limit = 50): RecentJobRow[] {
   const rows = db()
     .prepare(
-      `SELECT id, status, size, quality, error_code, created_at, completed_at
+      `SELECT id, status, size, quality, error_code, error_message,
+              provider_name, attempts, created_at, completed_at
        FROM jobs
        ORDER BY created_at DESC
        LIMIT ?`,
@@ -126,6 +136,9 @@ export function getRecentJobs(limit = 50): RecentJobRow[] {
       size: string;
       quality: string;
       error_code: string | null;
+      error_message: string | null;
+      provider_name: string | null;
+      attempts: string;
       created_at: number;
       completed_at: number | null;
     }>;
@@ -136,7 +149,64 @@ export function getRecentJobs(limit = 50): RecentJobRow[] {
     size: r.size,
     quality: r.quality,
     errorCode: r.error_code,
+    errorMessage: r.error_message,
+    providerName: r.provider_name,
     totalDurationMs: r.completed_at != null ? r.completed_at - r.created_at : null,
+    attempts: safeParseAttempts(r.attempts),
     createdAt: r.created_at,
   }));
+}
+
+function safeParseAttempts(raw: string | null | undefined): GenerateImageAttempt[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? (v as GenerateImageAttempt[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Web UI 通道版本的渠道分布。Mirrors plugin-stats.getProviderBreakdown:
+ * 只统计 succeeded(图已生成),按最终落地的 provider_name 聚合。失败的 job
+ * 没有 provider_name,不会出现在结果里。
+ *
+ * generations.duration_ms 不在 jobs 表上,所以平均耗时这里直接用 job 自身的
+ * (completed_at - created_at) — 包含排队 + LLM + 生图,跟 plugin 通道的"纯生图
+ * 耗时"语义不完全一致,但 Web UI 没拆点,这是能给出的最近似值。
+ */
+export function getJobsProviderBreakdown(sinceMs: number): ProviderBreakdownRow[] {
+  const rows = db()
+    .prepare(
+      `SELECT COALESCE(provider_name, '(unknown)') AS providerName,
+              COUNT(*) AS succeeded,
+              AVG(completed_at - created_at) AS avgImageMs
+       FROM jobs
+       WHERE created_at >= ?
+         AND status = 'succeeded'
+         AND completed_at IS NOT NULL
+         AND provider_name IS NOT NULL
+       GROUP BY providerName
+       ORDER BY succeeded DESC`,
+    )
+    .all(sinceMs) as Array<{ providerName: string; succeeded: number; avgImageMs: number | null }>;
+  return rows.map(r => ({
+    providerName: r.providerName,
+    succeeded: r.succeeded,
+    avgImageMs: r.avgImageMs ? Math.round(r.avgImageMs) : 0,
+  }));
+}
+
+/**
+ * Web UI 通道版本的渠道失败分布。复用 plugin-stats.aggregateAttempts,
+ * 让两通道的 dashboard 输出结构一致。
+ */
+export function getJobsProviderFailures(sinceMs: number): ProviderFailureRow[] {
+  const rows = db()
+    .prepare(
+      `SELECT attempts FROM jobs WHERE created_at >= ? AND attempts != '[]'`,
+    )
+    .all(sinceMs) as Array<{ attempts: string }>;
+  return aggregateAttempts(rows.map(r => safeParseAttempts(r.attempts)));
 }

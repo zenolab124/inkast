@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { GenerateImageAttempt } from "@inkast/shared";
 import { db } from "./db.js";
 
 export type PluginTaskStatus =
@@ -31,6 +32,30 @@ export interface PluginTaskRow {
   imageUrl: string | null;
   mime: string | null;
   promptJson: string | null;
+  /**
+   * One entry per LLM rewrite round actually performed. Empty array when no
+   * rewrite happened (original prompt succeeded). Persisted regardless of
+   * outcome — on failure paths the dashboard can still see what each round
+   * produced. Stored as JSON in the DB cell; deserialized here for callers.
+   */
+  rewrittenPrompts: string[];
+  /**
+   * Which rewrite round actually produced the successful image. Set only on
+   * `succeeded` tasks. Null otherwise (failed / not yet completed).
+   *   0 = caller's literal prompt direct (no rewrite happened)
+   *   1 = LLM vision rewrite (identity-feature)
+   *   2 = fingerprint-degrade
+   *   3 = color-only anchor
+   */
+  successRound: 0 | 1 | 2 | 3 | null;
+  /**
+   * True iff the post-review edit step actually replaced the image bytes.
+   * Set only on `succeeded` tasks. False means either post-review wasn't
+   * enabled, or it ran and the LLM judged the image already matched (no
+   * edit needed), or the edit attempt itself failed and we kept the
+   * pre-review image. Null on failed tasks.
+   */
+  postReviewEdited: boolean | null;
   errorCode: string | null;
   errorMsg: string | null;
   callbackAttempts: number;
@@ -40,6 +65,14 @@ export interface PluginTaskRow {
   imageDurationMs: number | null;
   providerId: string | null;
   providerName: string | null;
+  /**
+   * Every provider attempt the driver made for this task, in order. Includes
+   * both failures (with errorCode/errorMessage) and the final successful one
+   * (when status=succeeded). Empty array when the task failed before reaching
+   * the image driver (LLM error, no providers configured, R2 upload failure
+   * post-success). Each element is `GenerateImageAttempt` from @inkast/shared.
+   */
+  attempts: GenerateImageAttempt[];
   createdAt: number;
   completedAt: number | null;
 }
@@ -55,6 +88,9 @@ interface DbRow {
   image_url: string | null;
   mime: string | null;
   prompt_json: string | null;
+  rewritten_prompt: string | null;
+  success_round: number | null;
+  post_review_edited: number | null;
   error_code: string | null;
   error_msg: string | null;
   callback_attempts: number;
@@ -64,6 +100,7 @@ interface DbRow {
   image_duration_ms: number | null;
   provider_id: string | null;
   provider_name: string | null;
+  attempts: string;
   created_at: number;
   completed_at: number | null;
 }
@@ -80,6 +117,16 @@ function rowToTask(row: DbRow): PluginTaskRow {
     imageUrl: row.image_url,
     mime: row.mime,
     promptJson: row.prompt_json,
+    rewrittenPrompts: parseRewrittenPrompts(row.rewritten_prompt),
+    successRound:
+      row.success_round === 0 ||
+      row.success_round === 1 ||
+      row.success_round === 2 ||
+      row.success_round === 3
+        ? (row.success_round as 0 | 1 | 2 | 3)
+        : null,
+    postReviewEdited:
+      row.post_review_edited === null ? null : row.post_review_edited === 1,
     errorCode: row.error_code,
     errorMsg: row.error_msg,
     callbackAttempts: row.callback_attempts,
@@ -89,9 +136,35 @@ function rowToTask(row: DbRow): PluginTaskRow {
     imageDurationMs: row.image_duration_ms,
     providerId: row.provider_id,
     providerName: row.provider_name,
+    attempts: parseAttempts(row.attempts),
     createdAt: row.created_at,
     completedAt: row.completed_at,
   };
+}
+
+function parseAttempts(raw: string | null | undefined): GenerateImageAttempt[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? (v as GenerateImageAttempt[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseRewrittenPrompts(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+    // Legacy single-string format from v2.3 — wrap into a 1-element array
+    // so dashboards / callers see a consistent shape.
+    if (typeof v === "string" && v.length > 0) return [v];
+  } catch {
+    // v2.3 stored a raw string (not JSON). Treat as single round.
+    if (typeof raw === "string" && raw.length > 0) return [raw];
+  }
+  return [];
 }
 
 export interface CreatePluginTaskInput {
@@ -122,6 +195,9 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
     imageUrl: null,
     mime: null,
     promptJson: null,
+    rewrittenPrompts: [],
+    successRound: null,
+    postReviewEdited: null,
     errorCode: null,
     errorMsg: null,
     callbackAttempts: 0,
@@ -131,6 +207,7 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
     imageDurationMs: null,
     providerId: null,
     providerName: null,
+    attempts: [],
     createdAt: now,
     completedAt: null,
   };
@@ -145,37 +222,55 @@ export function markTaskRunning(id: string): void {
  * imageStorage.kind. mime is always set so callers know the bytes' format
  * (even when bytes are remote — useful for client-side Content-Type assertions).
  */
+interface SucceededBase {
+  mime: string;
+  promptJson: string;
+  llmDurationMs: number;
+  imageDurationMs: number;
+  providerId: string;
+  providerName: string;
+  /** Full driver attempt trail. Persisted as JSON for the admin dashboard. */
+  attempts: GenerateImageAttempt[];
+  /**
+   * One entry per LLM rewrite round actually performed before this terminal
+   * outcome. Empty array means no rewrite happened. The DRIVER does the
+   * dedup — callers always pass `outcome.rewrittenPromptHistory` straight
+   * through. Stored as JSON in the DB cell.
+   * Used by the admin dashboard / debugging — never sent in callbacks.
+   */
+  rewrittenPrompts?: string[];
+  /**
+   * Which rewrite round actually produced the image. 0 = caller's literal
+   * prompt; 1/2/3 = LLM rewrite rounds. Persisted for both the dashboard
+   * AND the callback body (snap-ub uses this to label the result).
+   */
+  successRound: 0 | 1 | 2 | 3;
+  /**
+   * True iff the post-review edit step replaced the image. False means
+   * either post-review didn't run, ran-and-passed, or ran-and-fell-back.
+   * Persisted for both dashboard + callback.
+   */
+  postReviewEdited: boolean;
+}
+
 export type MarkSucceededInput =
-  | {
-      kind: "b64";
-      b64Json: string;
-      mime: string;
-      promptJson: string;
-      llmDurationMs: number;
-      imageDurationMs: number;
-      providerId: string;
-      providerName: string;
-    }
-  | {
-      kind: "r2";
-      imageUrl: string;
-      mime: string;
-      promptJson: string;
-      llmDurationMs: number;
-      imageDurationMs: number;
-      providerId: string;
-      providerName: string;
-    };
+  | (SucceededBase & { kind: "b64"; b64Json: string })
+  | (SucceededBase & { kind: "r2"; imageUrl: string });
 
 export function markTaskSucceeded(id: string, input: MarkSucceededInput): void {
   const b64Json = input.kind === "b64" ? input.b64Json : null;
   const imageUrl = input.kind === "r2" ? input.imageUrl : null;
+  const rewrittenPromptsJson =
+    input.rewrittenPrompts && input.rewrittenPrompts.length > 0
+      ? JSON.stringify(input.rewrittenPrompts)
+      : null;
   db()
     .prepare(
       `UPDATE plugin_tasks
        SET status = 'succeeded', b64_json = ?, image_url = ?, mime = ?, prompt_json = ?,
+           rewritten_prompt = ?, success_round = ?, post_review_edited = ?,
            llm_duration_ms = ?, image_duration_ms = ?,
-           provider_id = ?, provider_name = ?,
+           provider_id = ?, provider_name = ?, attempts = ?,
            completed_at = ?
        WHERE id = ?`,
     )
@@ -184,10 +279,14 @@ export function markTaskSucceeded(id: string, input: MarkSucceededInput): void {
       imageUrl,
       input.mime,
       input.promptJson,
+      rewrittenPromptsJson,
+      input.successRound,
+      input.postReviewEdited ? 1 : 0,
       input.llmDurationMs,
       input.imageDurationMs,
       input.providerId,
       input.providerName,
+      JSON.stringify(input.attempts ?? []),
       Date.now(),
       id,
     );
@@ -198,14 +297,32 @@ export interface MarkFailedInput {
   errorMsg: string;
   llmDurationMs?: number | null;
   imageDurationMs?: number | null;
+  /**
+   * Driver attempt trail when the failure happened inside / after the image
+   * driver. Empty/omitted when the failure was pre-driver (LLM error, plugin
+   * not registered) or post-success (R2 upload — caller should pass the
+   * driver's successful trail in that case so the dashboard still shows it).
+   */
+  attempts?: GenerateImageAttempt[];
+  /**
+   * Rewrite rounds that ran before this failure. Always populate when the
+   * caller has access — diagnostics on failed tasks are exactly when this
+   * is most useful.
+   */
+  rewrittenPrompts?: string[];
 }
 
 export function markTaskFailed(id: string, input: MarkFailedInput): void {
+  const rewrittenPromptsJson =
+    input.rewrittenPrompts && input.rewrittenPrompts.length > 0
+      ? JSON.stringify(input.rewrittenPrompts)
+      : null;
   db()
     .prepare(
       `UPDATE plugin_tasks
        SET status = 'failed', error_code = ?, error_msg = ?,
-           llm_duration_ms = ?, image_duration_ms = ?, completed_at = ?
+           llm_duration_ms = ?, image_duration_ms = ?, attempts = ?,
+           rewritten_prompt = ?, completed_at = ?
        WHERE id = ?`,
     )
     .run(
@@ -213,6 +330,8 @@ export function markTaskFailed(id: string, input: MarkFailedInput): void {
       input.errorMsg,
       input.llmDurationMs ?? null,
       input.imageDurationMs ?? null,
+      JSON.stringify(input.attempts ?? []),
+      rewrittenPromptsJson,
       Date.now(),
       id,
     );
@@ -239,6 +358,67 @@ export function getPluginTask(id: string): PluginTaskRow | null {
     .prepare(`SELECT * FROM plugin_tasks WHERE id = ?`)
     .get(id) as DbRow | undefined;
   return row ? rowToTask(row) : null;
+}
+
+/**
+ * Plugin-gallery query: succeeded tasks within the GC window that have an R2
+ * image URL. Used by the admin gallery page (loopback). Returns only the cells
+ * the gallery needs — no b64_json, no callback_token (those would balloon the
+ * payload + risk leaking secrets even on loopback). Ordered newest-first.
+ *
+ * Note: b64-mode plugin tasks (b64_json populated, image_url NULL) are skipped
+ * by design — they're transient (returned in callback then GC'd 24h later),
+ * the bytes aren't browser-loadable, and only legacy v2 plugins use that mode.
+ */
+export interface PluginGalleryRow {
+  id: string;
+  pluginId: string;
+  providerName: string | null;
+  imageUrl: string;
+  mime: string | null;
+  prompt: string;
+  promptJson: string | null;
+  llmDurationMs: number | null;
+  imageDurationMs: number | null;
+  createdAt: number;
+}
+
+export function listSucceededPluginImages(limit = 500): PluginGalleryRow[] {
+  const rows = db()
+    .prepare(
+      `SELECT id, plugin_id, provider_name, image_url, mime,
+              prompt, prompt_json, llm_duration_ms, image_duration_ms,
+              created_at
+       FROM plugin_tasks
+       WHERE image_url IS NOT NULL
+         AND status IN ('succeeded', 'callback_lost')
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<{
+      id: string;
+      plugin_id: string;
+      provider_name: string | null;
+      image_url: string;
+      mime: string | null;
+      prompt: string;
+      prompt_json: string | null;
+      llm_duration_ms: number | null;
+      image_duration_ms: number | null;
+      created_at: number;
+    }>;
+  return rows.map(r => ({
+    id: r.id,
+    pluginId: r.plugin_id,
+    providerName: r.provider_name,
+    imageUrl: r.image_url,
+    mime: r.mime,
+    prompt: r.prompt,
+    promptJson: r.prompt_json,
+    llmDurationMs: r.llm_duration_ms,
+    imageDurationMs: r.image_duration_ms,
+    createdAt: r.created_at,
+  }));
 }
 
 /**

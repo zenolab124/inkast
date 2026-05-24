@@ -8,6 +8,7 @@ export const en: Translations = {
   tabs: {
     draft: "Draft",
     gallery: "Works",
+    pluginGallery: "Plugin Gallery",
   },
   header: {
     config: "Settings",

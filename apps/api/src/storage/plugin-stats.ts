@@ -1,3 +1,4 @@
+import type { GenerateImageAttempt } from "@inkast/shared";
 import { db } from "./db.js";
 
 /**
@@ -45,11 +46,13 @@ export interface RecentTaskRow {
   providerName: string | null;
   callbackHost: string;
   errorCode: string | null;
+  errorMsg: string | null;
   callbackAttempts: number;
   callbackLost: boolean;
   llmDurationMs: number | null;
   imageDurationMs: number | null;
   totalDurationMs: number | null;
+  attempts: GenerateImageAttempt[];
   createdAt: number;
 }
 
@@ -57,6 +60,19 @@ export interface ProviderBreakdownRow {
   providerName: string;
   succeeded: number;
   avgImageMs: number;
+}
+
+/**
+ * Per-provider failure breakdown computed from the `attempts` JSON arrays
+ * across all plugin_tasks in the window. Each attempt with `ok=false` counts
+ * once toward (providerName, errorCode). Used by the "渠道失败 Top" dashboard
+ * card to surface which channels are flaky and *how* they're failing.
+ */
+export interface ProviderFailureRow {
+  providerName: string;
+  totalAttempts: number;
+  failedAttempts: number;
+  byErrorCode: Record<string, number>;
 }
 
 /**
@@ -218,9 +234,10 @@ export function getHourBuckets(sinceMs: number): HourBucket[] {
 export function getRecentTasks(limit = 50): RecentTaskRow[] {
   const rows = db()
     .prepare(
-      `SELECT id, plugin_id, status, callback_url, error_code,
+      `SELECT id, plugin_id, status, callback_url, error_code, error_msg,
               callback_attempts, callback_lost, llm_duration_ms,
-              image_duration_ms, provider_name, created_at, completed_at
+              image_duration_ms, provider_name, attempts,
+              created_at, completed_at
        FROM plugin_tasks
        ORDER BY created_at DESC
        LIMIT ?`,
@@ -231,11 +248,13 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
       status: string;
       callback_url: string;
       error_code: string | null;
+      error_msg: string | null;
       callback_attempts: number;
       callback_lost: number;
       llm_duration_ms: number | null;
       image_duration_ms: number | null;
       provider_name: string | null;
+      attempts: string;
       created_at: number;
       completed_at: number | null;
     }>;
@@ -247,13 +266,71 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
     providerName: r.provider_name,
     callbackHost: extractHost(r.callback_url),
     errorCode: r.error_code,
+    errorMsg: r.error_msg,
     callbackAttempts: r.callback_attempts,
     callbackLost: r.callback_lost === 1,
     llmDurationMs: r.llm_duration_ms,
     imageDurationMs: r.image_duration_ms,
     totalDurationMs: r.completed_at != null ? r.completed_at - r.created_at : null,
+    attempts: safeParseAttempts(r.attempts),
     createdAt: r.created_at,
   }));
+}
+
+/**
+ * Walks every plugin_tasks.attempts JSON in the window and aggregates per
+ * (providerName, errorCode). Counts every attempt (including the successful
+ * final one) toward totalAttempts so a "100% success" channel shows up too;
+ * failedAttempts is the more useful one for spotting flaky providers.
+ *
+ * SQLite has json_each but iterating in Node is simpler given attempts arrays
+ * are small (typically ≤6) and we already need per-provider grouping logic.
+ */
+export function getProviderFailures(sinceMs: number): ProviderFailureRow[] {
+  const rows = db()
+    .prepare(
+      `SELECT attempts FROM plugin_tasks WHERE created_at >= ? AND attempts != '[]'`,
+    )
+    .all(sinceMs) as Array<{ attempts: string }>;
+
+  return aggregateAttempts(rows.map(r => safeParseAttempts(r.attempts)));
+}
+
+function safeParseAttempts(raw: string | null | undefined): GenerateImageAttempt[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? (v as GenerateImageAttempt[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Shared helper — also called from job-stats.ts so both channels build the
+ * exact same "渠道失败 Top" structure. Exported intentionally.
+ */
+export function aggregateAttempts(
+  attemptsArrays: GenerateImageAttempt[][],
+): ProviderFailureRow[] {
+  const byProvider = new Map<string, ProviderFailureRow>();
+  for (const arr of attemptsArrays) {
+    for (const a of arr) {
+      const name = a.providerName || "(unknown)";
+      let row = byProvider.get(name);
+      if (!row) {
+        row = { providerName: name, totalAttempts: 0, failedAttempts: 0, byErrorCode: {} };
+        byProvider.set(name, row);
+      }
+      row.totalAttempts++;
+      if (!a.ok) {
+        row.failedAttempts++;
+        const code = a.errorCode ?? "unknown";
+        row.byErrorCode[code] = (row.byErrorCode[code] ?? 0) + 1;
+      }
+    }
+  }
+  return [...byProvider.values()].sort((a, b) => b.failedAttempts - a.failedAttempts);
 }
 
 function extractHost(url: string): string {

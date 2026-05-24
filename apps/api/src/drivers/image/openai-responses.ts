@@ -1,5 +1,6 @@
 import { IMAGE_FORMAT_DEFAULT, extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
+import { resolveExtraHeaders } from "./openai-compatible.js";
 import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -109,6 +110,7 @@ export async function callImageGenerationTool(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
         Accept: "text/event-stream",
+        ...(resolveExtraHeaders(capability) ?? {}),
       },
       body: bodyJson,
       signal: controller.signal,

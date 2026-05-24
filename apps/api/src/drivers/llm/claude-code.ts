@@ -1,5 +1,9 @@
 import { query, AbortError } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKMessage, SDKResultSuccess } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  SDKMessage,
+  SDKResultSuccess,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import {
   LlmDriverError,
   type CompleteJsonOptions,
@@ -103,8 +107,12 @@ export class ClaudeCodeDriver implements LlmDriver {
     opts.signal?.addEventListener("abort", onExternalAbort, { once: true });
 
     try {
+      const promptArg: string | AsyncIterable<SDKUserMessage> =
+        opts.images && opts.images.length > 0
+          ? buildMultimodalUserPrompt(opts.userPrompt, opts.images)
+          : opts.userPrompt;
       const q = query({
-        prompt: opts.userPrompt,
+        prompt: promptArg,
         options: {
           systemPrompt: opts.systemPrompt,
           tools: [],
@@ -237,4 +245,29 @@ function classifySdkError(err: unknown): LlmDriverError {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
+}
+
+/**
+ * Wrap a text-plus-images prompt in the AsyncIterable<SDKUserMessage> form
+ * the Agent SDK expects for multi-content turns. Single emission — closes
+ * after yielding one message so the SDK knows the user input is complete.
+ */
+async function* buildMultimodalUserPrompt(
+  userPrompt: string,
+  images: Array<{ url: string }>,
+): AsyncIterable<SDKUserMessage> {
+  yield {
+    type: "user",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text: userPrompt },
+        ...images.map(img => ({
+          type: "image" as const,
+          source: { type: "url" as const, url: img.url },
+        })),
+      ],
+    },
+  };
 }

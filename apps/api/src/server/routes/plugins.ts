@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { submitForPlugin } from "../../domain/plugin-async/index.js";
+import type { PipelinePolicy } from "../../domain/plugin-async/index.js";
 import { getPluginTask } from "../../storage/plugin-tasks.js";
 import { pluginAuth } from "../middleware/plugin-auth.js";
 
@@ -105,11 +106,29 @@ pluginRoutes.post("/v1/images/submit", async c => {
     );
   }
 
+  // pipeline_policy — optional caller control over the rewrite chain + post-
+  // review edit step. All sub-fields are optional and default to the legacy
+  // behavior (run round 0, allow up to round 3, no post-review). See
+  // domain/generate/with-rewrite.ts for round semantics.
+  const policyInput = (body as { pipeline_policy?: unknown }).pipeline_policy;
+  const policy = parsePipelinePolicy(policyInput);
+  if (policy === "invalid") {
+    return c.json(
+      errBody(
+        "invalid_request",
+        "'pipeline_policy' must be an object with optional fields: skip_original (bool), max_round (0|1|2|3), post_review_edit (bool)",
+        "invalid_request_error",
+      ),
+      400,
+    );
+  }
+
   const task = submitForPlugin({
     plugin,
     prompt,
     callbackUrl: body.callback_url,
     callbackToken: body.callback_token,
+    pipelinePolicy: policy,
   });
 
   return c.json({
@@ -195,6 +214,45 @@ pluginRoutes.get("/v1/images/status/:id", c => {
 
 function errBody(code: string, message: string, type: string) {
   return { error: { code, message, type } };
+}
+
+/**
+ * Validate the caller-supplied pipeline_policy object. Returns:
+ *   - `undefined` if the field wasn't provided at all (use defaults)
+ *   - a validated PipelinePolicy on success
+ *   - `"invalid"` literal if any sub-field is malformed → 400 to caller
+ *
+ * All sub-fields are optional; the helper just rejects type-mismatches.
+ * Default semantics live in domain/generate/with-rewrite.ts (skip_original
+ * defaults to false, max_round to 3, post_review_edit to false).
+ */
+function parsePipelinePolicy(
+  raw: unknown,
+): PipelinePolicy | undefined | "invalid" {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object") return "invalid";
+  const r = raw as Record<string, unknown>;
+  const out: PipelinePolicy = {};
+  if (r.skip_original !== undefined) {
+    if (typeof r.skip_original !== "boolean") return "invalid";
+    out.skipOriginal = r.skip_original;
+  }
+  if (r.max_round !== undefined) {
+    if (
+      typeof r.max_round !== "number" ||
+      !Number.isInteger(r.max_round) ||
+      r.max_round < 0 ||
+      r.max_round > 3
+    ) {
+      return "invalid";
+    }
+    out.maxRound = r.max_round as 0 | 1 | 2 | 3;
+  }
+  if (r.post_review_edit !== undefined) {
+    if (typeof r.post_review_edit !== "boolean") return "invalid";
+    out.postReviewEdit = r.post_review_edit;
+  }
+  return out;
 }
 
 function safeParseJson(raw: string): unknown {

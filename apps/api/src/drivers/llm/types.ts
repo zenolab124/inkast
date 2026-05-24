@@ -25,6 +25,14 @@ export interface CompleteJsonOptions {
   timeoutMs?: number;
   /** Optional caller-provided abort signal. */
   signal?: AbortSignal;
+  /**
+   * Reference images to send alongside the text prompt. Each entry is a publicly
+   * fetchable URL — drivers pass them to the upstream model's vision input
+   * (e.g. OpenAI chat.completions `image_url` content parts). Drivers that
+   * cannot accept images for the active backend MUST silently fall back to
+   * text-only so callers don't have to gate on backend identity.
+   */
+  images?: Array<{ url: string }>;
 }
 
 export interface CompleteJsonResult<T = unknown> {
