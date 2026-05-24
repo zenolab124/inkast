@@ -17,6 +17,10 @@
 
 - [docs/plugin-overlay.md](../plugin-overlay.md) — Plugin overlay 机制权威说明。"客户特化 = 配置数据,不是代码 fork"原则。包含:加载流程、JSON Schema 完整定义、Token 管理(env 不进 JSON)、跟 git 分支模型的对比、未来 hook 扩展点设计。**理解 inkast 产品化必读**。
 - [docs/onboarding-new-plugin.md](../onboarding-new-plugin.md) — 给新客户接入 inkast plugin 通道的 step-by-step checklist。9 节覆盖:前提确认 / 决定身份 / 创建 overlay 仓 / 设计 plugin JSON(5 个决策点) / 部署到服务器 / 给对方接入信息 / 验证 checklist / 故障排查速查表 / 主线升级时。新客户加入按这份操作不会卡。
+
+### 故障排查(2026-05-25 新增)
+
+- [docs/debugging-playbook.md](../debugging-playbook.md) — 用户报"失败了 / 出错了 / 效果不对"时按这份 SOP 走。通道速记(Web UI vs Plugin)、信息源三件套(SQLite/journal/用户描述)、Step1-3 决策树 Q1-Q6(error_code / trigger code / rewritten 非空 / success_round / post_review_edited / throttle)、附录:image pool 现状、LLM fallover 顺序、rewrite chain 速记、部署节奏、凭据红线、常用 grep 关键字。**任何 plugin 通道排查任务的第一阅读源**。
 <!-- codewise-docs:end -->
 
 <!-- codewise-interfaces:start -->
@@ -24,7 +28,7 @@
 
 inkast 所有对外调用入口的快速地图。**完整签名以代码为准**——本表只列"名 + 职责 + 入口位置"。
 
-### REST endpoints(20 个)
+### REST endpoints(20 个 + 1 个 admin JSON 接口)
 
 **Web UI 通道(`/api/*`,本机访问)**:
 
@@ -51,16 +55,17 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 | 方法 | 路径 | 职责 | 入口 |
 | --- | --- | --- | --- |
-| **POST** | **`/plugins/v1/images/submit`** | **v2 异步 submit**,立即返 task_id(≤100ms),inkast 后台跑完后 POST callback_url | `apps/api/src/server/routes/plugins.ts` |
+| **POST** | **`/plugins/v1/images/submit`** | **v2 异步 submit**,立即返 task_id(≤100ms);body 可附 `pipeline_policy`(skip_original/max_round/post_review_edit)控制 rewrite chain | `apps/api/src/server/routes/plugins.ts` |
 | **GET** | **`/plugins/v1/images/status/:id`** | **callback 兜底拉**,返当前状态 + **`image_url`(v2.1 r2 模式)或 `b64_json`(v2 b64 模式)双协议兼容** | `apps/api/src/server/routes/plugins.ts` |
 
 **管理端(`/admin/*`,loopback only,nginx 不暴露)**:
 
 | 方法 | 路径 | 职责 | 入口 |
 | --- | --- | --- | --- |
-| **GET** | **`/admin/plugin-stats`** | **Plugin 通道运行状态 HTML dashboard**,服务端渲染 + meta refresh 60s | `apps/api/src/server/routes/admin.ts` |
+| **GET** | **`/admin/plugin-stats`** | **两通道运行状态 HTML dashboard**(Plugin + Web UI 双 section),服务端渲染 + meta refresh 60s + attempts 链徽章 + 失败浮层 + plugin-gallery chip | `apps/api/src/server/routes/admin.ts` |
+| **GET** | **`/admin/plugin-gallery.json`** | **SPA gallery 数据源**,返最近 100 条 `image_url IS NOT NULL` 的 plugin task(24h GC 内) | `apps/api/src/server/routes/admin.ts` |
 
-**详情**: [async-job-pipeline](domains/async-job-pipeline.md) · [provider-pool](domains/provider-pool.md) · [image-generation](domains/image-generation.md) · [prompt-engine](domains/prompt-engine.md) · [reference-image](domains/reference-image.md) · **[plugin-channel](domains/plugin-channel.md)** · **[admin-dashboard](domains/admin-dashboard.md)**
+**详情**: [async-job-pipeline](domains/async-job-pipeline.md) · [provider-pool](domains/provider-pool.md) · [image-generation](domains/image-generation.md) · [prompt-engine](domains/prompt-engine.md) · [reference-image](domains/reference-image.md) · **[plugin-channel](domains/plugin-channel.md)** · **[rewrite-chain](domains/rewrite-chain.md)** · **[post-review-edit](domains/post-review-edit.md)** · **[admin-dashboard](domains/admin-dashboard.md)** · **[plugin-gallery](domains/plugin-gallery.md)**
 
 ### 契约文件(前后端共享类型)
 
@@ -117,8 +122,11 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | 条目 | 一句话 |
 | --- | --- |
 | [architecture-overview](domains/architecture-overview.md) | 整体架构 + 数据流全景(Web UI 通道 + Plugin 通道) · **新人第一站** |
-| [plugin-channel](domains/plugin-channel.md) | **Plugin 通道(v2 异步 callback,对外接入)** · submit + status + worker + retry + transcode + recovery |
-| [admin-dashboard](domains/admin-dashboard.md) | **`/admin/plugin-stats` 服务端 HTML dashboard**(loopback only,**两 section:Plugin 通道 + Web UI 通道**) |
+| [plugin-channel](domains/plugin-channel.md) | **Plugin 通道(v2 异步 callback,对外接入)** · submit + status + worker (MAX_CONCURRENT=25) + rewrite + post-review + retry + transcode + recovery |
+| [rewrite-chain](domains/rewrite-chain.md) | **3 轮 LLM 改写降级**(round 0 失败 → r1 视觉重写 / r2 措辞重组 / r3 形态最宽),body+palette+archetype 三锚定 |
+| [post-review-edit](domains/post-review-edit.md) | **r2/r3 后的视觉审查 + edit**(LLM 看图判 looks_like_target,不像就跑 image edit pipeline) |
+| [admin-dashboard](domains/admin-dashboard.md) | **`/admin/plugin-stats` 服务端 HTML dashboard**(loopback only,两 section + attempts 徽章浮层 + plugin-gallery chip) |
+| [plugin-gallery](domains/plugin-gallery.md) | **Web 端浏览 plugin 通道生成图**(SPA Tab + react-masonry,只展示 R2 直传的 24h 内图) |
 | [field-editor](domains/field-editor.md) | 字段编辑器中栏(collapsed/expanded 两态,lockMode 驱动) |
 | [session-workspace](domains/session-workspace.md) | 起草 Tab 右栏 · 本次会话作品 + jobs 占位 tile · 刷新清空 |
 | [async-job-pipeline](domains/async-job-pipeline.md) | Web UI 异步生图任务流水线 + polling + 重启 reaper |
@@ -137,6 +145,8 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [shared-contracts](shared/shared-contracts.md) | `@inkast/shared` 前后端共享类型契约 |
 | [http-agent](shared/http-agent.md) | 全局 undici dispatcher(10 分钟超时,适配 CDN 排队) |
 | [plugin-overlay-loader](shared/plugin-overlay-loader.md) | **Plugin overlay JSON 加载 + zod 校验** + env token 装配 |
+| [llm-fallover](shared/llm-fallover.md) | **LLM 调用 multi-backend fallover helper**(env primary → priority → claude-code 兜底,postValidate hook 拒半残) |
+| [throttle](shared/throttle.md) | **per-provider rate-limit throttle**(min_interval_ms,匀速节流,默认 60 RPM,can capability.extras 单调) |
 | [shadcn-primitives](shared/shadcn-primitives.md) | 已 own 的 11 个 shadcn 原语 + 业务包装 |
 | [field-dictionary](shared/field-dictionary.md) | 6 字段选项词典 + 双语 + sprite 元数据 |
 | [i18n-dictionary](shared/i18n-dictionary.md) | `Translations` 类型 + zh/en 字典 + useLanguage hook |
@@ -155,6 +165,8 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [plugin-channel-isolation](decisions/plugin-channel-isolation.md) | **Plugin 通道与 Web UI 完全分离**(独立 plugin-async + plugin_tasks 表) |
 | **[r2-direct-upload-v2.1](decisions/r2-direct-upload-v2.1.md)** | **v2.1 R2 直传,callback 改返 image_url**(JDC 上行省 95% + uniCloud 出站归零) |
 | **[per-capability-retry-budget](decisions/per-capability-retry-budget.md)** | **每个 image provider 单独配 retry 次数**(0-5,默认 1) |
+| **[three-anchor-design](decisions/three-anchor-design.md)** | **Rewrite chain 三锚定演进**(body+palette+archetype),从 v2.20 五字段 → v2.21 两字段砍过头 → v2.22 加 archetype 折中 |
+| **[pipeline-policy](decisions/pipeline-policy.md)** | **调用方控制 rewrite chain + post-review 行为**(skipOriginal/maxRound/postReviewEdit,in-memory 不入库) |
 
 ### 架构 / 接口
 
@@ -236,6 +248,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | 条目 | 一句话 |
 | --- | --- |
 | [new-plugin-onboarding](workflows/new-plugin-onboarding.md) | **新客户接入 Plugin 通道**(链 docs/onboarding-new-plugin.md 完整版) |
+| [deploy-jdc](workflows/deploy-jdc.md) | **部署 inkast-api 到 jdc**(build + rsync + restart + 健康检查 + changelog 留痕,含 env 改 / DB 改不重启的边界) |
 | [extend-image-mode](workflows/extend-image-mode.md) | 新增 image driver 模式(images / responses 之后再加 X) |
 | [dnd-kit-row-pattern](workflows/dnd-kit-row-pattern.md) | dnd-kit 行拖拽 + 嵌套交互标准模式 |
 | [add-sprite-preview-sheet](workflows/add-sprite-preview-sheet.md) | 新增字段 / 刷新 sprite preview sheet 流程 |
@@ -267,7 +280,17 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | **[duck-moderation-probabilistic](pitfalls/duck-moderation-probabilistic.md)** | **duckcoding 漫威拒图是概率性 false negative**,5 次约 1 次过——靠 retry 多次抽签,不靠参数 |
 | **[anyrouter-pseudo-stream-deep-failure](pitfalls/anyrouter-pseudo-stream-deep-failure.md)** | **gpt-5.3-codex "假活流"是上游模型节点宕机**,retry 同 provider 浪费 600s——按 `[[per-capability-retry-budget]]` 给 cpa/any 配 retry=0 |
 | **[cf-120s-images-mode-only](pitfalls/cf-120s-images-mode-only.md)** | **CF 反代 120s 兜底 only 影响 images mode**,SSE 流式头立即返绕过——`ioll.pp.ua` 这类切到 responses+stream:true |
-| **[moderation-low-ineffective-on-resellers](pitfalls/moderation-low-ineffective-on-resellers.md)** | **moderation:"low" 对二道贩子代理无效**,duck 加这参数反而完全挂死——别用 |
+| **[moderation-low-ineffective-on-resellers](pitfalls/moderation-low-ineffective-on-resellers.md)** | **moderation:"low" 对二道贩子代理无效**(2026-05-22 反转:虽对二道贩子无收益,但对未来 OpenAI 直连账号有用 + 没副作用,**默认开**;若 duck 因此挂死可回滚 1 行) |
+
+### Rewrite Chain / Post-Review(2026-05-25 实测产物)
+
+| 条目 | 一句话 |
+| --- | --- |
+| **[llm-half-refusal-empty-rewritten](pitfalls/llm-half-refusal-empty-rewritten.md)** | **LLM 合法 JSON 但 rewritten 字段空**(stochastic 半截 refusal),v2.25 postValidate hook 修——让 fallover helper 把空字段也当 invalid_json 跳 backend |
+| **[error-code-translation-layer](pitfalls/error-code-translation-layer.md)** | **plugin error_code 是转译层**,跟 inkast 内部 ImageGenError.code 不一一对应——排查时信 error_msg 多过 error_code |
+| **[edit-mode-images-pool-shrunk](pitfalls/edit-mode-images-pool-shrunk.md)** | **post-review-edit 走 requireMode=images 让 pool 缩水 60%**——只剩 3 个 mode=images provider,3 个当前实测全有问题 |
+| **[review-llm-too-lenient](pitfalls/review-llm-too-lenient.md)** | **review LLM 判 looks_like_target=true 偏宽松**(10/13 直接放过明显不像的图),"画风差异不重要"被 LLM 误解成"风格剧变后主体变化也放过" |
+| **[character-key-prefix-required](pitfalls/character-key-prefix-required.md)** | **Rewrite r1 vision + post-review 都依赖 PascalCase 前缀**(`IronMan. Style and theme:`),没前缀 r1 退化 text-only / review 直接 skip |
 
 ### 渠道结构性问题(anyrouter + image_generation 调研产物)
 
@@ -360,21 +383,28 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 公网请求 ──→ jdc nginx /inkast/ 反代 ──→ 127.0.0.1:8787/plugins/v1/*
                                                   │
-                              POST /submit ──┬───→ │ 立即返 task_id (≤100ms)
+                              POST /submit ──┬───→ │ 立即返 task_id (≤100ms),可附 pipeline_policy
                                               │   │   └─ 写 plugin_tasks 表
                                               │   │   └─ 入 in-memory queue
-                                              │   │   └─ 后台 worker (concurrency cap=2)
+                                              │   │   └─ 后台 worker (MAX_CONCURRENT=25)
                                               │   │       ├─ skipLlmExpansion?
                                               │   │       │   是 → 拼 prompt + 约束块
                                               │   │       │   否 → draftPrompt + enforceFields 覆盖
-                                              │   │       ├─ generateImage(走 provider 池)
+                                              │   │       ├─ driveWithRewriteFallback:
+                                              │   │       │   round 0 generateImage(走 provider 池)
+                                              │   │       │   失败有 trigger code → r1/r2/r3 LLM 重写
+                                              │   │       │   (body+palette+archetype 三锚定 force-prepend)
+                                              │   │       ├─ successRound∈{2,3} && postReviewEdit?
+                                              │   │       │   是 → reviewAndMaybeEdit(LLM 看图判像不像)
+                                              │   │       │        不像 + edit_instructions → image edit pipeline
                                               │   │       ├─ 按 plugin.imageStorage.kind 分两条路:
                                               │   │       │   b64 → sharp JPEG q80 → markTaskSucceeded(b64Json)
-                                              │   │       │   r2  → sharp PNG → putImage(R2 retry 0.5/2/8s)
+                                              │   │       │   r2  → sharp PNG/WEBP → putImage(R2 retry 0.5/2/8s)
                                               │   │       │        → markTaskSucceeded(imageUrl)
                                               │   │       └─ POST callback_url + X-Callback-Token
-                                              │   │           body:b64 模式 {b64_json,mime,...}
-                                              │   │                r2 模式 {image_url,mime,...}
+                                              │   │           body:b64 模式 {b64_json,mime,success_round,
+                                              │   │                          post_review_edited,...}
+                                              │   │                r2 模式 {image_url,mime,success_round,...}
                                               │   │           ↓(非 2xx 退避重试 5s/30s/5min × 3)
                                               │   │       → 4 次失败 → callback_lost
                                               │
@@ -384,7 +414,17 @@ INKAST_PLUGIN_DIR/*.json (overlay) ──→ registry.ts (loader.ts + zod) ─�
 INKAST_PLUGIN_TOKEN_<UPPER_ID> env ──→ tokenToPluginId Map
 R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env ──→ r2.ts driver
 
-/admin/plugin-stats (loopback only) ──→ HTML dashboard(两 section:Plugin 通道 + Web UI 通道,中文,meta refresh 60s)
+/admin/plugin-stats (loopback only) ──→ HTML dashboard(两 section:Plugin + Web UI,attempts 链徽章 + 失败浮层 + plugin-gallery chip)
+/admin/plugin-gallery.json (loopback) ──→ Web 主 SPA (/?tab=plugin-gallery) → react-masonry 浏览 R2 图(24h)
+
+per-provider throttle (apps/api/src/lib/throttle.ts):
+  Map<providerId, Promise> 链 + acquireProviderSlot 匀速节流
+  min_interval_ms 优先级: capability.extras > env INKAST_PROVIDER_MIN_INTERVAL_MS_DEFAULT > 0
+
+LLM 调用 fallover (apps/api/src/drivers/llm/with-fallover.ts):
+  rewrite r1/r2/r3 + post-review LLM 都走;env primary → priority → claude-code 兜底
+  invalid_json 同 backend retry-once,其它 LlmDriverError 立即跳下个
+  postValidate hook 拒"合法 JSON 但业务字段空"(v2.25 修 LLM 半残 bug)
 ```
 
 ---
@@ -393,8 +433,8 @@ R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env ──→ r2.ts driv
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `e63141b59ead9e6e32b1a048e0a3081e797ca499`
-- **synced_at**: `2026-05-22T01:49:43+08:00`
+- **baseline_commit**: `05bf12f21f1ccb52fbd2a86a8328d00e1fb6624f`
+- **synced_at**: `2026-05-25T03:26:07+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
 

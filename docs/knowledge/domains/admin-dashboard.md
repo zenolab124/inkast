@@ -29,6 +29,9 @@ inkast **两条通道**的运行状态可视化页面——Plugin 通道(对外�
 | 最近 24h 趋势(按小时) | 柱状图(绿=成功 红=失败)hover 详情 |
 | 按 Plugin 拆分 | 每个 plugin 总数/成功/失败/回调丢失/成功率 |
 | 最近 50 条任务 | task_id 短/plugin/状态/**渠道**/LLM/生图/总耗时/回调次数/错误/回调主机/创建时间 |
+| **attempts 链徽章**(每行的"渠道"列) | `p1 ✓ · p2 ✗server` 形式,展示 task 经历的每个 provider attempt 结果。**失败徽章 hover 弹纯 CSS 浮层**(header / meta / pretty-print errorBody 三段),便于调试 |
+
+**header 顶部新增"插件作品图 →" chip**(2026-05-22)——跳转 `/?tab=plugin-gallery` 看 plugin 通道生成图的瀑布流(react-masonry-css SPA 页)。chip 是 dashboard ↔ gallery 的双向入口之一。
 
 ## Section 2: Web UI 通道(本机生图)
 
@@ -48,10 +51,10 @@ inkast **两条通道**的运行状态可视化页面——Plugin 通道(对外�
 
 | 文件 | 职责 |
 |---|---|
-| `apps/api/src/server/routes/admin.ts` | 路由 + HTML 渲染(全中文 + Paper 主题对齐,两 section 并列) |
+| `apps/api/src/server/routes/admin.ts` | 路由 + HTML 渲染 + `/admin/plugin-gallery.json` JSON endpoint(供 SPA gallery 拉数据) |
 | `apps/api/src/storage/plugin-stats.ts` | Plugin 通道 aggregate(`getOverview` / `getLatency` / `getCallbackHealth` / `getTopErrorCodes` / `getProviderBreakdown` / `getHourBuckets` / `getRecentTasks`) |
 | `apps/api/src/storage/job-stats.ts` | **Web UI 通道 aggregate**(`getJobsOverview` / `getJobsLatency` / `getJobsTopErrorCodes` / `getJobsHourBuckets` / `getRecentJobs`) |
-| `apps/web/src/App.tsx`(header 段) | Web UI Stats 按钮 |
+| `apps/web/src/App.tsx`(header 段) | Web UI Stats 按钮 + plugin-gallery Tab 路由 |
 
 ## 设计原则
 
@@ -64,4 +67,5 @@ inkast **两条通道**的运行状态可视化页面——Plugin 通道(对外�
 ## 关联条目
 
 - [plugin-channel](plugin-channel.md) — dashboard 服务的是这个通道
+- [plugin-gallery](plugin-gallery.md) — header chip 跳转的 SPA 作品图页
 - [paper-theme-tokens](../shared/paper-theme-tokens.md) — 视觉对齐用

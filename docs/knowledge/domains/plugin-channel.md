@@ -22,16 +22,23 @@ nginx /inkast/ → 127.0.0.1:8787 ───┬──────┴────�
                                    │
                                    ▼
         ┌──────────────────────────────────────────────────────────────────┐
-        │ Worker(in-memory queue,MAX_CONCURRENT=2)                       │
+        │ Worker(in-memory queue,MAX_CONCURRENT=25)                      │
         │   markTaskRunning →                                              │
         │     ① skipLlmExpansion?                                          │
         │       是 → buildSkipLlmPromptText(user prompt + 约束块)           │
         │       否 → draftPrompt(LLM 散文→JSON)+ enforceFields 浅合并     │
-        │     ② generateImage(走 image provider 池)                       │
-        │     ③ 按 plugin.imageStorage.kind 分两条路:                      │
+        │     ② driveWithRewriteFallback(promptText, pipelinePolicy):     │
+        │        round 0 generateImage(全 image pool)                     │
+        │        失败有 trigger code → r1/r2/r3 LLM 重写循环               │
+        │        见 [[rewrite-chain]]                                      │
+        │     ③ successRound∈{2,3} && plugin.imageEditOnLowSimilarity?    │
+        │        是 → reviewAndMaybeEdit(图,参考图)                       │
+        │             LLM 判 looks_like_target=false → image edit pipeline │
+        │             见 [[post-review-edit]]                              │
+        │     ④ 按 plugin.imageStorage.kind 分两条路:                      │
         │        b64(默认):transcodeToJpeg(sharp 转 JPEG q80,可 resize) │
         │                   → markTaskSucceeded(kind:b64, b64Json, mime)   │
-        │        r2:        prepareImageForR2(可选 resize,保 PNG)         │
+        │        r2:        prepareImageForR2(可选 resize,保 PNG/WEBP)    │
         │                   → putImage(R2,3 次指数退避 0.5/2/8s)         │
         │                   → markTaskSucceeded(kind:r2, imageUrl, mime)   │
         │   失败 → markTaskFailed + toOpenAiError mapper                   │
@@ -57,10 +64,13 @@ nginx /inkast/ → 127.0.0.1:8787 ───┬──────┴────�
 
 | 文件 | 职责 |
 |---|---|
-| `apps/api/src/server/routes/plugins.ts` | submit + status 两个 endpoint + 参数校验 |
+| `apps/api/src/server/routes/plugins.ts` | submit + status 两个 endpoint + 参数校验(含 `pipeline_policy`) |
 | `apps/api/src/server/middleware/plugin-auth.ts` | Bearer Token 中间件,挂 plugin 到 `c.var.plugin` |
-| `apps/api/src/domain/plugin-async/index.ts` | 整个 worker + queue + callback + transcode + recovery + GC,**单文件 ~420 行** |
-| `apps/api/src/storage/plugin-tasks.ts` | SQLite CRUD + reaperInflightPluginTasks + gcOldPluginTasks |
+| `apps/api/src/domain/plugin-async/index.ts` | 整个 worker + queue + callback + transcode + recovery + GC,**MAX_CONCURRENT=25** |
+| `apps/api/src/domain/generate/with-rewrite.ts` | `driveWithRewriteFallback`,round 0 → rewrite chain 编排 |
+| `apps/api/src/domain/rewrite-prompt/index.ts` | r1/r2/r3 单轮改写 + force-prepend 三锚定 + HARD_CONSTRAINTS |
+| `apps/api/src/domain/post-review-edit/index.ts` | reviewAndMaybeEdit(LLM 视觉审 + image edit pipeline) |
+| `apps/api/src/storage/plugin-tasks.ts` | SQLite CRUD + reaperInflightPluginTasks + gcOldPluginTasks + 新字段 rewritten_prompt/success_round/post_review_edited |
 | `apps/api/src/storage/plugin-stats.ts` | dashboard 用的 aggregate 查询 |
 | `apps/api/src/plugins/types.ts` | `InkastPlugin` 接口契约 |
 | `apps/api/src/plugins/registry.ts` | 启动时从 `INKAST_PLUGIN_DIR` 加载 JSON + env 加载 token |
@@ -99,15 +109,24 @@ systemd 重启时 `initPluginAsync` → `reaperInflightPluginTasks`:扫 `status 
 
 ## 关联条目
 
+- [rewrite-chain](rewrite-chain.md) — round 0 失败后的 3 轮 LLM 重写
+- [post-review-edit](post-review-edit.md) — r2/r3 成功后的视觉审查 + edit
+- [plugin-gallery](plugin-gallery.md) — Web 端浏览本通道生成图(24h)
 - [admin-dashboard](admin-dashboard.md) — 看 plugin 通道运行状态的 HTML dashboard
 - [plugin-overlay-loader](../shared/plugin-overlay-loader.md) — JSON overlay 加载机制
+- [llm-fallover](../shared/llm-fallover.md) — LLM 调用的 multi-backend fallover
+- [throttle](../shared/throttle.md) — per-provider rate-limit
+- [pipeline-policy](../decisions/pipeline-policy.md) — submit body 里 `pipeline_policy` 字段控制 chain 行为
+- [three-anchor-design](../decisions/three-anchor-design.md) — rewrite chain 的 body/palette/archetype 锚定
 - [v2-async-callback-protocol](../decisions/v2-async-callback-protocol.md) — 为何走异步而不是同步
 - [plugin-channel-isolation](../decisions/plugin-channel-isolation.md) — 为何不复用 Web UI 通道代码
 - [json-overlay-vs-branch](../decisions/json-overlay-vs-branch.md) — 客户特化为何走 JSON overlay
 - [new-plugin-onboarding](../workflows/new-plugin-onboarding.md) — 给新客户接入的 step-by-step
+- [deploy-jdc](../workflows/deploy-jdc.md) — 部署节奏
 - [r2-direct-upload-v2.1](../decisions/r2-direct-upload-v2.1.md) — v2.1 R2 直传决策
 - [per-capability-retry-budget](../decisions/per-capability-retry-budget.md) — provider retry 可在 Web UI 单独配
 - [cloudflare-r2](../integrations/cloudflare-r2.md) — R2 driver + bucket 约定
+- [error-code-translation-layer](../pitfalls/error-code-translation-layer.md) — plugin error_code 是转译层
 - [callback-token-plaintext-roundtrip](../pitfalls/callback-token-plaintext-roundtrip.md)
 - [plugin-task-no-deadline](../pitfalls/plugin-task-no-deadline.md)
 - [plugin-pool-too-narrow-by-model](../pitfalls/plugin-pool-too-narrow-by-model.md)
