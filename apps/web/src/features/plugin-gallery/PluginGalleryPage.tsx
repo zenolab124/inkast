@@ -409,7 +409,7 @@ function PluginGalleryDetailDialog({
     <Dialog open={!!item} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "flex h-[90vh] w-[95vw] max-w-[1400px] flex-col gap-0 overflow-hidden rounded-md p-0",
+          "flex h-[85vh] flex-col gap-0 overflow-hidden rounded-md p-0 sm:max-w-6xl",
         )}
       >
         <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-3">
