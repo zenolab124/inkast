@@ -57,6 +57,15 @@ react-masonry-css(继承主 gallery 断点) + GalleryCard
 
 `?cursor=<createdAt>_<id>`,`(created_at < ? OR (created_at = ? AND id < ?))`。优于 offset:新数据进来不会让旧 offset 偏移,瀑布流无限滚动稳定。`nextCursor=null` 表示已到末尾。默认 `limit=60`,服务端上限 200。
 
+## 详情 Dialog 布局
+
+点卡片打开 `PluginGalleryDetailDialog`:
+
+- **DialogContent**:`h-[85vh] sm:max-w-6xl`(1152px),`p-0 gap-0` 重置 shadcn 默认间距;**`sm:` 前缀必须**——否则被 base 的 `sm:max-w-lg` 默认值压回 512px(见 [shadcn-dialog-sm-max-w-lg-default](../pitfalls/shadcn-dialog-sm-max-w-lg-default.md))
+- **左右拆分**:`grid grid-cols-[minmax(0,1fr)_24rem]`,左列 fr 自适应装图、右列固定 24rem(384px)装文本
+- **图片**:`<img class="max-h-full max-w-full object-contain">` + 父级 `flex items-center justify-center min-h-0`——横竖图都贴边不变形,上下铺满
+- **右栏**:独立 `overflow-y-auto`,内容 = chip(R 几 + 已润色 + provider + 耗时 + 时间)+ 原始 prompt 全文 + rewrite chain 每轮一卡片 + promptJson 结构化
+
 ## 关键文件
 
 | 文件 | 职责 |
@@ -72,5 +81,7 @@ react-masonry-css(继承主 gallery 断点) + GalleryCard
 
 - [admin-dashboard](admin-dashboard.md) — SSR dashboard,gallery 是它的 SPA 兄弟页
 - [plugin-channel](plugin-channel.md) — 数据源 plugin_tasks 表(仍 24h GC,只是 gallery 不依赖它)
+- [plugin-gallery-long-term-archive](../decisions/plugin-gallery-long-term-archive.md) — 拆独立成品表的决策
 - [r2-direct-upload-v2.1](../decisions/r2-direct-upload-v2.1.md) — 只有 R2 路径有 image_url
 - [react-masonry-css](../integrations/react-masonry-css.md) — 瀑布流组件
+- [shadcn-dialog-sm-max-w-lg-default](../pitfalls/shadcn-dialog-sm-max-w-lg-default.md) — Dialog 宽度被 `sm:max-w-lg` 卡住的根因

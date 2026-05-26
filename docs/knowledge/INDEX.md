@@ -328,6 +328,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [gallery-aspect-square-crop](pitfalls/gallery-aspect-square-crop.md) | `aspect-square + object-cover` 让所有图变正方形 |
 | [dnd-kit-drop-animation-jitter](pitfalls/dnd-kit-drop-animation-jitter.md) | handleDragEnd 双 setState 中断 drop 动画 |
 | [paper-accent-shadcn-collision](pitfalls/paper-accent-shadcn-collision.md) | paper `--accent` 与 shadcn 默认 hover 语义冲突 |
+| **[shadcn-dialog-sm-max-w-lg-default](pitfalls/shadcn-dialog-sm-max-w-lg-default.md)** | **shadcn DialogContent base 含 `sm:max-w-lg`(512px)**,外部传 base 级 `max-w-X` 不能覆盖 sm: 默认值——必须用同前缀 `sm:max-w-6xl` 才行(tailwind-merge 不跨 responsive variant 合 conflict group) |
 | [dialog-grid-min-h-0](pitfalls/dialog-grid-min-h-0.md) | grid/flex 嵌套缺 min-h-0 → img max-h 失效 |
 | [chinese-fallback-songti](pitfalls/chinese-fallback-songti.md) | 衬线字体让中文落到宋体 |
 | [dark-class-position-bug](pitfalls/dark-class-position-bug.md) | dark class 加错位置 |
@@ -444,8 +445,8 @@ LLM 调用 fallover (apps/api/src/drivers/llm/with-fallover.ts):
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `058451a670128c5641f2c1406ed2d691d4928f18`
-- **synced_at**: `2026-05-26T20:50:00+08:00`
+- **baseline_commit**: `3b45b4af16ae9eb79b81d4c18acdc00ecfb1329c`
+- **synced_at**: `2026-05-26T22:13:25+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
 
