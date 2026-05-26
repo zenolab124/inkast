@@ -251,6 +251,10 @@ export const zh: Translations = {
       hint: "单渠道失败后在该渠道重试的次数(0-5)。留空跟随全局默认 1。0 = 失败立即切下一个渠道。",
       placeholder: "默认",
     },
+    codexHeader: {
+      label: "使用 Codex Header",
+      hint: "请求自动带上模拟 Codex CLI 官方客户端的 originator + User-Agent。部分反代会据此放宽配额/审核策略。",
+    },
   },
   picker: {
     titlePrefix: "选择",

@@ -78,6 +78,7 @@ export type AttemptErrorCode =
   | "rate_limit"
   | "auth"
   | "server"
+  | "quota_exhausted"
   | "aborted"
   | "unknown";
 

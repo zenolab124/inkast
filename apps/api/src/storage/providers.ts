@@ -110,6 +110,62 @@ function defaultModelFor(kind: ProviderKind): string {
   return kind === "llm" ? "gpt-4o-mini" : "gpt-image-2";
 }
 
+/**
+ * Compute epoch-ms of the NEXT 06:00 Beijing time strictly after `from`.
+ * If current Beijing hour < 6, returns today 06:00; otherwise tomorrow 06:00.
+ * Beijing is UTC+8 with no DST, so the math is direct on UTC.
+ */
+export function nextBeijing6amTimestamp(from: number = Date.now()): number {
+  const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
+  const beijing = new Date(from + BEIJING_OFFSET_MS);
+  const y = beijing.getUTCFullYear();
+  const m = beijing.getUTCMonth();
+  const d = beijing.getUTCDate();
+  const h = beijing.getUTCHours();
+  // Pick today vs tomorrow (Beijing date), then convert back to UTC ms.
+  const targetDay = h < 6 ? d : d + 1;
+  return Date.UTC(y, m, targetDay, 6, 0, 0) - BEIJING_OFFSET_MS;
+}
+
+/**
+ * Mark a capability auto-disabled until the next 06:00 Beijing time. Used by
+ * the image driver when upstream signals quota/balance exhausted — no point
+ * burning more attempts before the daily reset. Manual Web UI toggle clears
+ * `auto_disabled_until` so users can re-enable immediately after a top-up.
+ */
+export function markCapabilityAutoDisabledUntilNext6am(
+  providerId: string,
+  kind: ProviderKind,
+): void {
+  const until = nextBeijing6amTimestamp();
+  db()
+    .prepare(
+      `UPDATE provider_capabilities
+       SET disabled = 1, auto_disabled_until = ?
+       WHERE provider_id = ? AND kind = ?`,
+    )
+    .run(until, providerId, kind);
+  console.log(
+    `[provider] auto-disabled ${providerId} ${kind} until ${new Date(until).toISOString()} (quota exhausted) — will re-enable at next Beijing 06:00`,
+  );
+}
+
+/**
+ * Cleanup pass: any auto-disabled rows whose `auto_disabled_until` has
+ * elapsed are flipped back to enabled (disabled=0, auto_disabled_until=NULL).
+ * Called at the top of read paths that consume the enabled pool so DB state
+ * stays in sync with logical state without a separate cron.
+ */
+function reclaimExpiredAutoDisables(): void {
+  db()
+    .prepare(
+      `UPDATE provider_capabilities
+       SET disabled = 0, auto_disabled_until = NULL
+       WHERE auto_disabled_until IS NOT NULL AND auto_disabled_until <= ?`,
+    )
+    .run(Date.now());
+}
+
 function loadCapabilitiesFor(providerIds: string[]): Map<string, ProviderCapability[]> {
   const out = new Map<string, ProviderCapability[]>();
   for (const id of providerIds) out.set(id, []);
@@ -212,6 +268,9 @@ export function listEnabledCapabilities(
   capability: ProviderCapability;
   apiKey: string;
 }> {
+  // Reclaim expired auto-disables before reading the pool, so a capability
+  // that hit quota yesterday is back in rotation today without manual touch.
+  reclaimExpiredAutoDisables();
   const rows = db()
     .prepare(
       `SELECT p.id, p.name, p.base_url,
@@ -400,7 +459,7 @@ function replaceCapabilitiesInline(
   );
   const updateStmt = db().prepare(
     `UPDATE provider_capabilities
-     SET model = ?, disabled = ?, extras = ?
+     SET model = ?, disabled = ?, extras = ?, auto_disabled_until = NULL
      WHERE provider_id = ? AND kind = ?`,
   );
   const insertStmt = db().prepare(
@@ -452,7 +511,7 @@ export function updateCapability(
   db()
     .prepare(
       `UPDATE provider_capabilities
-       SET model = ?, disabled = ?, extras = ?
+       SET model = ?, disabled = ?, extras = ?, auto_disabled_until = NULL
        WHERE provider_id = ? AND kind = ?`,
     )
     .run(model, disabled, extrasJson, providerId, kind);

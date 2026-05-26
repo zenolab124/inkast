@@ -61,14 +61,35 @@ const HARD_CONSTRAINT_SAFE_ZONE = `
 【硬性约束 · 构图安全区】主体(角色头部/躯干/主要对象)必须完整位于画面上 3/4 区域内,画面下 1/4 留作 safe zone — 不要让主体的核心部位(脸/胸/手中重要物件)进入这个底部区域,以免被叠加在底部的 UI 遮挡`;
 
 /**
- * Plugin-channel prompt convention: `{CharacterKeyPascalCase}. Style and theme: ...`.
- * The key is the leading sequence of letters/digits before the first period.
- * Returns null if the prompt doesn't match (e.g. it's a JSON ImagePrompt from
- * the Web UI channel).
+ * Plugin-channel prompt convention (since 2026-05-25):
+ *   `「{CharacterKeyPascalCase}」. Style and theme: 「{styleText}」`
+ *
+ * CJK corner brackets 「」 delimit two atomic fields: character key and style.
+ * Inkast extracts both and treats them as immutable: the key is replaced by a
+ * `[character]` placeholder for the LLM; the style text is force-prepended as
+ * a hard anchor across all rewrite rounds so the LLM can't translate/paraphrase/
+ * drop the user's chosen art style.
+ *
+ * Returns null if the prompt doesn't match (e.g. Web UI JSON prompts).
  */
 export function extractCharacterKey(promptText: string): string | null {
-  const match = /^([A-Za-z][A-Za-z0-9]*)\.\s/.exec(promptText);
+  const match = /^「([A-Za-z][A-Za-z0-9]*)」\.\s/.exec(promptText);
   return match ? match[1]! : null;
+}
+
+/**
+ * Extract the style text inside the second pair of corner brackets in plugin
+ * prompts: `... Style and theme: 「<styleText>」`. Returns null if absent.
+ *
+ * The style text is treated as a verbatim atom — preserved across all rewrite
+ * rounds, never translated or paraphrased. Driven entirely by user intent;
+ * style strings rarely trigger content moderation, so there's no reason to
+ * touch them and every reason not to (paraphrasing can drift the visual style
+ * completely — "中国水墨画" → "中式水彩" is a totally different look).
+ */
+export function extractStyleText(promptText: string): string | null {
+  const match = /Style and theme:\s*「([^」]+)」/.exec(promptText);
+  return match ? match[1]!.trim() : null;
 }
 
 /**
@@ -152,6 +173,12 @@ Step 2 — 提取三类锚定(这是 R2/R3 必须继承的红线):
   - ❌ "红色护臂、蓝色战斗服、白色腰带"(绑到了衣物 — 错。变体里衣物可能完全换,但配色家族不变)
   - ❌ "圆形红白蓝标志"(掺入了 form 元素 — 错。这是 IP fingerprint,会被 R3 灌进每一轮)
   - **纯颜色词,不要混入任何形状/配件/标志/装饰名词**
+  - **style-aware 规则**:如果用户 style 已经规定了颜色范围(黑白漫画 / 灰阶 / 单色 / 剪影 / 深褐复古 / 中国水墨黑白 / 某种单一色调等),palette_anchors 必须输出**该 style 允许范围内的色值描述**,而**不是**角色原始彩色配色 — 否则跟 style 互相矛盾,生图模型会画成彩色:
+    - ✅ user style「黑白漫画」→ palette_anchors: "黑白灰阶为主,黑色作主色,白色作底,中灰过渡,强烈明暗对比"
+    - ✅ user style「单色海报」→ palette_anchors: "单一主色(由 style 决定的色相)+ 浅色背景对比"
+    - ✅ user style「深褐复古片」→ palette_anchors: "深褐主调,浅褐与米色作过渡,接近单色调"
+    - ❌ user style「黑白漫画」但 palette_anchors: "红与蓝双主色,金色作点缀"(冲突 — 出图会变成彩色)
+    - 如果 user style 没有限制颜色范围(写实/油画/赛博朋克/水彩/中国风等),按角色原始配色正常输出
 
 - **character_archetype(角色原型类别)** — 抽象的角色 type 范畴,让 LLM 知道画的是哪一类英雄而不是只看身体+配色就瞎画:
   - 一句话角色原型(15-40 字),允许**轻微 form 提示**但禁止具体配件名
@@ -171,6 +198,7 @@ Step 3 — 综合改写 — **以用户 prompt 意图为主**:
 - **不要描述背景** — 背景留给生图模型按用户 style 决定
 - **要砍掉**:任何 IP signature 字面名词(蛛网/星形/盾牌/锤子/利爪/翅膀等);任何专有名词、动物名、超能力词、品牌名;精确到位置的几何描述
 - **必须在 rewritten 里禁止任何文字符号**(字母/数字/签名/印章/落款/水印/标志/书法)以及任何界面元素(卡牌边框/名牌/数值图标/UI 叠加)。中国水墨/书法/古风等 style 下生图模型默认会画题字落款印章,**必须显式禁掉**
+- **style 字面词必须原样保留**:用户 prompt 里 "Style and theme:" 后面用「」圈起来的文本是硬指定画风(例如「中国水墨画」「赛博朋克」「吉卜力风格」等)。在 rewritten 里**必须原文出现**——不要翻译(中→英)、不要近义改写(水墨→水彩)、不要省略。style 不会触发审核,改写它只会让画风跑偏
 
 【输出格式】
 严格输出 JSON:
@@ -206,6 +234,7 @@ const REWRITE_SYSTEM_PROMPT_TEXT_ONLY = `你的任务是把用户的图像描述
 3. **保留**用户的其他意图字段:type/style/layout/text_elements/lighting/mood 等;**不要描述背景** — 背景留给生图模型自己决定。
 4. 输入是纯文本就输出纯文本,输入是 JSON 就输出 JSON 字符串。结构保持不变。
 5. 描述要够具体让生图模型画出贴近原本的形象,**但不要堆砌精确视觉细节**(避免触发 model 层识别)。优先"身体特征 + 主色调家族 + 1-2 个抽象特征"。
+6. **style 字面词原样保留**:如果输入里有 "Style and theme:" 后跟「」圈起来的画风文本,在 rewritten 里必须原文出现。不翻译、不近义改写、不省略。
 
 【输出格式】
 严格输出 JSON: {"rewritten": "<改写后的 prompt 文本>"}
@@ -272,6 +301,7 @@ R2 的任务不是"硬保留 R1 的服装形态",而是**换一种表述重写**
 - 不要降级颜色(单色化 / 改色 / 模糊化都不行 — palette_anchors 颜色组合必须看得出来)
 - 不要描述背景
 - **必须在 rewritten 里禁止任何文字符号 / 界面元素**(参考 R1 的硬性约束)
+- **style 字面词原样保留**:用户 prompt 里「」圈起来的画风文本必须原文出现在 rewritten 里。不翻译、不近义改写、不省略
 
 【输出篇幅】跟 R1 接近(±20%)。
 
@@ -345,6 +375,7 @@ const REWRITE_SYSTEM_PROMPT_ROUND3 = `R1 和 R2 都被生图模型的 safety 层
 - 禁用任何 signature 名词(蛛网/盾牌/锤子/翅膀/利爪等)
 - 任何专有名词、动物名、品牌词、超能力词
 - 必须在 rewritten 里禁止任何文字符号 / 界面元素
+- **style 字面词原样保留**:用户 prompt 里「」圈起来的画风文本必须原文出现在 rewritten 里。不翻译、不近义改写、不省略
 
 【输出篇幅】60-150 字。
 
@@ -448,13 +479,15 @@ export async function rewriteBlockedPrompt(input: {
   // Strip the literal character key from what the LLM sees. The key is only
   // used internally to fetch reference images; if the LLM reads it in the
   // user prompt it'll fall back on prior knowledge of the IP instead of
-  // doing a true visual read of the reference images.
+  // doing a true visual read of the reference images. Style text inside the
+  // second 「」 stays — LLM must see it to honor the user's art style.
   const baseUserPrompt = characterKey
     ? input.originalPromptText.replace(
-        /^[A-Za-z][A-Za-z0-9]*\.\s/,
+        /^「[A-Za-z][A-Za-z0-9]*」\.\s/,
         "[character]. ",
       )
     : input.originalPromptText;
+  const styleText = extractStyleText(input.originalPromptText);
 
   // Round 2/3 inputs differ from round 1: in addition to the user's own prompt
   // (with the [character] placeholder), we attach round 1's STRUCTURED
@@ -585,6 +618,18 @@ character_archetype (允许泛化到更宽范畴): ${input.previousAnalysis.char
   if (input.round >= 2 && input.previousAnalysis) {
     const anchorPrefix = `【identity 锚定(必须严格遵循)】\n身体特征: ${input.previousAnalysis.body_anchors}\n招牌配色: ${input.previousAnalysis.palette_anchors}\n角色原型: ${input.previousAnalysis.character_archetype}\n\n`;
     rewrittenWithAnchors = anchorPrefix + rewrittenCore;
+  }
+  // Style force-prepend (all rounds). Same belt-and-suspenders pattern as
+  // identity anchors: even with explicit red lines, LLMs occasionally
+  // translate / paraphrase / drop the user's chosen style ("中国水墨" →
+  // "Chinese ink wash" or "中式水彩"), shifting the visual style entirely.
+  // We don't trust the LLM — if rewritten doesn't already contain the
+  // verbatim style atom 「<text>」, prepend it as a hard anchor.
+  if (styleText) {
+    const styleAtom = `「${styleText}」`;
+    if (!rewrittenWithAnchors.includes(styleAtom)) {
+      rewrittenWithAnchors = `【画风(必须严格遵循)】${styleAtom}\n\n${rewrittenWithAnchors}`;
+    }
   }
   // Two hard-constraint clauses, each appended independently if its
   // idempotent guard doesn't trip. Generous regexes — catch LLM-authored

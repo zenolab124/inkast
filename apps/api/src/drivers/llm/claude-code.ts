@@ -16,6 +16,18 @@ import {
 const WARMUP_FRESHNESS_MS = 5 * 60 * 1000;
 
 /**
+ * Patterns that indicate the SDK returned a system message as result text
+ * instead of actual model output. Seen in production:
+ *  - "Not logged in · Please run /login" (jdc has no local OAuth)
+ *  - "Session expired" / "Authentication failed"
+ *  - "Invalid API key"
+ * classifySdkError downstream turns these into `not_authenticated` /
+ * `backend_unavailable` LlmDriverError so fallover skips claude-code cleanly.
+ */
+const SDK_SYSTEM_MESSAGE_PATTERN =
+  /not\s+logged\s+in|please\s+run\s*\/?login|session\s+expired|authentication\s+failed|invalid\s+api\s+key|unauthorized/i;
+
+/**
  * JSON Schema enforced by the SDK on the model's structured output.
  *
  * We intentionally only constrain the OUTER shape ({ prompt, hints }), not
@@ -145,6 +157,20 @@ export class ClaudeCodeDriver implements LlmDriver {
 
       if (!result) {
         throw classifySdkError(errorMessage ?? "no result message from SDK");
+      }
+
+      // Sniff for SDK-injected system messages before treating result.result
+      // as model output. The Agent SDK can return strings like "Not logged
+      // in · Please run /login" (no OAuth on this host), "Invalid API key",
+      // "Session expired", etc. as the result text — they aren't model
+      // output and trying to JSON-parse them is misleading. Detect early
+      // and surface as a typed driver error so the fallover wrapper can
+      // skip claude-code cleanly instead of bubbling "invalid_json".
+      if (
+        result.structured_output === undefined &&
+        SDK_SYSTEM_MESSAGE_PATTERN.test(result.result)
+      ) {
+        throw classifySdkError(result.result);
       }
 
       // With outputFormat: json_schema, the SDK populates structured_output

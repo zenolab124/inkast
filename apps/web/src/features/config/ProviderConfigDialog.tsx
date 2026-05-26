@@ -81,6 +81,8 @@ interface FormState {
    * (number 类型下 0 和 NaN 都掉成 undefined,会丢"用户显式选 0"的信号)。
    */
   imageRetryLimit: string;
+  /** Inject the canonical Codex CLI headers (originator + User-Agent). */
+  imageUseCodexHeader: boolean;
   llmModel: string;
 }
 
@@ -115,6 +117,10 @@ function readImageMode(cap: ProviderCapability | undefined): ImageGenerationMode
   return raw === "responses" || raw === "images" ? raw : IMAGE_GENERATION_MODE_DEFAULT;
 }
 
+function readUseCodexHeader(cap: ProviderCapability | undefined): boolean {
+  return cap?.extras?.useCodexHeader === true;
+}
+
 function emptyForm(): FormState {
   return {
     id: null,
@@ -124,6 +130,7 @@ function emptyForm(): FormState {
     imageModel: DEFAULT_MODEL.image,
     imageMode: IMAGE_GENERATION_MODE_DEFAULT,
     imageRetryLimit: "",
+    imageUseCodexHeader: false,
     llmModel: "",
   };
 }
@@ -139,6 +146,7 @@ function buildFormFromProvider(p: ProviderSummary): FormState {
     imageModel: image?.model ?? "",
     imageMode: readImageMode(image),
     imageRetryLimit: readRetryLimit(image),
+    imageUseCodexHeader: readUseCodexHeader(image),
     llmModel: llm?.model ?? "",
   };
 }
@@ -155,6 +163,9 @@ function formToCapabilities(form: FormState): CapabilityInput[] {
       if (Number.isInteger(n) && n >= 0 && n <= RETRY_LIMIT_MAX) {
         extras.retryLimit = n;
       }
+    }
+    if (form.imageUseCodexHeader) {
+      extras.useCodexHeader = true;
     }
     caps.push({
       kind: "image",
@@ -508,6 +519,10 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                           value={form.imageRetryLimit}
                           onChange={v => setForm(prev => (prev ? { ...prev, imageRetryLimit: v } : prev))}
                         />
+                        <ImageCodexHeaderRow
+                          value={form.imageUseCodexHeader}
+                          onChange={v => setForm(prev => (prev ? { ...prev, imageUseCodexHeader: v } : prev))}
+                        />
                       </>
                     )}
                   </div>
@@ -796,6 +811,35 @@ function ImageRetryRow({
           if (Number.isInteger(n) && n >= 0 && n <= RETRY_LIMIT_MAX) onChange(String(n));
         }}
         className="h-7 w-16 rounded-sm border border-border bg-background px-2 text-right text-xs font-mono tabular-nums focus:outline-none focus:ring-1 focus:ring-primary/40"
+      />
+    </div>
+  );
+}
+
+/**
+ * Per-provider toggle to inject the canonical Codex CLI request headers
+ * (originator + User-Agent). Some proxies gate quota / moderation looseness
+ * on these. The actual header values are fixed in the backend driver — the
+ * UI only exposes on/off so operators don't have to know the magic strings.
+ */
+function ImageCodexHeaderRow({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  const { t } = useLanguage();
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium text-foreground">{t.config.codexHeader.label}</span>
+        <span className="text-[11px] text-muted-foreground">{t.config.codexHeader.hint}</span>
+      </div>
+      <Checkbox
+        checked={value}
+        onCheckedChange={v => onChange(v === true)}
+        aria-label={t.config.codexHeader.label}
       />
     </div>
   );

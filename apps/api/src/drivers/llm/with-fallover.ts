@@ -57,15 +57,26 @@ function resolveCandidates(): LlmBackendDescriptor[] {
     seen.add(primaryId);
   }
 
-  for (const cap of listEnabledCapabilities("llm")) {
+  const enabledLlms = listEnabledCapabilities("llm");
+  let claudeCodeEnabled = false;
+  for (const cap of enabledLlms) {
     const id = cap.provider.id;
+    if (id === BUILTIN_CLAUDE_CODE_ID) {
+      claudeCodeEnabled = true;
+      continue;
+    }
     if (seen.has(id)) continue;
-    if (id === BUILTIN_CLAUDE_CODE_ID) continue;
     candidates.push({ kind: "openai-compatible", providerId: id });
     seen.add(id);
   }
 
-  candidates.push("claude-code");
+  // Only add claude-code tail when the builtin capability is actually
+  // enabled in DB. On jdc the operator disables it by intent (no local
+  // OAuth); adding it unconditionally wastes an SDK call and surfaces a
+  // misleading "Not logged in" error trail when every remote LLM fails.
+  if (claudeCodeEnabled) {
+    candidates.push("claude-code");
+  }
   return candidates;
 }
 

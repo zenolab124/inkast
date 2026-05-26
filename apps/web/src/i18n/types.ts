@@ -250,6 +250,10 @@ export interface Translations {
       hint: string;
       placeholder: string;
     };
+    codexHeader: {
+      label: string;
+      hint: string;
+    };
   };
   picker: {
     titlePrefix: string;

@@ -12,6 +12,7 @@ import {
 } from "@inkast/shared";
 import {
   listEnabledCapabilities,
+  markCapabilityAutoDisabledUntilNext6am,
   type Provider,
   type ProviderCapability,
 } from "../../storage/providers.js";
@@ -40,19 +41,20 @@ const DEFAULT_TIMEOUT_MS = 600_000;
  * Per-provider transient-failure retry budget. Total attempts per provider =
  * retryLimit + 1 (initial attempt + N retries).
  *
- * Default is 1 (total 2 attempts): most "transient" failures we observe in
- * production are provider-side model-level outages (e.g. stream ends with 0
- * done items — the upstream model node is wedged, not the queue slot).
- * Retrying the same provider beyond a single bounce just doubles the wait
- * before we fall over to a healthier provider.
+ * Default is 0 (no retry, single attempt then fall over). Most "transient"
+ * failures we observe in production are provider-side model-level outages
+ * (e.g. stream ends with 0 done items — the upstream model node is wedged,
+ * not the queue slot). Retrying the same provider just doubles the wait
+ * before we fall over to a healthier provider — and with a multi-provider
+ * pool, fast fallover beats same-provider lottery.
  *
  * Per-capability override: each provider can set `extras.retryLimit` (0-5)
- * in the Web UI. 0 = no retry (fast-fail to next provider on first error);
- * higher values for providers that genuinely benefit from queue-slot lottery.
+ * in the Web UI. Bump for providers that genuinely benefit from queue-slot
+ * lottery (rare in current pool).
  *
  * Moderation, auth, and abort errors are NEVER retried regardless of limit.
  */
-const PROVIDER_RETRY_LIMIT_DEFAULT = 1;
+const PROVIDER_RETRY_LIMIT_DEFAULT = 0;
 const PROVIDER_RETRY_LIMIT_MAX = 5;
 const PROVIDER_RETRY_BACKOFF_MS = 5_000;
 
@@ -93,21 +95,30 @@ function resolveProviderMinIntervalMs(capability: ProviderCapability): number {
 }
 
 /**
- * Read `extras.headers` off a capability. Useful for proxies that gate on
- * a specific User-Agent or custom auth header (e.g. Codex backends that
- * only accept "official client" headers). Filters to string-valued entries
- * to keep the fetch/SDK contracts honest.
+ * Fixed header set that mimics the official Codex CLI client. Some proxies
+ * gate on these (only "official client" gets full quota / loose moderation);
+ * a single checkbox in the Web UI is enough — no reason to expose the raw
+ * header values to the operator.
+ *
+ * Pinned version intentionally — Codex bumps these strings but the proxies
+ * we target don't care about exact version match, only the originator tag
+ * and a Codex-shaped User-Agent.
+ */
+const CODEX_CLI_HEADERS: Record<string, string> = {
+  originator: "codex_cli_rs",
+  "User-Agent": "codex_cli_rs/0.49.0 (Darwin 25.5.0; arm64) terminal",
+};
+
+/**
+ * Read `extras.useCodexHeader` off a capability. When the flag is true we
+ * inject the canonical Codex CLI header set (above) so the upstream proxy
+ * treats us as an official client. Operator toggles a checkbox in the Web
+ * UI; the actual header values are not user-editable to avoid drift.
  */
 export function resolveExtraHeaders(
   capability: ProviderCapability,
 ): Record<string, string> | undefined {
-  const raw = capability.extras?.headers;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof v === "string" && v.length > 0) out[k] = v;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
+  return capability.extras?.useCodexHeader === true ? CODEX_CLI_HEADERS : undefined;
 }
 
 /**
@@ -263,6 +274,14 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           // OpenAI model-layer safety reject — same prompt won't pass next
           // time either. Skip retries, fall over (and the rewrite wrapper
           // will pick this attempt up via the cumulative attempts trail).
+          break;
+        }
+        if (classified.code === "quota_exhausted") {
+          // Wallet / daily quota depleted. Auto-disable this capability
+          // until next 06:00 Beijing time — no point burning more attempts
+          // before upstream resets. Manual Web UI toggle clears the auto
+          // flag and re-enables immediately if user tops up the account.
+          markCapabilityAutoDisabledUntilNext6am(provider.id, capability.kind);
           break;
         }
         // Transient — back off briefly, then retry on the same provider.
@@ -484,6 +503,28 @@ export function truncateErrorBody(body: unknown): unknown {
   return `${serialized.slice(0, ERROR_BODY_MAX_BYTES)}\n…[truncated ${serialized.length - ERROR_BODY_MAX_BYTES} bytes]`;
 }
 
+/**
+ * Loose quota-exhausted detector. Triggers when:
+ *  - OpenAI standard `insufficient_quota` code/type, OR
+ *  - message contains any pairing of (quota|balance|额度|余额) with
+ *    (exhausted|exceeded|耗光|不足|用完|已用尽|no available).
+ *
+ * Errs on the side of inclusion per the spec (loose matching). Risk is a
+ * short-lived rate-budget refusal getting auto-disabled until next 06:00 —
+ * acceptable trade-off vs. burning attempts on a known-empty wallet.
+ */
+const QUOTA_MESSAGE_PATTERN =
+  /insufficient[_\s-]quota|quota\s*(?:exhausted|exceeded|finished|depleted)|no\s+available\s+(?:image\s+)?quota|余额不足|余额已用|配额不足|配额已用|额度不足|额度已用|额度耗光|额度用完|额度用尽|账户余额|您的?余额|预扣费(?:额度)?失败|剩余额度.*?(?:不足|低于|需要)|扣费失败/i;
+
+function isQuotaExhausted(
+  code: unknown,
+  type: unknown,
+  message: string,
+): boolean {
+  if (code === "insufficient_quota" || type === "insufficient_quota") return true;
+  return QUOTA_MESSAGE_PATTERN.test(message);
+}
+
 function classifyError(err: unknown): ClassifiedError {
   if (err instanceof Error && err.name === "AbortError") {
     return { code: "aborted", message: err.message };
@@ -508,14 +549,32 @@ function classifyError(err: unknown): ClassifiedError {
       err.type === "content_policy_violation" ||
       /content[_ ]policy|moderation|safety/i.test(message);
     if (isModeration) return { code: "moderation", message, httpStatus: status, requestId, body };
-    // Gateway-level keyword filter (not upstream model safety). Some Chinese
-    // proxies wrap a policy refusal in HTTP 5xx with a Chinese message and a
-    // traceid; retrying the same gateway with the same prompt is pointless,
-    // so the pool walker treats this as a hard-fallover to the next provider.
+    // Gateway-level keyword filter (not upstream model safety). Two flavors:
+    // (1) Chinese proxies wrap a policy refusal in HTTP 5xx with a Chinese
+    // message and a traceid. (2) English "guardrails" style proxies (e.g.
+    // c2i / deepark) return HTTP 400 with "may violate our guardrails
+    // concerning similarity to third-party content". Both mean: same prompt
+    // on same gateway will keep failing — hard-fallover + trigger rewrite.
     const isProviderBlocked =
-      /违反.*?(平台|内容).*?(政策|规则)|内容.*?违规|提交.*?违反/.test(message);
+      /违反.*?(平台|内容).*?(政策|规则)|内容.*?违规|提交.*?违反|guardrails|may violate|similar(?:ity)? to third[- ]party/i.test(
+        message,
+      );
     if (isProviderBlocked) {
       return { code: "provider_blocked_content", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
+    }
+    // c2i / chatgpt2api-style upstream returned a text reply instead of an
+    // image (prompt was interpreted as chat, not a drawing instruction).
+    // Same prompt on same gateway will keep returning text — rewrite chain
+    // can rescue by making the prompt explicitly look like an image command.
+    if (err.code === "image_generation_text_response") {
+      return { code: "provider_blocked_content", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
+    }
+    // Quota / balance exhausted — auto-disable this capability until next
+    // 06:00 Beijing time so the pool walker doesn't keep burning attempts.
+    // Loose match: OpenAI standard `insufficient_quota` code + any phrasing
+    // combining quota/balance/额度/余额 with exhausted/不足/耗光/用完.
+    if (isQuotaExhausted(err.code, err.type, message)) {
+      return { code: "quota_exhausted", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
     }
     if (status === 401 || status === 403) return { code: "auth", message: `HTTP ${status}: ${message}`, httpStatus: status, requestId, body };
     if (status === 429) return { code: "rate_limit", message, httpStatus: status, requestId, body };
@@ -556,8 +615,16 @@ function classifyError(err: unknown): ClassifiedError {
   }
   // Same gateway-level filter check as the APIError branch above — covers
   // responses-mode failures (which throw plain Error, not APIError).
-  if (/违反.*?(平台|内容).*?(政策|规则)|内容.*?违规|提交.*?违反/.test(message)) {
+  if (
+    /违反.*?(平台|内容).*?(政策|规则)|内容.*?违规|提交.*?违反|guardrails|may violate|similar(?:ity)? to third[- ]party/i.test(
+      message,
+    )
+  ) {
     return { code: "provider_blocked_content", message, body };
+  }
+  // Quota exhausted on responses-mode path. Same loose match as APIError branch.
+  if (isQuotaExhausted(undefined, undefined, message)) {
+    return { code: "quota_exhausted", message, body };
   }
   // OpenAI model-layer safety reject — typically surfaced through the SSE
   // `response.failed` event in responses-mode. The driver wraps it inside

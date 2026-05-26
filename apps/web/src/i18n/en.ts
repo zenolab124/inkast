@@ -261,6 +261,10 @@ export const en: Translations = {
       hint: "Retries on this provider after a failure (0–5). Empty = follow global default (1). 0 = fail over to next provider immediately.",
       placeholder: "default",
     },
+    codexHeader: {
+      label: "Use Codex header",
+      hint: "Send the canonical Codex CLI originator + User-Agent. Some proxies relax quota / moderation policy when they see an 'official client'.",
+    },
   },
   picker: {
     titlePrefix: "Select",
