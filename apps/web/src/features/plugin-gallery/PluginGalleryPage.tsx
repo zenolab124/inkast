@@ -407,86 +407,93 @@ function PluginGalleryDetailDialog({
 
   return (
     <Dialog open={!!item} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto rounded-md">
-        <DialogHeader>
+      <DialogContent
+        className={cn(
+          "flex h-[90vh] w-[95vw] max-w-[1400px] flex-col gap-0 overflow-hidden rounded-md p-0",
+        )}
+      >
+        <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-3">
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">
             <span className="font-mono">{item.pluginId}</span>
             <span className="text-xs text-muted-foreground">· {item.id}</span>
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_24rem]">
           <a
             href={item.imageUrl}
             target="_blank"
             rel="noreferrer"
-            className="block overflow-hidden rounded-md border border-border/60 bg-background"
+            className="flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-background p-3"
+            title="点击在新标签打开原图"
           >
             <img
               src={item.imageUrl}
               alt={item.prompt}
-              className="block w-full"
+              className="max-h-full max-w-full object-contain"
             />
           </a>
 
-          <div className="flex flex-wrap gap-1.5 text-[11px]">
-            <RoundBadge round={item.successRound} />
-            {item.postReviewEdited && <ReviewBadge />}
-            {item.providerName && (
+          <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-l border-border/60 p-5">
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              <RoundBadge round={item.successRound} />
+              {item.postReviewEdited && <ReviewBadge />}
+              {item.providerName && (
+                <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
+                  {item.providerName}
+                </span>
+              )}
+              {item.llmDurationMs != null && (
+                <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
+                  LLM {fmtMs(item.llmDurationMs)}
+                </span>
+              )}
+              {item.imageDurationMs != null && (
+                <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
+                  img {fmtMs(item.imageDurationMs)}
+                </span>
+              )}
               <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
-                {item.providerName}
+                {createdAt}
               </span>
-            )}
-            {item.llmDurationMs != null && (
-              <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
-                LLM {fmtMs(item.llmDurationMs)}
-              </span>
-            )}
-            {item.imageDurationMs != null && (
-              <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
-                img {fmtMs(item.imageDurationMs)}
-              </span>
-            )}
-            <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
-              {createdAt}
-            </span>
-          </div>
+            </div>
 
-          <DetailSection title="调用方 prompt(原始,未截断)">
-            <pre className="whitespace-pre-wrap break-words rounded-md border border-border bg-card p-3 text-[12px] leading-relaxed text-foreground">
-              {item.prompt}
-            </pre>
-          </DetailSection>
-
-          {item.rewrittenPrompts.length > 0 && (
-            <DetailSection
-              title={`LLM 重写链(共 ${item.rewrittenPrompts.length} 轮)`}
-            >
-              <ol className="m-0 flex list-none flex-col gap-2 p-0">
-                {item.rewrittenPrompts.map((rw, idx) => (
-                  <li
-                    key={idx}
-                    className="rounded-md border border-border bg-card p-3"
-                  >
-                    <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-                      R{idx + 1}
-                    </div>
-                    <pre className="m-0 whitespace-pre-wrap break-words text-[12px] leading-relaxed">
-                      {rw}
-                    </pre>
-                  </li>
-                ))}
-              </ol>
-            </DetailSection>
-          )}
-
-          {item.promptJson !== null && item.promptJson !== undefined && (
-            <DetailSection title="prompt JSON(merged)">
-              <pre className="overflow-x-auto rounded-md border border-border bg-card p-3 text-[11px] leading-relaxed">
-                {JSON.stringify(item.promptJson, null, 2)}
+            <DetailSection title="调用方 prompt(原始,未截断)">
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-border bg-card p-3 text-[12px] leading-relaxed text-foreground">
+                {item.prompt}
               </pre>
             </DetailSection>
-          )}
+
+            {item.rewrittenPrompts.length > 0 && (
+              <DetailSection
+                title={`LLM 重写链(共 ${item.rewrittenPrompts.length} 轮)`}
+              >
+                <ol className="m-0 flex list-none flex-col gap-2 p-0">
+                  {item.rewrittenPrompts.map((rw, idx) => (
+                    <li
+                      key={idx}
+                      className="rounded-md border border-border bg-card p-3"
+                    >
+                      <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                        R{idx + 1}
+                      </div>
+                      <pre className="m-0 whitespace-pre-wrap break-words text-[12px] leading-relaxed">
+                        {rw}
+                      </pre>
+                    </li>
+                  ))}
+                </ol>
+              </DetailSection>
+            )}
+
+            {item.promptJson !== null && item.promptJson !== undefined && (
+              <DetailSection title="prompt JSON(merged)">
+                <pre className="overflow-x-auto rounded-md border border-border bg-card p-3 text-[11px] leading-relaxed">
+                  {JSON.stringify(item.promptJson, null, 2)}
+                </pre>
+              </DetailSection>
+            )}
+          </aside>
         </div>
       </DialogContent>
     </Dialog>
