@@ -436,6 +436,9 @@ export interface ListJobsResponse {
  * `GET /admin/plugin-gallery.json`. One row per succeeded plugin task that has
  * an R2-hosted image. Used by the loopback-only admin gallery page (a Tab in
  * the main web UI) — not exposed publicly.
+ *
+ * Backed by the long-lived `plugin_gallery_items` table — survives the 24h
+ * GC on `plugin_tasks`. b64-mode tasks never land here (transient bytes only).
  */
 export interface PluginGalleryItem {
   /** plugin_tasks.id (e.g. `ink-<uuid>`). */
@@ -446,15 +449,41 @@ export interface PluginGalleryItem {
   imageUrl: string;
   /** `image/png` / `image/jpeg`. */
   mime: string | null;
-  /** Original caller prompt (free-form prose; may include marker prefixes). */
+  /** Original caller prompt (free-form prose; never truncated). */
   prompt: string;
   /** LLM-expanded prompt JSON when available; null for skip-LLM plugins. */
   promptJson: unknown | null;
+  /**
+   * One entry per LLM rewrite round actually performed. Empty array when the
+   * original prompt succeeded round-0 directly.
+   */
+  rewrittenPrompts: string[];
+  /**
+   * Which round produced the final image.
+   *   0 = original prompt, no rewrite
+   *   1 = LLM vision rewrite
+   *   2 = fingerprint-degrade
+   *   3 = color-only anchor
+   */
+  successRound: 0 | 1 | 2 | 3;
+  /** True iff the post-review edit step replaced the image bytes. */
+  postReviewEdited: boolean;
   llmDurationMs: number | null;
   imageDurationMs: number | null;
   createdAt: number;
 }
 
+export interface PluginGalleryPluginCount {
+  pluginId: string;
+  count: number;
+}
+
 export interface ListPluginGalleryResponse {
   items: PluginGalleryItem[];
+  /** Pagination cursor for the next page; null when no more rows. */
+  nextCursor: string | null;
+  /** Total row count across the entire gallery (after pluginId filter). */
+  total: number;
+  /** Per-plugin counts across the ENTIRE gallery (ignores cursor + filter). */
+  pluginCounts: PluginGalleryPluginCount[];
 }

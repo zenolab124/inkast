@@ -24,6 +24,7 @@ import {
   reaperInflightPluginTasks,
   type PluginTaskRow,
 } from "../../storage/plugin-tasks.js";
+import { backfillPluginGalleryFromTasks } from "../../storage/plugin-gallery.js";
 
 /**
  * v2 异步协议的核心。负责:
@@ -634,7 +635,30 @@ function safeParseJson(raw: string): unknown {
  */
 export function initPluginAsync(): void {
   recoverInterruptedTasks();
+  backfillGallery();
   startGcLoop();
+}
+
+/**
+ * Idempotent one-shot: copy still-resident succeeded r2 tasks into the long-
+ * lived gallery table. After the first boot post-deploy this is a no-op
+ * (INSERT OR IGNORE on id). Logged at info-level so we can see in journal
+ * whether the migration touched anything.
+ */
+function backfillGallery(): void {
+  try {
+    const { scanned, inserted } = backfillPluginGalleryFromTasks();
+    if (inserted > 0) {
+      console.log(
+        `[plugin-async] backfilled ${inserted}/${scanned} task(s) into plugin_gallery_items`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[plugin-async] gallery backfill failed:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 function recoverInterruptedTasks(): void {

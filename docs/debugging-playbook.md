@@ -263,3 +263,23 @@ ssh jdc "systemctl restart inkast-api && sleep 3 && curl -s http://127.0.0.1:878
 | `[throttle]` | rate limit 排队 |
 | `[post-review]` | review + edit 步骤 |
 | `[r2]` | R2 直传步骤 |
+| `[plugin-async] backfilled` | 启动时把现存 r2 succeeded task 补进 `plugin_gallery_items`(只首次部署或重启后才有量) |
+
+## 附录 G: plugin gallery 数据缺失怎么查(v2 长期表)
+
+`plugin-gallery` Tab 自 v2 起读 `plugin_gallery_items`(独立长期表),**不再受 24h GC 影响**。
+
+排查清单:
+
+1. **"某张 succeeded 的图没在 gallery 里"**
+   - 看 `plugin_tasks` 该行 `status` 是不是 `succeeded` / `callback_lost` 且 `image_url IS NOT NULL`(b64 模式不入 gallery,设计如此)。
+   - 再看 `plugin_gallery_items` 同 id 行存不存在;不在就检查 `markTaskSucceeded` 同事务双写是否抛错。
+   - 应急:启动一次 inkast-api,`initPluginAsync` 会 `backfillPluginGalleryFromTasks()` 把活着的 succeeded r2 task 补进去(幂等)。
+
+2. **"24h 之前的图找不到"**
+   - 看 `plugin_gallery_items` 创建时间 = 长期表最早一行的 `created_at`。GC 已删的 `plugin_tasks` 历史(v2 部署之前的)永远找不回来——backfill 只能补当时存活的。
+
+3. **"分页加载不到下一页"**
+   - 前端 console 看 `/admin/plugin-gallery.json?cursor=...` 的响应 `nextCursor` 是不是 null。
+   - 服务端 `listPluginGallery` cursor 解析失败时按"无 cursor"处理(返回第一页),前端会陷入循环——看 sentinel 是否一直 intersect 但 `nextCursor` 没推进。
+   - 验证 SQL 索引:`idx_plugin_gallery_created_at` 必须存在,`EXPLAIN QUERY PLAN` 应当用上。

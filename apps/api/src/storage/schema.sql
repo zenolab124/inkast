@@ -27,12 +27,13 @@ CREATE INDEX IF NOT EXISTS idx_providers_priority ON providers(priority);
 -- 'llm' from the same baseUrl + key; ordering / disabled state are scoped per
 -- kind so the image pool and the LLM pool stay independent.
 CREATE TABLE IF NOT EXISTS provider_capabilities (
-  provider_id   TEXT NOT NULL,
-  kind          TEXT NOT NULL,            -- 'image' | 'llm'
-  model         TEXT NOT NULL,
-  priority      INTEGER NOT NULL,         -- per-kind ordering (lower = tried first)
-  disabled      INTEGER NOT NULL DEFAULT 0,  -- 1 means skipped by the pool
-  extras        TEXT,                     -- JSON, per-kind options
+  provider_id          TEXT NOT NULL,
+  kind                 TEXT NOT NULL,            -- 'image' | 'llm'
+  model                TEXT NOT NULL,
+  priority             INTEGER NOT NULL,         -- per-kind ordering (lower = tried first)
+  disabled             INTEGER NOT NULL DEFAULT 0,  -- 1 means skipped by the pool
+  auto_disabled_until  INTEGER,                  -- epoch ms; non-null = auto-disabled (e.g. quota exhausted), re-enable when now > this
+  extras               TEXT,                     -- JSON, per-kind options
   PRIMARY KEY (provider_id, kind),
   FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
 );
@@ -130,3 +131,34 @@ CREATE TABLE IF NOT EXISTS plugin_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_plugin_tasks_status ON plugin_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_plugin_tasks_created_at ON plugin_tasks(created_at);
+
+-- Plugin gallery (long-lived). Independent of plugin_tasks GC. Written
+-- synchronously inside markTaskSucceeded(kind='r2') so every r2-mode
+-- succeeded task gets an immutable archival row that survives the 24h GC.
+-- b64-mode tasks are not represented here (their bytes are transient and
+-- not browser-loadable; gallery is "things with a public URL only").
+--
+-- Primary key matches plugin_tasks.id (`ink-<uuid>`) so cross-references
+-- are trivial; row may outlive plugin_tasks (no FK so GC of the task row
+-- does not cascade).
+CREATE TABLE IF NOT EXISTS plugin_gallery_items (
+  id                   TEXT PRIMARY KEY,
+  plugin_id            TEXT NOT NULL,
+  provider_id          TEXT,
+  provider_name        TEXT,
+  image_url            TEXT NOT NULL,
+  mime                 TEXT,
+  prompt               TEXT NOT NULL,           -- caller's raw prompt, never truncated
+  prompt_json          TEXT,                    -- JSON.stringify of merged ImagePrompt
+  rewritten_prompts    TEXT,                    -- JSON array string[]; null/[] when no rewrite
+  success_round        INTEGER NOT NULL,        -- 0..3, copied from plugin_tasks.success_round
+  post_review_edited   INTEGER NOT NULL DEFAULT 0,
+  llm_duration_ms      INTEGER,
+  image_duration_ms    INTEGER,
+  created_at           INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_gallery_created_at
+  ON plugin_gallery_items(created_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_plugin_gallery_plugin_id
+  ON plugin_gallery_items(plugin_id, created_at DESC);

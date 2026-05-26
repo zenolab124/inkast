@@ -1,9 +1,14 @@
 import type {
   GenerateImageAttempt,
   ListPluginGalleryResponse,
+  PluginGalleryItem,
 } from "@inkast/shared";
 import { Hono } from "hono";
-import { listSucceededPluginImages } from "../../storage/plugin-tasks.js";
+import {
+  listPluginGallery as listPluginGalleryRows,
+  pluginGalleryCountsByPlugin,
+  pluginGalleryTotal,
+} from "../../storage/plugin-gallery.js";
 import {
   getCallbackHealth,
   getHourBuckets,
@@ -102,18 +107,24 @@ adminRoutes.get("/plugin-stats", c => {
 
 /**
  * Loopback-only JSON feed for the admin plugin-gallery page (rendered in the
- * main React UI as a Tab — `?tab=plugin-gallery`). Returns the most recent
- * succeeded plugin tasks that have an R2-hosted image. Both `succeeded` and
- * `callback_lost` count: the image is real either way (callback_lost only
- * means the caller never acked).
+ * main React UI as a Tab — `?tab=plugin-gallery`). Backed by the long-lived
+ * `plugin_gallery_items` table; rows survive the 24h GC on `plugin_tasks`.
+ *
+ * Keyset pagination: pass `?cursor=<createdAt>_<id>` to get the next page.
+ * `nextCursor` is null when no more rows remain. `pluginCounts` + `total` are
+ * computed across the entire gallery (ignoring the cursor) so the filter chip
+ * bar shows stable totals even mid-scroll.
  *
  * Sits under `/admin/*` for the same reason as `plugin-stats`: nginx's public
  * vhost only proxies `/plugins/v1/*`, so `/admin/*` is loopback-only.
  */
 adminRoutes.get("/plugin-gallery.json", c => {
-  const limitRaw = c.req.query("limit");
-  const limit = Math.min(2000, Math.max(1, Number(limitRaw) || 500));
-  const items = listSucceededPluginImages(limit).map(r => ({
+  const limit = Math.min(200, Math.max(1, Number(c.req.query("limit")) || 60));
+  const cursor = c.req.query("cursor") ?? null;
+  const pluginId = c.req.query("pluginId")?.trim() || null;
+
+  const { items, nextCursor } = listPluginGalleryRows({ cursor, limit, pluginId });
+  const mapped: PluginGalleryItem[] = items.map(r => ({
     id: r.id,
     pluginId: r.pluginId,
     providerName: r.providerName,
@@ -121,11 +132,20 @@ adminRoutes.get("/plugin-gallery.json", c => {
     mime: r.mime,
     prompt: r.prompt,
     promptJson: r.promptJson ? safeParseJson(r.promptJson) : null,
+    rewrittenPrompts: r.rewrittenPrompts,
+    successRound: r.successRound,
+    postReviewEdited: r.postReviewEdited,
     llmDurationMs: r.llmDurationMs,
     imageDurationMs: r.imageDurationMs,
     createdAt: r.createdAt,
   }));
-  const body: ListPluginGalleryResponse = { items };
+
+  const body: ListPluginGalleryResponse = {
+    items: mapped,
+    nextCursor,
+    total: pluginGalleryTotal(),
+    pluginCounts: pluginGalleryCountsByPlugin(),
+  };
   return c.json(body);
 });
 

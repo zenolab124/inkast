@@ -63,7 +63,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | 方法 | 路径 | 职责 | 入口 |
 | --- | --- | --- | --- |
 | **GET** | **`/admin/plugin-stats`** | **两通道运行状态 HTML dashboard**(Plugin + Web UI 双 section),服务端渲染 + meta refresh 60s + attempts 链徽章 + 失败浮层 + plugin-gallery chip | `apps/api/src/server/routes/admin.ts` |
-| **GET** | **`/admin/plugin-gallery.json`** | **SPA gallery 数据源**,返最近 100 条 `image_url IS NOT NULL` 的 plugin task(24h GC 内) | `apps/api/src/server/routes/admin.ts` |
+| **GET** | **`/admin/plugin-gallery.json`** | **SPA gallery 数据源**,读独立长期表 `plugin_gallery_items`,**不受 24h GC**;keyset cursor 分页(`?cursor=<createdAt>_<id>&limit=60&pluginId=...`),响应含 `nextCursor` + `total` + `pluginCounts` | `apps/api/src/server/routes/admin.ts` |
 
 **详情**: [async-job-pipeline](domains/async-job-pipeline.md) · [provider-pool](domains/provider-pool.md) · [image-generation](domains/image-generation.md) · [prompt-engine](domains/prompt-engine.md) · [reference-image](domains/reference-image.md) · **[plugin-channel](domains/plugin-channel.md)** · **[rewrite-chain](domains/rewrite-chain.md)** · **[post-review-edit](domains/post-review-edit.md)** · **[admin-dashboard](domains/admin-dashboard.md)** · **[plugin-gallery](domains/plugin-gallery.md)**
 
@@ -89,6 +89,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | `generations` | Web UI 生图历史(含 `prose` / `ai_filled_fields` 字段) |
 | `jobs` | Web UI 异步任务(同步加 `prose` / `ai_filled_fields`) |
 | **`plugin_tasks`** | **Plugin 通道异步任务**(独立于 jobs):状态 + **`b64_json`(v2)** + **`image_url`(v2.1 起,r2 模式)** + callback_url + callback_token + provider_id/name + 24h GC |
+| **`plugin_gallery_items`** | **Plugin 通道长期作品归档**(v2 引入):`markTaskSucceeded(r2)` 同事务双写,**不参与 GC**;按 `(created_at DESC, id DESC)` 索引,keyset cursor 分页;b64 模式不入此表 |
 
 **详情**: [better-sqlite3](integrations/better-sqlite3.md) · [async-job-pipeline](domains/async-job-pipeline.md) · [plugin-channel](domains/plugin-channel.md) · [provider-capability-table-split](decisions/provider-capability-table-split.md)
 
@@ -126,7 +127,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [rewrite-chain](domains/rewrite-chain.md) | **3 轮 LLM 改写降级**(round 0 失败 → r1 视觉重写 / r2 措辞重组 / r3 形态最宽),body+palette+archetype 三锚定 |
 | [post-review-edit](domains/post-review-edit.md) | **r2/r3 后的视觉审查 + edit**(LLM 看图判 looks_like_target,不像就跑 image edit pipeline) |
 | [admin-dashboard](domains/admin-dashboard.md) | **`/admin/plugin-stats` 服务端 HTML dashboard**(loopback only,两 section + attempts 徽章浮层 + plugin-gallery chip) |
-| [plugin-gallery](domains/plugin-gallery.md) | **Web 端浏览 plugin 通道生成图**(SPA Tab + react-masonry,只展示 R2 直传的 24h 内图) |
+| [plugin-gallery](domains/plugin-gallery.md) | **Web 端浏览 plugin 通道生成图**(SPA Tab + react-masonry,**长期归档**,cursor 分页 + 无限滚动 + 详情 Dialog 展开 rewrite chain) |
 | [field-editor](domains/field-editor.md) | 字段编辑器中栏(collapsed/expanded 两态,lockMode 驱动) |
 | [session-workspace](domains/session-workspace.md) | 起草 Tab 右栏 · 本次会话作品 + jobs 占位 tile · 刷新清空 |
 | [async-job-pipeline](domains/async-job-pipeline.md) | Web UI 异步生图任务流水线 + polling + 重启 reaper |
@@ -415,7 +416,7 @@ INKAST_PLUGIN_TOKEN_<UPPER_ID> env ──→ tokenToPluginId Map
 R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env ──→ r2.ts driver
 
 /admin/plugin-stats (loopback only) ──→ HTML dashboard(两 section:Plugin + Web UI,attempts 链徽章 + 失败浮层 + plugin-gallery chip)
-/admin/plugin-gallery.json (loopback) ──→ Web 主 SPA (/?tab=plugin-gallery) → react-masonry 浏览 R2 图(24h)
+/admin/plugin-gallery.json (loopback) ──→ Web 主 SPA (/?tab=plugin-gallery) → react-masonry 浏览 R2 图(长期归档 plugin_gallery_items,cursor 分页)
 
 per-provider throttle (apps/api/src/lib/throttle.ts):
   Map<providerId, Promise> 链 + acquireProviderSlot 匀速节流

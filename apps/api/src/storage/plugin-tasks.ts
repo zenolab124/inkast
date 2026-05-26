@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { GenerateImageAttempt } from "@inkast/shared";
 import { db } from "./db.js";
+import { insertPluginGalleryItem } from "./plugin-gallery.js";
 
 export type PluginTaskStatus =
   | "queued"
@@ -264,32 +265,70 @@ export function markTaskSucceeded(id: string, input: MarkSucceededInput): void {
     input.rewrittenPrompts && input.rewrittenPrompts.length > 0
       ? JSON.stringify(input.rewrittenPrompts)
       : null;
-  db()
-    .prepare(
-      `UPDATE plugin_tasks
-       SET status = 'succeeded', b64_json = ?, image_url = ?, mime = ?, prompt_json = ?,
-           rewritten_prompt = ?, success_round = ?, post_review_edited = ?,
-           llm_duration_ms = ?, image_duration_ms = ?,
-           provider_id = ?, provider_name = ?, attempts = ?,
-           completed_at = ?
-       WHERE id = ?`,
-    )
-    .run(
-      b64Json,
-      imageUrl,
-      input.mime,
-      input.promptJson,
-      rewrittenPromptsJson,
-      input.successRound,
-      input.postReviewEdited ? 1 : 0,
-      input.llmDurationMs,
-      input.imageDurationMs,
-      input.providerId,
-      input.providerName,
-      JSON.stringify(input.attempts ?? []),
-      Date.now(),
-      id,
-    );
+
+  // Atomic: UPDATE the task row + (r2 only) archive into plugin_gallery_items
+  // in the same transaction so the gallery never has a row whose task didn't
+  // actually succeed, and vice versa. better-sqlite3 transactions are sync.
+  const tx = db().transaction(() => {
+    db()
+      .prepare(
+        `UPDATE plugin_tasks
+         SET status = 'succeeded', b64_json = ?, image_url = ?, mime = ?, prompt_json = ?,
+             rewritten_prompt = ?, success_round = ?, post_review_edited = ?,
+             llm_duration_ms = ?, image_duration_ms = ?,
+             provider_id = ?, provider_name = ?, attempts = ?,
+             completed_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        b64Json,
+        imageUrl,
+        input.mime,
+        input.promptJson,
+        rewrittenPromptsJson,
+        input.successRound,
+        input.postReviewEdited ? 1 : 0,
+        input.llmDurationMs,
+        input.imageDurationMs,
+        input.providerId,
+        input.providerName,
+        JSON.stringify(input.attempts ?? []),
+        Date.now(),
+        id,
+      );
+
+    if (input.kind === "r2") {
+      // Re-read plugin_id / prompt / created_at from the just-updated row so
+      // the gallery insert doesn't force every caller to thread those values.
+      // Same-transaction read = always sees the UPDATE above.
+      const row = db()
+        .prepare(
+          `SELECT plugin_id, prompt, created_at FROM plugin_tasks WHERE id = ?`,
+        )
+        .get(id) as
+        | { plugin_id: string; prompt: string; created_at: number }
+        | undefined;
+      if (row) {
+        insertPluginGalleryItem({
+          id,
+          pluginId: row.plugin_id,
+          providerId: input.providerId,
+          providerName: input.providerName,
+          imageUrl: input.imageUrl,
+          mime: input.mime,
+          prompt: row.prompt,
+          promptJson: input.promptJson,
+          rewrittenPrompts: input.rewrittenPrompts ?? [],
+          successRound: input.successRound,
+          postReviewEdited: input.postReviewEdited,
+          llmDurationMs: input.llmDurationMs,
+          imageDurationMs: input.imageDurationMs,
+          createdAt: row.created_at,
+        });
+      }
+    }
+  });
+  tx();
 }
 
 export interface MarkFailedInput {
@@ -358,67 +397,6 @@ export function getPluginTask(id: string): PluginTaskRow | null {
     .prepare(`SELECT * FROM plugin_tasks WHERE id = ?`)
     .get(id) as DbRow | undefined;
   return row ? rowToTask(row) : null;
-}
-
-/**
- * Plugin-gallery query: succeeded tasks within the GC window that have an R2
- * image URL. Used by the admin gallery page (loopback). Returns only the cells
- * the gallery needs — no b64_json, no callback_token (those would balloon the
- * payload + risk leaking secrets even on loopback). Ordered newest-first.
- *
- * Note: b64-mode plugin tasks (b64_json populated, image_url NULL) are skipped
- * by design — they're transient (returned in callback then GC'd 24h later),
- * the bytes aren't browser-loadable, and only legacy v2 plugins use that mode.
- */
-export interface PluginGalleryRow {
-  id: string;
-  pluginId: string;
-  providerName: string | null;
-  imageUrl: string;
-  mime: string | null;
-  prompt: string;
-  promptJson: string | null;
-  llmDurationMs: number | null;
-  imageDurationMs: number | null;
-  createdAt: number;
-}
-
-export function listSucceededPluginImages(limit = 500): PluginGalleryRow[] {
-  const rows = db()
-    .prepare(
-      `SELECT id, plugin_id, provider_name, image_url, mime,
-              prompt, prompt_json, llm_duration_ms, image_duration_ms,
-              created_at
-       FROM plugin_tasks
-       WHERE image_url IS NOT NULL
-         AND status IN ('succeeded', 'callback_lost')
-       ORDER BY created_at DESC
-       LIMIT ?`,
-    )
-    .all(limit) as Array<{
-      id: string;
-      plugin_id: string;
-      provider_name: string | null;
-      image_url: string;
-      mime: string | null;
-      prompt: string;
-      prompt_json: string | null;
-      llm_duration_ms: number | null;
-      image_duration_ms: number | null;
-      created_at: number;
-    }>;
-  return rows.map(r => ({
-    id: r.id,
-    pluginId: r.plugin_id,
-    providerName: r.provider_name,
-    imageUrl: r.image_url,
-    mime: r.mime,
-    prompt: r.prompt,
-    promptJson: r.prompt_json,
-    llmDurationMs: r.llm_duration_ms,
-    imageDurationMs: r.image_duration_ms,
-    createdAt: r.created_at,
-  }));
 }
 
 /**
