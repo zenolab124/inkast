@@ -20,7 +20,7 @@
 
 ### 故障排查(2026-05-25 新增)
 
-- [docs/debugging-playbook.md](../debugging-playbook.md) — 用户报"失败了 / 出错了 / 效果不对"时按这份 SOP 走。通道速记(Web UI vs Plugin)、信息源三件套(SQLite/journal/用户描述)、Step1-3 决策树 Q1-Q6(error_code / trigger code / rewritten 非空 / success_round / post_review_edited / throttle)、附录:image pool 现状、LLM fallover 顺序、rewrite chain 速记、部署节奏、凭据红线、常用 grep 关键字。**任何 plugin 通道排查任务的第一阅读源**。
+- [docs/debugging-playbook.md](../debugging-playbook.md) — 用户报"失败了 / 出错了 / 效果不对"时按这份 SOP 走。通道速记(Web UI vs Plugin)、信息源三件套(SQLite/journal/用户描述)、Step1-3 决策树 Q1-Q6(error_code / trigger code / rewritten 非空 / success_round / post_review_edited / throttle)、附录:image pool 现状、LLM fallover 顺序、rewrite chain 速记、部署节奏、凭据红线、常用 grep 关键字、**附录 G plugin gallery 数据缺失排查(v2 长期表语义)**。**任何 plugin 通道排查任务的第一阅读源**。
 <!-- codewise-docs:end -->
 
 <!-- codewise-interfaces:start -->
@@ -168,6 +168,10 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | **[per-capability-retry-budget](decisions/per-capability-retry-budget.md)** | **每个 image provider 单独配 retry 次数**(0-5,默认 1) |
 | **[three-anchor-design](decisions/three-anchor-design.md)** | **Rewrite chain 三锚定演进**(body+palette+archetype),从 v2.20 五字段 → v2.21 两字段砍过头 → v2.22 加 archetype 折中 |
 | **[pipeline-policy](decisions/pipeline-policy.md)** | **调用方控制 rewrite chain + post-review 行为**(skipOriginal/maxRound/postReviewEdit,in-memory 不入库) |
+| **[cjk-bracket-atomic-protocol](decisions/cjk-bracket-atomic-protocol.md)** | **v2.30**:plugin prompt 协议切到 CJK「」原子格式,`「char」. Style and theme: 「style」`,不留兼容 |
+| **[style-as-fourth-anchor](decisions/style-as-fourth-anchor.md)** | **v2.30**:style 升级为第四个硬锚定(identity+character+palette+style),force-prepend 兜底防 LLM 翻译/近义改写 |
+| **[palette-anchors-llm-not-keyword](decisions/palette-anchors-llm-not-keyword.md)** | **v2.31**:palette_anchors 用 R1 system prompt 加 style-aware 语义规则,**否决**关键词检测兜底(给 LLM 语义判断空间) |
+| **[plugin-gallery-long-term-archive](decisions/plugin-gallery-long-term-archive.md)** | **v2.34**:plugin gallery 拆独立成品表 `plugin_gallery_items`,`markTaskSucceeded(r2)` 同事务双写,跟 `plugin_tasks` 24h GC 解耦 |
 
 ### 架构 / 接口
 
@@ -201,6 +205,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [no-main-ui-backend-selector](decisions/no-main-ui-backend-selector.md) | 主 UI 不放 LLM 选择器,只显示"via X"标签 |
 | [probe-models-endpoint](decisions/probe-models-endpoint.md) | `POST /api/probe-models` + Combobox 替代手填 |
 | [llm-driver-knobs](decisions/llm-driver-knobs.md) | 5 个 LLM 旋钮:model/effort/thinking/fallbackModel/maxTurns |
+| **[codex-header-via-flag-not-freeform](decisions/codex-header-via-flag-not-freeform.md)** | **v2.33**:Codex CLI header 通过 `extras.useCodexHeader: bool` 暴露,后端常量化 headers,**否决** free-form headers JSON |
 | [sqlite-over-keychain](decisions/sqlite-over-keychain.md) | 跨平台 SQLite 凭据 vs macOS Keychain |
 
 ### UI / 主题 / 数据
@@ -282,6 +287,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | **[anyrouter-pseudo-stream-deep-failure](pitfalls/anyrouter-pseudo-stream-deep-failure.md)** | **gpt-5.3-codex "假活流"是上游模型节点宕机**,retry 同 provider 浪费 600s——按 `[[per-capability-retry-budget]]` 给 cpa/any 配 retry=0 |
 | **[cf-120s-images-mode-only](pitfalls/cf-120s-images-mode-only.md)** | **CF 反代 120s 兜底 only 影响 images mode**,SSE 流式头立即返绕过——`ioll.pp.ua` 这类切到 responses+stream:true |
 | **[moderation-low-ineffective-on-resellers](pitfalls/moderation-low-ineffective-on-resellers.md)** | **moderation:"low" 对二道贩子代理无效**(2026-05-22 反转:虽对二道贩子无收益,但对未来 OpenAI 直连账号有用 + 没副作用,**默认开**;若 duck 因此挂死可回滚 1 行) |
+| **[quota-chinese-proxy-regex](pitfalls/quota-chinese-proxy-regex.md)** | **v2.32 修**:中文反代余额不足措辞多样(`预扣费/剩余额度`),quota regex 漏匹配 → auto-disable 不触发,每次提交浪费一次 attempt |
 
 ### Rewrite Chain / Post-Review(2026-05-25 实测产物)
 
@@ -291,7 +297,9 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | **[error-code-translation-layer](pitfalls/error-code-translation-layer.md)** | **plugin error_code 是转译层**,跟 inkast 内部 ImageGenError.code 不一一对应——排查时信 error_msg 多过 error_code |
 | **[edit-mode-images-pool-shrunk](pitfalls/edit-mode-images-pool-shrunk.md)** | **post-review-edit 走 requireMode=images 让 pool 缩水 60%**——只剩 3 个 mode=images provider,3 个当前实测全有问题 |
 | **[review-llm-too-lenient](pitfalls/review-llm-too-lenient.md)** | **review LLM 判 looks_like_target=true 偏宽松**(10/13 直接放过明显不像的图),"画风差异不重要"被 LLM 误解成"风格剧变后主体变化也放过" |
-| **[character-key-prefix-required](pitfalls/character-key-prefix-required.md)** | **Rewrite r1 vision + post-review 都依赖 PascalCase 前缀**(`IronMan. Style and theme:`),没前缀 r1 退化 text-only / review 直接 skip |
+| **[character-key-prefix-required](pitfalls/character-key-prefix-required.md)** | **Rewrite r1 vision + post-review 都依赖 PascalCase 前缀**(`「IronMan」. Style and theme: 「...」` v2.30 起 CJK 格式),没前缀 r1 退化 text-only / review 直接 skip |
+| **[cjk-bracket-style-translation](pitfalls/cjk-bracket-style-translation.md)** | **v2.30 修**:旧协议下 LLM 把 style 翻译/近义改写/省略,rewritten_prompt 看似正常但出图风格漂移 |
+| **[grayscale-style-palette-conflict](pitfalls/grayscale-style-palette-conflict.md)** | **v2.31 修一半**:R1 提取的角色彩色 palette 跟 grayscale style 直接冲突,出图变彩色;style-aware 规则修了多数 case,LLM 不听话仍踩 |
 
 ### 渠道结构性问题(anyrouter + image_generation 调研产物)
 
@@ -329,6 +337,8 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | 条目 | 一句话 |
 | --- | --- |
 | [llm-sdk-cold-start](pitfalls/llm-sdk-cold-start.md) | Claude Agent SDK 首次冷启动 ~7s,warmup 缓解 |
+| **[claude-code-not-logged-in-as-result](pitfalls/claude-code-not-logged-in-as-result.md)** | **v2.32 修**:claude-code SDK 无 OAuth 时返 "Not logged in" 作为 result 字符串(不抛 error),下游当 invalid_json,error_msg 误导排查 |
+| **[claude-code-tail-bypassed-disabled](pitfalls/claude-code-tail-bypassed-disabled.md)** | **v2.32 修**:`with-fallover.ts` resolveCandidates 无条件追加 claude-code tail,绕过 DB capability disabled——改成尊重 DB 显式 disable |
 | [openai-image-api-no-seed](pitfalls/openai-image-api-no-seed.md) | OpenAI Image API 不返回 seed,UI 不能显示 |
 | [llm-json-quote-escaping](pitfalls/llm-json-quote-escaping.md) | 模型字符串内未转义引号(schema 解决) |
 | [hmr-restart-aborts-jobs](pitfalls/hmr-restart-aborts-jobs.md) | tsx watch 重启丢 in-flight jobs |
@@ -434,8 +444,8 @@ LLM 调用 fallover (apps/api/src/drivers/llm/with-fallover.ts):
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `05bf12f21f1ccb52fbd2a86a8328d00e1fb6624f`
-- **synced_at**: `2026-05-25T03:26:07+08:00`
+- **baseline_commit**: `058451a670128c5641f2c1406ed2d691d4928f18`
+- **synced_at**: `2026-05-26T20:50:00+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
 

@@ -34,8 +34,19 @@ error_msg  = rewrite r1 LLM failed: HTTP 502 (no body) — and earlier rounds al
 
 **v2.24 之前**:catch 块用 `lastErr?.message` 覆盖 r1 真实失败原因,error_msg 看起来是 "exhausted all N providers" 完全掩盖 r1 LLM 错。已在 [with-rewrite.ts:159](../../../apps/api/src/domain/generate/with-rewrite.ts#L159) 修——现在 catch 拼真实失败 + 之前轮次失败。
 
+## 另一个易踩点:`classifyError` 两路径同步
+
+`apps/api/src/drivers/image/openai-compatible.ts` 的 `classifyError` 函数有**两条分支**:
+- APIError 分支(images mode 走 SDK,SDK 抛 APIError 被分类)
+- plain Error 分支(responses mode 走 raw fetch,catch 到 plain Error 重新分类)
+
+**新增错误码识别(quota / blocked / guardrails / not_logged_in 等)必须两处都加**,否则 responses mode 路径漏判 → 错码归 `unknown` → 触发错误的 fallover 策略。
+
+具体踩坑:v2.32 修 [quota-chinese-proxy-regex](quota-chinese-proxy-regex.md) 时一开始只加了 APIError 分支,plain Error 分支仍归 `auth`。
+
 ## 关联
 
 - [llm-half-refusal-empty-rewritten](llm-half-refusal-empty-rewritten.md) — 一种典型的"error_code 误导"场景
+- [quota-chinese-proxy-regex](quota-chinese-proxy-regex.md) — 同源 pitfall:两路径同步
 - [rewrite-chain](../domains/rewrite-chain.md) — 错误流经路径
 - [plugin-channel](../domains/plugin-channel.md) — error_code 写入 plugin_tasks 的位置

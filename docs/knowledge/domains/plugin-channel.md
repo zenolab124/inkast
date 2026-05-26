@@ -41,6 +41,8 @@ nginx /inkast/ → 127.0.0.1:8787 ───┬──────┴────�
         │        r2:        prepareImageForR2(可选 resize,保 PNG/WEBP)    │
         │                   → putImage(R2,3 次指数退避 0.5/2/8s)         │
         │                   → markTaskSucceeded(kind:r2, imageUrl, mime)   │
+        │                      ↳ 同 db.transaction() 内 INSERT             │
+        │                        plugin_gallery_items(永久归档,r2 only)  │
         │   失败 → markTaskFailed + toOpenAiError mapper                   │
         │   R2 失败 → error_code='r2_upload_failed',不回退 b64             │
         │   → deliverCallback(attempt=0)                                   │
@@ -87,11 +89,14 @@ queued → running → succeeded ─┐ → callback POST →┬─ 200: 终态
               → failed ───────┴── 同上(callback body 含 error_code) → 终态(或 callback_lost)
 ```
 
-终态 task 24h 后由 GC 删除(`gcOldPluginTasks`,setInterval 每小时 + startup 一次)。
+终态 task 24h 后由 GC 删除(`gcOldPluginTasks`,setInterval 每小时 + startup 一次)。**但 r2 模式成品行已在 `markTaskSucceeded` 时双写到 `plugin_gallery_items` 长期表**,GC 不动那张表,gallery 仍可见;详见 [plugin-gallery-long-term-archive](../decisions/plugin-gallery-long-term-archive.md)。
 
 ## 重启恢复
 
-systemd 重启时 `initPluginAsync` → `reaperInflightPluginTasks`:扫 `status IN (queued, running)` 的 task,全部标 `failed` + `error_code='interrupted'`,然后**立即对每个发 callback**。调用方无需 polling 等。
+systemd 重启时 `initPluginAsync` 顺序跑三件事:
+1. **`reaperInflightPluginTasks`** — 扫 `status IN (queued, running)` 的 task,全部标 `failed` + `error_code='interrupted'`,然后立即对每个发 callback。调用方无需 polling 等。
+2. **`backfillPluginGalleryFromTasks`** — 把仍存活的 `succeeded`/`callback_lost` 且有 `image_url` 的 task 行幂等 INSERT 到 `plugin_gallery_items`(`INSERT OR IGNORE`)。首次部署 v2 长期归档时会一次性补全历史;之后每次 restart 都跑(no-op)。
+3. **`startGcLoop`** — 每小时跑 `gcOldPluginTasks` + startup 一次。
 
 ## 与 Web UI 通道的边界
 
@@ -111,7 +116,8 @@ systemd 重启时 `initPluginAsync` → `reaperInflightPluginTasks`:扫 `status 
 
 - [rewrite-chain](rewrite-chain.md) — round 0 失败后的 3 轮 LLM 重写
 - [post-review-edit](post-review-edit.md) — r2/r3 成功后的视觉审查 + edit
-- [plugin-gallery](plugin-gallery.md) — Web 端浏览本通道生成图(24h)
+- [plugin-gallery](plugin-gallery.md) — Web 端浏览本通道生成图(永久归档,r2 模式)
+- [plugin-gallery-long-term-archive](../decisions/plugin-gallery-long-term-archive.md) — 拆独立成品表的决策
 - [admin-dashboard](admin-dashboard.md) — 看 plugin 通道运行状态的 HTML dashboard
 - [plugin-overlay-loader](../shared/plugin-overlay-loader.md) — JSON overlay 加载机制
 - [llm-fallover](../shared/llm-fallover.md) — LLM 调用的 multi-backend fallover

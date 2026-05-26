@@ -18,7 +18,7 @@ completeJsonWithFallover<T>(
 
 1. `INKAST_DEFAULT_LLM_PROVIDER_ID`(env 指定的 primary,优先级最高)
 2. 所有 enabled LLM-kind capability 按 priority 升序(去重 primary + 内置 claude-code id)
-3. `"claude-code"` 兜底(jdc 上没 OAuth 必失败,但作为最后一根稻草)
+3. **`"claude-code"` tail(v2.32 起受 DB disabled 控制)**——只在 `listEnabledCapabilities("llm")` 包含 `BUILTIN_CLAUDE_CODE_ID` 时才追加;jdc 操作员显式 disable 后,所有远程 LLM 都挂时直接干净 fail,见 [claude-code-tail-bypassed-disabled](../pitfalls/claude-code-tail-bypassed-disabled.md)。
 
 ## 失败分类与跳转策略
 
@@ -72,3 +72,5 @@ journal 里 grep `[llm]` 就能看 fallover 路径。
 - [rewrite-chain](../domains/rewrite-chain.md) — 主要使用方
 - [post-review-edit](../domains/post-review-edit.md) — 另一使用方
 - [llm-half-refusal-empty-rewritten](../pitfalls/llm-half-refusal-empty-rewritten.md) — postValidate 修的是这个
+- [claude-code-tail-bypassed-disabled](../pitfalls/claude-code-tail-bypassed-disabled.md) — v2.32 修:tail 受 DB disabled 控制
+- [claude-code-not-logged-in-as-result](../pitfalls/claude-code-not-logged-in-as-result.md) — claude-code SDK 没登录时把提示当 result 返回

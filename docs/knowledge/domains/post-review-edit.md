@@ -43,7 +43,9 @@ plugin-async/index.ts:
 | 文件 | 职责 |
 |---|---|
 | `apps/api/src/domain/post-review-edit/index.ts` | reviewAndMaybeEdit 完整实现 + REVIEW_SYSTEM_PROMPT |
-| `apps/api/src/domain/rewrite-prompt/index.ts` | 共用 `extractCharacterKey` + `buildCharacterImageUrls`(reference URL 构造) |
+| `apps/api/src/domain/rewrite-prompt/index.ts` | 共用 `extractCharacterKey`(v2.30 起匹配 `「<key>」.\s` CJK 括号原子格式)+ `buildCharacterImageUrls`(reference URL 构造) |
+
+**改 `extractCharacterKey` regex 时必须同步本文件**——post-review-edit 共用同一函数,grep `extractCharacterKey|「[A-Za-z]` 一次性确认。见 [cjk-bracket-atomic-protocol](../decisions/cjk-bracket-atomic-protocol.md)。
 
 ## 输出契约(`PostReviewEditOutcome`)
 
@@ -62,4 +64,5 @@ plugin-async/index.ts:
 - [review-llm-too-lenient](../pitfalls/review-llm-too-lenient.md) — review 标准过宽
 - [edit-mode-images-pool-shrunk](../pitfalls/edit-mode-images-pool-shrunk.md) — edit 强制 requireMode=images 让 pool 缩水
 - [character-key-prefix-required](../pitfalls/character-key-prefix-required.md) — PascalCase 前缀决定能否触发 review
+- [cjk-bracket-atomic-protocol](../decisions/cjk-bracket-atomic-protocol.md) — `extractCharacterKey` regex 升级到 CJK「」格式
 - [pipeline-policy](../decisions/pipeline-policy.md) — post_review_edit 字段
