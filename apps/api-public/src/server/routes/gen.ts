@@ -4,6 +4,13 @@ import {
   PassthroughError,
   passthroughGenerate,
 } from "../../drivers/passthrough-image.js";
+import { loadBuiltinConfig } from "../../domain/gen/builtin-config.js";
+import {
+  InsufficientBalanceError,
+  credit,
+  debit,
+  getBalance,
+} from "../../domain/balance/service.js";
 import {
   createGenTask,
   markGenTaskFailed,
@@ -111,6 +118,130 @@ genRoutes.post("/gen/passthrough", requireAuth, async c => {
       );
     }
     markGenTaskFailed(taskId, "internal_error");
+    throw err;
+  }
+});
+
+/**
+ * 兜底通道生图。用户没填 provider 时调这条,后端用 env 配的 builtin
+ * provider 出图,扣 inkast 内部余额(单位"次")。
+ *
+ * 流程(saga):
+ *   1. 鉴权,加载 builtin config,未配置 → 503
+ *   2. 余额校验提前快速失败 → 402
+ *   3. 创建 task(pending,cost=N)
+ *   4. debit N(事务,余额不足 InsufficientBalanceError → 402)
+ *   5. 调 driver
+ *      成功 → mark task success
+ *      失败 → credit N 回滚(refund:gen)+ mark task failed,返 502
+ *
+ * 余额变动全部进 balance_ledger,extras 通过 related_id=task_id 关联可对账。
+ * 步骤 4-5 不是原子(driver 是异步 HTTP),进程 crash 在中间会留下"扣了没出图"
+ * 的孤儿——Phase 1 接受;后续严格做要引 reserved balance。
+ */
+genRoutes.post("/gen/builtin", requireAuth, async c => {
+  const cfg = loadBuiltinConfig();
+  if (!cfg.enabled) {
+    return c.json(
+      { error: "builtin_not_configured", message: "服务端未配置 builtin provider" },
+      503,
+    );
+  }
+
+  const body = (await c.req.json().catch(() => null)) as { prompt?: string; options?: { size?: string; n?: number } } | null;
+  if (!body) return c.json({ error: "invalid_body" }, 400);
+  const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  if (!prompt) return c.json({ error: "missing_prompt" }, 400);
+
+  const user = c.get("user");
+  const cost = cfg.costPerImage;
+
+  // 提前余额检查(driver 还没调用前快速 fail,UX 友好)
+  const available = getBalance(user.id);
+  if (available < cost) {
+    return c.json(
+      { error: "insufficient_balance", required: cost, available },
+      402,
+    );
+  }
+
+  const taskId = randomUUID();
+  createGenTask({
+    id: taskId,
+    userId: user.id,
+    promptJson: JSON.stringify({ prompt, options: body.options ?? {} }),
+    channel: "builtin",
+    model: cfg.model,
+    cost,
+  });
+
+  // 扣余额(原子事务;余额不足在这里再抓一次,防并发)
+  try {
+    debit(user.id, cost, {
+      type: "consume:gen",
+      reason: "builtin image generate",
+      relatedId: taskId,
+    });
+  } catch (err) {
+    if (err instanceof InsufficientBalanceError) {
+      markGenTaskFailed(taskId, "insufficient_balance");
+      return c.json(
+        { error: "insufficient_balance", required: err.required, available: err.available },
+        402,
+      );
+    }
+    throw err;
+  }
+
+  try {
+    const result = await passthroughGenerate({
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      prompt,
+      size: body.options?.size,
+      n: body.options?.n,
+      useCodexHeader: cfg.useCodexHeader,
+      signal: c.req.raw.signal,
+    });
+    markGenTaskSuccess(taskId, `b64:builtin:${result.b64Images.length}`);
+    return c.json({
+      ok: true,
+      task_id: taskId,
+      model: result.model,
+      images_b64: result.b64Images,
+      cost,
+      balance_after: getBalance(user.id),
+      duration_ms: result.durationMs,
+    });
+  } catch (err) {
+    // 退款,task fail。
+    credit(user.id, cost, {
+      type: "refund:gen",
+      reason: err instanceof PassthroughError ? `gen failed: ${err.message}` : "gen failed",
+      relatedId: taskId,
+    });
+    markGenTaskFailed(
+      taskId,
+      err instanceof PassthroughError ? (err.upstreamCode ?? "upstream_error") : "internal_error",
+    );
+    if (err instanceof PassthroughError) {
+      const status =
+        err.upstreamStatus !== null && err.upstreamStatus >= 400 && err.upstreamStatus < 600
+          ? err.upstreamStatus
+          : 502;
+      return c.json(
+        {
+          error: err.upstreamCode ?? "upstream_error",
+          message: err.message,
+          upstream_status: err.upstreamStatus,
+          task_id: taskId,
+          refunded: cost,
+          balance_after: getBalance(user.id),
+        },
+        status as 400 | 401 | 402 | 403 | 404 | 429 | 500 | 502 | 503,
+      );
+    }
     throw err;
   }
 });
