@@ -371,13 +371,13 @@ export function App() {
         {tab === "draft" && (
           <div
             className={cn(
-              "grid min-h-0 flex-1 gap-3 transition-[grid-template-columns] duration-300 ease-out",
+              "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto md:grid md:overflow-hidden md:transition-[grid-template-columns] md:duration-300 md:ease-out",
               expanded
-                ? "grid-cols-[0.42fr_1.4fr_0.6fr]"
-                : "grid-cols-[1.4fr_0.42fr_0.6fr]",
+                ? "md:grid-cols-[0.42fr_1.4fr_0.6fr]"
+                : "md:grid-cols-[1.4fr_0.42fr_0.6fr]",
             )}
           >
-            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+            <section className="rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper) md:min-h-0 md:overflow-y-auto">
               <PromptComposer
                 value={input}
                 onChange={setInput}
@@ -413,7 +413,7 @@ export function App() {
               />
             </section>
 
-            <section className="flex min-h-0 flex-col overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+            <section className="flex flex-col rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper) md:min-h-0 md:overflow-y-auto">
               <PromptFieldEditor
                 value={prompt}
                 onChange={handlePromptChange}
@@ -426,7 +426,7 @@ export function App() {
               />
             </section>
 
-            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+            <section className="rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper) md:min-h-0 md:overflow-y-auto">
               <SessionWorkspace
                 sessionGenerationIds={sessionGenerationIds}
                 activeJobs={activeJobs}
