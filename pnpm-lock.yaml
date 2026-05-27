@@ -75,6 +75,9 @@ importers:
       hono:
         specifier: ^4.6.14
         version: 4.12.18
+      openai:
+        specifier: ^4.77.0
+        version: 4.104.0(zod@3.25.76)
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.12
