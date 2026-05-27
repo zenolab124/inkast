@@ -1,51 +1,59 @@
+import { entries, get } from "idb-keyval";
 import type {
   GenerateImageRequest,
   GenerateImageResponse,
   GenerationRecord,
 } from "@inkast/shared";
+import { generationsStore, imagesStore } from "@/lib/idb";
 
+/**
+ * 公开版 Gallery:从 IDB 读历史记录,图片 blob → ObjectURL。
+ *
+ * generationImageUrl(id) 是同步函数(主线 img src 直接调用),为了能返同步
+ * URL,我们用一个内存 Map<id, blob:URL> 缓存。listGenerations 时填充缓存;
+ * 缓存命中即同步可拿。这是 page-scope,刷新页面后重新构建,接受这个 leak。
+ */
+
+const blobUrlCache = new Map<string, string>();
+
+async function ensureBlobUrl(id: string): Promise<string | null> {
+  if (blobUrlCache.has(id)) return blobUrlCache.get(id)!;
+  const blob = await get<Blob>(id, imagesStore);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  blobUrlCache.set(id, url);
+  return url;
+}
+
+/**
+ * 主线 generateImage 是"同步生图"path,公开版**不走这条**——所有生图都
+ * 通过 jobs.submitGenerateJob 异步走。这里保留 export 是为了 type compat;
+ * 真被调到就 throw,避免误用。
+ */
 export async function generateImage(
-  req: GenerateImageRequest,
-  signal?: AbortSignal,
+  _req: GenerateImageRequest,
+  _signal?: AbortSignal,
 ): Promise<GenerateImageResponse> {
-  const res = await fetch("/api/generate-image", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-    signal,
-  });
-  if (!res.ok) throw await toError(res, "generate image");
-  return (await res.json()) as GenerateImageResponse;
+  throw new Error("public version uses jobs.submitGenerateJob; sync generateImage not supported");
 }
 
 export async function listGenerations(limit = 100): Promise<GenerationRecord[]> {
-  const res = await fetch(`/api/generations?limit=${limit}`);
-  if (!res.ok) throw await toError(res, "load generations");
-  const body = (await res.json()) as { generations: GenerationRecord[] };
-  return body.generations;
+  const all = (await entries(generationsStore)) as [IDBValidKey, GenerationRecord][];
+  const records = all.map(([, r]) => r).sort((a, b) => b.createdAt - a.createdAt);
+  const sliced = records.slice(0, limit);
+  // 异步把 blob 缓存预热,这样后续 generationImageUrl(id) 同步能拿到
+  await Promise.all(sliced.map(r => ensureBlobUrl(r.id)));
+  return sliced;
 }
 
 export function generationImageUrl(id: string): string {
-  return `/api/generations/${id}/image`;
-}
-
-async function toError(res: Response, action: string): Promise<Error> {
-  let detail = `HTTP ${res.status}`;
-  let attempts: GenerateAttemptFailure[] | undefined;
-  try {
-    const body = (await res.json()) as {
-      message?: string;
-      error?: string;
-      attempts?: GenerateAttemptFailure[];
-    };
-    if (body?.message) detail = body.message;
-    if (body?.error) detail = `${body.error}: ${detail}`;
-    if (body?.attempts) attempts = body.attempts;
-  } catch {}
-  const err = new Error(`${action}: ${detail}`) as GenerateError;
-  err.status = res.status;
-  err.attempts = attempts;
-  return err;
+  // 命中 = 已经 listGenerations 预热;未命中(直接深链)= 触发异步加载,
+  // 暂返空,后续读取流程会重试
+  const cached = blobUrlCache.get(id);
+  if (cached) return cached;
+  // fire-and-forget 预热,下一次 render 再调时就有
+  void ensureBlobUrl(id);
+  return "";
 }
 
 export interface GenerateAttemptFailure {

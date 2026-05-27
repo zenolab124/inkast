@@ -12,9 +12,10 @@ set -e
 if command -v security >/dev/null 2>&1; then
   : "${PUBLIC_LINUXDO_CLIENT_ID:=$(security find-generic-password -s api-linuxdo-public-client-id -w 2>/dev/null || true)}"
   : "${PUBLIC_LINUXDO_CLIENT_SECRET:=$(security find-generic-password -s api-linuxdo-public-client-secret -w 2>/dev/null || true)}"
-  # builtin image provider 凭据(可选,没存就跳过 → builtin 通道 503 disabled)
+  # builtin image / LLM provider 凭据(可选,没存就跳过 → 该 builtin 通道 503 disabled)
   : "${PUBLIC_BUILTIN_PROVIDER_API_KEY:=$(security find-generic-password -s api-builtin-image-key -w 2>/dev/null || true)}"
-  export PUBLIC_LINUXDO_CLIENT_ID PUBLIC_LINUXDO_CLIENT_SECRET PUBLIC_BUILTIN_PROVIDER_API_KEY
+  : "${PUBLIC_BUILTIN_LLM_API_KEY:=$(security find-generic-password -s api-builtin-llm-key -w 2>/dev/null || true)}"
+  export PUBLIC_LINUXDO_CLIENT_ID PUBLIC_LINUXDO_CLIENT_SECRET PUBLIC_BUILTIN_PROVIDER_API_KEY PUBLIC_BUILTIN_LLM_API_KEY
 fi
 
 # 默认回调地址 = vite proxy(5174)/api/...,跟 Linux.do 应用配置一致。

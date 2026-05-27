@@ -6,6 +6,7 @@ import { reapExpiredStates } from "../domain/auth/oauth-state-store.js";
 import { registerInviteCodeTopup } from "../topups/invite-code/index.js";
 import { authRoutes } from "./routes/auth.js";
 import { genRoutes } from "./routes/gen.js";
+import { promptRoutes } from "./routes/prompt.js";
 
 export function createApp() {
   // Touch DB:apply 核心 schema(invite-code register 也会用同一连接 apply 自己的)
@@ -32,6 +33,9 @@ export function createApp() {
 
   // ── 生图 endpoints(透明代理 / 兜底通道)─────────
   app.route("/api", genRoutes);
+
+  // ── prose → JSON prompt(LLM 透明代理 / 兜底)──
+  app.route("/api", promptRoutes);
 
   // ── 充值通道(外挂)──────────────────────────────
   // 核心业务跟通道完全解耦,每个通道自己管 schema + routes,这里只挂载。

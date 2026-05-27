@@ -37,6 +37,7 @@ import { GalleryPage } from "./features/gallery/GalleryPage.js";
 import { PluginGalleryPage } from "./features/plugin-gallery/PluginGalleryPage.js";
 import { SessionWorkspace } from "./features/workspace/SessionWorkspace.js";
 import { useJobs } from "./features/jobs/useJobs.js";
+import { AuthHeader } from "./features/auth/AuthHeader.js";
 
 const EMPTY_PROMPT: ImagePrompt = { type: "", style: "", subject: "" };
 
@@ -335,6 +336,7 @@ export function App() {
         dark && "dark",
       )}
     >
+      <AuthHeader />
       <div className="relative z-10 mx-auto flex h-full w-full max-w-[1500px] flex-col gap-3 px-6 py-4">
         <Header
           tab={tab}
