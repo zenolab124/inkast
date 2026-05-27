@@ -58,7 +58,6 @@ interface FlashMessage {
 
 export function App() {
   const { t, lang } = useLanguage();
-  const [dark, setDark] = useState(false);
   const [tab, setTab] = useState<AppTab>(() => readTabFromUrl());
 
   // Mirror tab state into the URL so the user can bookmark / refresh / link
@@ -326,18 +325,11 @@ export function App() {
   }, [tab, expanded, skipText]);
 
   return (
-    <div
-      className={cn(
-        "theme-paper relative flex h-screen flex-col overflow-hidden",
-        dark && "dark",
-      )}
-    >
+    <div className="theme-paper relative flex h-screen flex-col overflow-hidden">
       <div className="relative z-10 mx-auto flex h-full w-full max-w-[1500px] flex-col gap-3 px-6 py-4">
         <Header
           tab={tab}
           onTab={setTab}
-          dark={dark}
-          onToggleDark={() => setDark(d => !d)}
           onOpenConfig={() => setConfigOpen(true)}
           backToDraft={tab === "draft" && lockMode === "m2" ? unlock : undefined}
         />
@@ -562,15 +554,11 @@ function Banner({
 function Header({
   tab,
   onTab,
-  dark,
-  onToggleDark,
   onOpenConfig,
   backToDraft,
 }: {
   tab: AppTab;
   onTab: (t: AppTab) => void;
-  dark: boolean;
-  onToggleDark: () => void;
   onOpenConfig: () => void;
   backToDraft?: () => void;
 }) {
@@ -631,14 +619,6 @@ function Header({
         >
           <Settings strokeWidth={1.5} />
           {t.header.config}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onToggleDark}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          {dark ? t.header.light : t.header.dark}
         </Button>
         <AuthHeader />
       </div>
