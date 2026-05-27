@@ -1,12 +1,14 @@
 import type { Context, Next } from "hono";
+import { getCookie } from "hono/cookie";
+import { findValidSession } from "../../storage/sessions.js";
 import { findUserById, type UserRow } from "../../storage/users.js";
+import { SESSION_COOKIE } from "../routes/auth.js";
 
 /**
- * 请求级 user context。OAuth 接好之后,这里换成从 cookie session token 解析,
- * 但 ctx.get('user') 接口形状不变,routes 不用动。
+ * 鉴权 middleware:优先读 session cookie(OAuth 登录),fallback 到
+ * X-Dev-User-Id header(仅 PUBLIC_API_DEV_AUTH=1 时,生产严禁打开)。
  *
- * 当前实现:仅在 env PUBLIC_API_DEV_AUTH=1 下读取 X-Dev-User-Id header。
- * 生产部署绝对不要打开这个 env——会让任何人冒充任意 user_id。
+ * routes 通过 c.get('user') 拿当前用户。
  */
 
 declare module "hono" {
@@ -18,6 +20,20 @@ declare module "hono" {
 const DEV_AUTH_ENABLED = process.env.PUBLIC_API_DEV_AUTH === "1";
 
 export async function requireAuth(c: Context, next: Next): Promise<Response | void> {
+  // 1. 正常路径:session cookie
+  const token = getCookie(c, SESSION_COOKIE);
+  if (token) {
+    const sess = findValidSession(token);
+    if (sess) {
+      const user = findUserById(sess.userId);
+      if (user) {
+        c.set("user", user);
+        return next();
+      }
+    }
+  }
+
+  // 2. dev 后门(仅本地启用)
   if (DEV_AUTH_ENABLED) {
     const header = c.req.header("x-dev-user-id");
     if (header) {
@@ -32,6 +48,5 @@ export async function requireAuth(c: Context, next: Next): Promise<Response | vo
     }
   }
 
-  // OAuth session middleware 落地前,非 dev 路径一律 401。
   return c.json({ error: "unauthenticated" }, 401);
 }

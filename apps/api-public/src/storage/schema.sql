@@ -71,3 +71,26 @@ CREATE TABLE IF NOT EXISTS rate_limit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rate_window ON rate_limit(window_start);
+
+-- 会话(OAuth 登录后的浏览器 session)
+-- token 是随机 32 字节 hex,经 cookie 存浏览器。expires_at 默认 30 天滚动。
+CREATE TABLE IF NOT EXISTS sessions (
+  token       TEXT PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  last_seen   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+-- OAuth 短暂状态(authorize 重定向到 callback 之间寄存 CSRF state + PKCE
+-- code_verifier + 可选 post-login 重定向目标)。10 分钟过期,callback 消费即删。
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state          TEXT PRIMARY KEY,
+  code_verifier  TEXT NOT NULL,
+  redirect_to    TEXT,
+  created_at     INTEGER NOT NULL,
+  expires_at     INTEGER NOT NULL
+);

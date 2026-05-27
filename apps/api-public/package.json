@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "sh scripts/dev.sh",
     "build": "tsc -p tsconfig.json && find src -name '*.sql' -exec sh -c 'mkdir -p \"dist/$(dirname \"${1#src/}\")\" && cp \"$1\" \"dist/${1#src/}\"' _ {} \\;",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/index.js"
