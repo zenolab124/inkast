@@ -9,6 +9,7 @@ build
 
 # Local runtime data: SQLite + generated images
 data/
+data-public/
 
 # Editor
 .vscode/*
