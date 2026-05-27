@@ -5,6 +5,7 @@ import {
   passthroughGenerate,
 } from "../../drivers/passthrough-image.js";
 import { loadBuiltinConfig } from "../../domain/gen/builtin-config.js";
+import { uploadOrFallback } from "../../domain/gen/upload-or-fallback.js";
 import {
   InsufficientBalanceError,
   credit,
@@ -91,13 +92,20 @@ genRoutes.post("/gen/passthrough", requireAuth, async c => {
       useCodexHeader: provider.useCodexHeader === true,
       signal: c.req.raw.signal,
     });
-    // Phase 1 透明代理直接返 b64;task 8 接 R2 后改成返 R2 URL。
-    markGenTaskSuccess(taskId, `b64:passthrough:${result.b64Images.length}`);
+    const uploaded = await uploadOrFallback({
+      b64Images: result.b64Images,
+      taskId,
+      userId: user.id,
+    });
+    // gen_tasks.image_url 只存第一张的 URL(多张时其它的从 response 拿)。
+    // R2 fallback 走 b64 时 image_url 留空,前端从 response.images[i].b64 取。
+    const firstUrl = uploaded[0]?.url ?? null;
+    markGenTaskSuccess(taskId, firstUrl ?? `b64:passthrough:${result.b64Images.length}`);
     return c.json({
       ok: true,
       task_id: taskId,
       model: result.model,
-      images_b64: result.b64Images,
+      images: uploaded,
       duration_ms: result.durationMs,
     });
   } catch (err) {
@@ -204,12 +212,18 @@ genRoutes.post("/gen/builtin", requireAuth, async c => {
       useCodexHeader: cfg.useCodexHeader,
       signal: c.req.raw.signal,
     });
-    markGenTaskSuccess(taskId, `b64:builtin:${result.b64Images.length}`);
+    const uploaded = await uploadOrFallback({
+      b64Images: result.b64Images,
+      taskId,
+      userId: user.id,
+    });
+    const firstUrl = uploaded[0]?.url ?? null;
+    markGenTaskSuccess(taskId, firstUrl ?? `b64:builtin:${result.b64Images.length}`);
     return c.json({
       ok: true,
       task_id: taskId,
       model: result.model,
-      images_b64: result.b64Images,
+      images: uploaded,
       cost,
       balance_after: getBalance(user.id),
       duration_ms: result.durationMs,
