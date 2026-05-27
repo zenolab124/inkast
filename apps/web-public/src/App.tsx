@@ -1,387 +1,712 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Activity,
+  AlertCircle,
+  CheckCircle2,
+  Feather,
+  ImageIcon,
+  Languages,
+  Plug,
+  Settings,
+  Sparkles,
+  X,
+} from "lucide-react";
+import {
+  BUILTIN_CLAUDE_CODE_PROVIDER_ID,
+  IMAGE_FORMAT_DEFAULT,
+  isImageFormat,
+  type GenerationRecord,
+  type ImageFormat,
+  type ImagePrompt,
+  type JobRecord,
+  type PromptDraft,
+  type ProviderSummary,
+  type ReferenceImage,
+} from "@inkast/shared";
+import { listProviders } from "./features/config/api.js";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/i18n/LanguageContext";
+import { cn } from "@/lib/utils";
+import { PromptComposer, type LockMode } from "./features/prompt/PromptComposer.js";
+import { PromptFieldEditor } from "./features/prompt/PromptFieldEditor.js";
+import { draftPrompt, warmupLlm, type DraftPromptError } from "./features/prompt/api.js";
+import { useEffectiveLlmBackend } from "./features/prompt/useDefaultLlmBackend.js";
+import { ProviderConfigDialog } from "./features/config/ProviderConfigDialog.js";
+import { GalleryPage } from "./features/gallery/GalleryPage.js";
+import { PluginGalleryPage } from "./features/plugin-gallery/PluginGalleryPage.js";
+import { SessionWorkspace } from "./features/workspace/SessionWorkspace.js";
+import { useJobs } from "./features/jobs/useJobs.js";
 
-// ── 类型 ────────────────────────────────────────
-interface MeResponse {
-  user: {
-    id: number;
-    username: string;
-    avatar_url: string | null;
-    trust_level: number | null;
-  } | null;
-  balance: number;
+const EMPTY_PROMPT: ImagePrompt = { type: "", style: "", subject: "" };
+
+type AppTab = "draft" | "gallery" | "plugin-gallery";
+
+/**
+ * Resolve the initial tab from `?tab=` so admin dashboard links like
+ * `/?tab=plugin-gallery` open the right page. Unknown values fall back to
+ * draft. SSR-safe (window undefined → draft).
+ */
+function readTabFromUrl(): AppTab {
+  if (typeof window === "undefined") return "draft";
+  const v = new URLSearchParams(window.location.search).get("tab");
+  if (v === "gallery" || v === "plugin-gallery" || v === "draft") return v;
+  return "draft";
 }
 
-interface ProviderConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  useCodexHeader: boolean;
+interface FlashMessage {
+  kind: "success" | "error";
+  text: string;
 }
 
-interface GeneratedImage {
-  url: string | null;
-  b64: string | null;
-}
-
-interface GenResponse {
-  ok: boolean;
-  task_id: string;
-  model: string;
-  images: GeneratedImage[];
-  cost?: number;
-  balance_after?: number;
-  duration_ms: number;
-}
-
-// ── localStorage(provider config 本地优先存放)──
-const PROVIDER_KEY = "inkast-public:provider";
-function readProvider(): ProviderConfig | null {
-  try {
-    const raw = localStorage.getItem(PROVIDER_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-function writeProvider(p: ProviderConfig | null): void {
-  if (p) localStorage.setItem(PROVIDER_KEY, JSON.stringify(p));
-  else localStorage.removeItem(PROVIDER_KEY);
-}
-
-// ── 主组件 ──────────────────────────────────────
 export function App() {
-  const [me, setMe] = useState<MeResponse | null>(null);
-  const [meError, setMeError] = useState<string | null>(null);
+  const { t, lang } = useLanguage();
+  const [dark, setDark] = useState(false);
+  const [tab, setTab] = useState<AppTab>(() => readTabFromUrl());
 
-  const reloadMe = () => {
-    fetch("/api/auth/me", { credentials: "same-origin" })
-      .then(r => r.json() as Promise<MeResponse>)
-      .then(setMe)
-      .catch(e => setMeError(String(e)));
-  };
-
+  // Mirror tab state into the URL so the user can bookmark / refresh / link
+  // a specific tab (e.g. admin dashboard link → `/?tab=plugin-gallery`).
   useEffect(() => {
-    reloadMe();
-  }, []);
-
-  return (
-    <div className="relative z-10 mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-6 py-12">
-      <header className="flex flex-col items-center gap-2">
-        <h1 className="text-3xl font-semibold">Inkast · 公开版</h1>
-        <p className="text-muted-foreground text-sm">本地优先的 AI 生图工具 · 体验版</p>
-      </header>
-
-      {meError && (
-        <div className="bg-card text-destructive shadow-(--shadow-paper) rounded-md border p-4 text-sm">
-          {meError}
-        </div>
-      )}
-
-      {!me ? (
-        <Skeleton />
-      ) : !me.user ? (
-        <LoginCard />
-      ) : (
-        <>
-          <UserHeader me={me} onLogout={reloadMe} />
-          <InviteCodeCard onRedeemed={reloadMe} />
-          <ProviderConfigCard />
-          <GenerateCard balance={me.balance} onBalanceMaybeChanged={reloadMe} />
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── 子组件 ──────────────────────────────────────
-
-function Skeleton() {
-  return (
-    <div className="bg-card text-muted-foreground shadow-(--shadow-paper) rounded-md border p-4 text-sm">
-      加载中…
-    </div>
-  );
-}
-
-function LoginCard() {
-  return (
-    <div className="bg-card shadow-(--shadow-paper) flex flex-col items-center gap-3 rounded-md border p-6">
-      <p className="text-muted-foreground text-sm">用 Linux.do 账号登录使用</p>
-      <button
-        onClick={() => {
-          window.location.href = "/api/auth/linuxdo/authorize?redirect_to=/";
-        }}
-        className="bg-primary text-primary-foreground hover:opacity-90 rounded-md px-4 py-2 text-sm font-medium"
-      >
-        用 Linux.do 登录
-      </button>
-    </div>
-  );
-}
-
-function UserHeader({ me, onLogout }: { me: MeResponse; onLogout: () => void }) {
-  if (!me.user) return null;
-  const logout = async () => {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
-    onLogout();
-  };
-  return (
-    <div className="bg-card shadow-(--shadow-paper) flex items-center gap-3 rounded-md border p-4">
-      {me.user.avatar_url && (
-        <img src={me.user.avatar_url} alt="" className="h-10 w-10 rounded-full border" />
-      )}
-      <div className="flex-1">
-        <div className="font-medium">{me.user.username}</div>
-        <div className="text-muted-foreground text-xs">
-          信任等级 {me.user.trust_level ?? "—"} · 余额 <strong>{me.balance}</strong> 次
-        </div>
-      </div>
-      <button
-        onClick={logout}
-        className="border-border hover:bg-muted rounded-md border px-3 py-1.5 text-xs"
-      >
-        登出
-      </button>
-    </div>
-  );
-}
-
-function InviteCodeCard({ onRedeemed }: { onRedeemed: () => void }) {
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-
-  const submit = async () => {
-    if (!code.trim()) return;
-    setBusy(true);
-    setResult(null);
-    try {
-      const r = await fetch("/api/topups/invite/redeem", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: code.trim() }),
-      });
-      const j = await r.json();
-      if (r.ok) {
-        setResult(`✓ 兑换成功 +${j.amount} 次,余额 ${j.balance_after}`);
-        setCode("");
-        onRedeemed();
-      } else {
-        setResult(`✗ ${j.error ?? "兑换失败"}`);
-      }
-    } catch (e) {
-      setResult(`✗ ${String(e)}`);
-    } finally {
-      setBusy(false);
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (tab === "draft") params.delete("tab");
+    else params.set("tab", tab);
+    const qs = params.toString();
+    const next = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, "", next);
     }
-  };
+  }, [tab]);
 
-  return (
-    <div className="bg-card shadow-(--shadow-paper) rounded-md border p-4">
-      <div className="mb-2 text-sm font-medium">邀请码兑换</div>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={code}
-          onChange={e => setCode(e.target.value)}
-          placeholder="输入邀请码"
-          className="border-border bg-background flex-1 rounded-md border px-3 py-2 text-sm"
-          disabled={busy}
-        />
-        <button
-          onClick={submit}
-          disabled={busy || !code.trim()}
-          className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50"
-        >
-          {busy ? "…" : "兑换"}
-        </button>
-      </div>
-      {result && <div className="text-muted-foreground mt-2 text-xs">{result}</div>}
-    </div>
-  );
-}
-
-function ProviderConfigCard() {
-  const [config, setConfig] = useState<ProviderConfig>(
-    () => readProvider() ?? { baseUrl: "", apiKey: "", model: "gpt-image-2", useCodexHeader: false },
-  );
-  const [saved, setSaved] = useState<boolean>(() => readProvider() !== null);
-
-  const save = () => {
-    if (!config.baseUrl.trim() || !config.apiKey.trim() || !config.model.trim()) return;
-    writeProvider(config);
-    setSaved(true);
-  };
-  const clear = () => {
-    writeProvider(null);
-    setSaved(false);
-    setConfig({ baseUrl: "", apiKey: "", model: "gpt-image-2", useCodexHeader: false });
-  };
-
-  return (
-    <div className="bg-card shadow-(--shadow-paper) rounded-md border p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-medium">我的 Provider(可选)</div>
-        <div className="text-muted-foreground text-xs">
-          {saved ? "✓ 已保存(走透明代理,不扣余额)" : "走平台兜底,扣余额"}
-        </div>
-      </div>
-      <div className="space-y-2">
-        <input
-          type="text"
-          value={config.baseUrl}
-          onChange={e => setConfig({ ...config, baseUrl: e.target.value })}
-          placeholder="Base URL,如 https://api.openai.com/v1"
-          className="border-border bg-background w-full rounded-md border px-3 py-2 text-sm"
-        />
-        <input
-          type="password"
-          value={config.apiKey}
-          onChange={e => setConfig({ ...config, apiKey: e.target.value })}
-          placeholder="API Key(仅存浏览器,不上传服务端)"
-          className="border-border bg-background w-full rounded-md border px-3 py-2 text-sm"
-        />
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={config.model}
-            onChange={e => setConfig({ ...config, model: e.target.value })}
-            placeholder="Model"
-            className="border-border bg-background flex-1 rounded-md border px-3 py-2 text-sm"
-          />
-          <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              checked={config.useCodexHeader}
-              onChange={e => setConfig({ ...config, useCodexHeader: e.target.checked })}
-            />
-            Codex header
-          </label>
-        </div>
-        <div className="flex gap-2 pt-1">
-          <button
-            onClick={save}
-            disabled={!config.baseUrl.trim() || !config.apiKey.trim() || !config.model.trim()}
-            className="bg-primary text-primary-foreground flex-1 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-          >
-            保存到浏览器
-          </button>
-          {saved && (
-            <button
-              onClick={clear}
-              className="border-border hover:bg-muted rounded-md border px-3 py-1.5 text-xs"
-            >
-              清除
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GenerateCard({
-  balance,
-  onBalanceMaybeChanged,
-}: {
-  balance: number;
-  onBalanceMaybeChanged: () => void;
-}) {
-  const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<GenResponse | null>(null);
+  const [input, setInput] = useState("");
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<ImagePrompt>(EMPTY_PROMPT);
+  const [aiSuggested, setAiSuggested] = useState<Set<string>>(new Set());
+  const [meta, setMeta] = useState<
+    { backend?: string; durationMs?: number } | undefined
+  >();
+  const [flash, setFlash] = useState<FlashMessage | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const [size, setSize] = useState<string>("auto");
+  const [count, setCount] = useState<number>(1);
+  const [format, setFormat] = useState<ImageFormat>(() => {
+    if (typeof window === "undefined") return IMAGE_FORMAT_DEFAULT;
+    const v = window.localStorage.getItem("inkast.format");
+    return isImageFormat(v) ? v : IMAGE_FORMAT_DEFAULT;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("inkast.format", format);
+    }
+  }, [format]);
+  const [lockMode, setLockMode] = useState<LockMode>(null);
+  const [sessionGenerationIds, setSessionGenerationIds] = useState<string[]>([]);
+  const [galleryKey, setGalleryKey] = useState(0);
+  const [llmProviders, setLlmProviders] = useState<ProviderSummary[]>([]);
+  const defaultBackend = useEffectiveLlmBackend(llmProviders);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const submit = async () => {
-    if (!prompt.trim()) return;
-    setBusy(true);
-    setResult(null);
+  const onJobSucceeded = useCallback(
+    (job: JobRecord) => {
+      const head = `${t.flash.generateDone} · ${(((job.completedAt ?? Date.now()) - (job.startedAt ?? job.createdAt)) / 1000).toFixed(1)}s`;
+      const fallbacks = job.attempts.filter(a => !a.ok);
+      const trail = fallbacks.length
+        ? "\n" + fallbacks
+            .map(a => `  · ${t.flash.skipped} ${a.providerName} (${a.errorCode ?? "?"})`)
+            .join("\n")
+        : "";
+      setFlash({ kind: "success", text: head + trail });
+      if (job.generationId) {
+        setSessionGenerationIds(prev =>
+          prev.includes(job.generationId!) ? prev : [job.generationId!, ...prev],
+        );
+      }
+      setGalleryKey(k => k + 1);
+    },
+    [t],
+  );
+
+  const onJobFailed = useCallback(
+    (job: JobRecord) => {
+      const isNoProvider = job.errorCode === "no_providers";
+      const attemptDetails = job.attempts.length
+        ? "\n" +
+          job.attempts
+            .map(
+              a =>
+                `  · ${a.providerName} (${a.errorCode ?? "?"}): ${
+                  a.errorMessage ?? "(no detail)"
+                }`,
+            )
+            .join("\n")
+        : "";
+      setFlash({
+        kind: "error",
+        text: isNoProvider
+          ? t.flash.noProvider
+          : `${job.errorMessage ?? job.errorCode ?? "unknown error"}${attemptDetails}`,
+      });
+      if (isNoProvider) setConfigOpen(true);
+    },
+    [t],
+  );
+
+  const { activeJobs, submitJob } = useJobs({
+    onSucceeded: onJobSucceeded,
+    onFailed: onJobFailed,
+  });
+
+  const expanded = lockMode !== null;
+
+  const aiFill = useCallback(async () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setPending(true);
     setError(null);
 
-    const provider = readProvider();
-    const endpoint = provider ? "/api/gen/passthrough" : "/api/gen/builtin";
-    const body = provider
-      ? { provider, prompt: prompt.trim() }
-      : { prompt: prompt.trim() };
-
     try {
-      const r = await fetch(endpoint, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (r.ok) {
-        setResult(j);
-        if (!provider) onBalanceMaybeChanged();
-      } else {
-        setError(`${j.error ?? "failed"}: ${j.message ?? ""}`);
-        if (j.refunded) onBalanceMaybeChanged();
-      }
-    } catch (e) {
-      setError(String(e));
+      const resp = (await draftPrompt(
+        { input: trimmed, lang, backend: defaultBackend },
+        ac.signal,
+      )) as PromptDraft & {
+        _meta?: { backend?: string; durationMs?: number };
+      };
+      setPrompt(resp.prompt);
+      setAiSuggested(computeAiFields(resp.prompt));
+      setMeta(resp._meta);
+      setLockMode("ai-filled");
+    } catch (err) {
+      if (ac.signal.aborted) return;
+      const e = err as DraftPromptError;
+      setError(e?.message ?? String(err));
     } finally {
-      setBusy(false);
+      if (abortRef.current === ac) {
+        abortRef.current = null;
+        setPending(false);
+      }
     }
-  };
+  }, [input, lang, defaultBackend]);
 
-  const provider = readProvider();
-  const channelLabel = provider ? "透明代理(你的 key)" : `平台兜底(扣余额,当前余额 ${balance})`;
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setPending(false);
+  }, []);
+
+  const handlePromptChange = useCallback(
+    (next: ImagePrompt) => {
+      if (aiSuggested.size > 0) {
+        const changedKeys = diffKeys(prompt, next);
+        if (changedKeys.length > 0) {
+          const updated = new Set(aiSuggested);
+          let mutated = false;
+          for (const k of changedKeys) {
+            if (updated.delete(k)) mutated = true;
+          }
+          if (mutated) setAiSuggested(updated);
+        }
+      }
+      setPrompt(next);
+    },
+    [aiSuggested, prompt],
+  );
+
+  const generate = useCallback(async () => {
+    setFlash(null);
+    const proseTrimmed = input.trim();
+    const n = Math.max(1, Math.min(20, count));
+    const req = {
+      prompt,
+      size,
+      format,
+      referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+      prose: proseTrimmed.length > 0 ? proseTrimmed : undefined,
+      aiFilledFields: aiSuggested.size > 0 ? Array.from(aiSuggested) : undefined,
+    };
+    // Each generation is a fully-independent job (own provider walk, own
+    // fallback, own attempts trail). We fire N submits in parallel and
+    // surface a single aggregated error if any of them fail — successful
+    // submissions still go through.
+    const results = await Promise.allSettled(
+      Array.from({ length: n }, () => submitJob(req)),
+    );
+    const failed = results.filter(r => r.status === "rejected");
+    if (failed.length > 0) {
+      const first = (failed[0] as PromiseRejectedResult).reason as { message?: string };
+      setFlash({
+        kind: "error",
+        text:
+          failed.length === n
+            ? first?.message ?? String(first)
+            : `${failed.length}/${n} jobs failed to submit · ${first?.message ?? ""}`,
+      });
+    }
+  }, [prompt, size, format, count, referenceImages, input, aiSuggested, submitJob]);
+
+  const generateRaw = useCallback(async () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    setFlash(null);
+    const placeholder: ImagePrompt = { type: "raw", style: "", subject: trimmed };
+    const n = Math.max(1, Math.min(20, count));
+    const req = {
+      prompt: placeholder,
+      rawPrompt: trimmed,
+      size,
+      format,
+      referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+      prose: trimmed,
+    };
+    const results = await Promise.allSettled(
+      Array.from({ length: n }, () => submitJob(req)),
+    );
+    const failed = results.filter(r => r.status === "rejected");
+    if (failed.length > 0) {
+      const first = (failed[0] as PromiseRejectedResult).reason as { message?: string };
+      setFlash({
+        kind: "error",
+        text:
+          failed.length === n
+            ? first?.message ?? String(first)
+            : `${failed.length}/${n} jobs failed to submit · ${first?.message ?? ""}`,
+      });
+    }
+  }, [input, size, format, count, referenceImages, submitJob]);
+
+  const skipText = useCallback(() => {
+    setPrompt(EMPTY_PROMPT);
+    setAiSuggested(new Set());
+    setMeta(undefined);
+    setLockMode("m2");
+  }, []);
+
+  const unlock = useCallback(() => {
+    setLockMode(null);
+  }, []);
+
+  const reuseFromHistory = useCallback(
+    (record: GenerationRecord) => {
+      setPrompt(record.promptSnapshot);
+      setAiSuggested(new Set());
+      setMeta({ durationMs: record.durationMs ?? undefined });
+      setLockMode("ai-filled");
+      setFlash({ kind: "success", text: t.flash.reuseLoaded });
+      setTab("draft");
+    },
+    [t],
+  );
+
+  // Warm the LLM driver on mount AND whenever the default backend changes,
+  // so the first prompt expansion doesn't eat the SDK cold-start (or, for
+  // OpenAI providers, the first TLS handshake).
+  useEffect(() => {
+    void warmupLlm(defaultBackend);
+  }, [defaultBackend]);
+
+  // Load LLM providers once so the status label can show the configured
+  // provider's display name. Re-fetched whenever the config dialog closes.
+  useEffect(() => {
+    if (configOpen) return;
+    listProviders("llm").then(setLlmProviders).catch(() => setLlmProviders([]));
+  }, [configOpen]);
+
+  // ⌘E / Ctrl+E to enter M2 (skip text)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        if (tab === "draft" && !expanded) skipText();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab, expanded, skipText]);
 
   return (
-    <div className="bg-card shadow-(--shadow-paper) rounded-md border p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-medium">生图</div>
-        <div className="text-muted-foreground text-xs">{channelLabel}</div>
+    <div
+      className={cn(
+        "theme-paper relative flex h-screen flex-col overflow-hidden",
+        dark && "dark",
+      )}
+    >
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1500px] flex-col gap-3 px-6 py-4">
+        <Header
+          tab={tab}
+          onTab={setTab}
+          dark={dark}
+          onToggleDark={() => setDark(d => !d)}
+          onOpenConfig={() => setConfigOpen(true)}
+          backToDraft={tab === "draft" && lockMode === "m2" ? unlock : undefined}
+        />
+
+        {(error || flash) && tab === "draft" && (
+          <div className="flex flex-col gap-2">
+            {error && (
+              <Banner
+                kind="error"
+                title={t.banner.aiFillFailed}
+                message={error}
+                onClose={() => setError(null)}
+              />
+            )}
+            {flash && (
+              <Banner
+                kind={flash.kind}
+                title={flash.kind === "success" ? t.banner.ok : t.banner.generateFailed}
+                message={flash.text}
+                onClose={() => setFlash(null)}
+              />
+            )}
+          </div>
+        )}
+
+        {tab === "draft" && (
+          <div
+            className={cn(
+              "grid min-h-0 flex-1 gap-3 transition-[grid-template-columns] duration-300 ease-out",
+              expanded
+                ? "grid-cols-[0.42fr_1.4fr_0.6fr]"
+                : "grid-cols-[1.4fr_0.42fr_0.6fr]",
+            )}
+          >
+            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+              <PromptComposer
+                value={input}
+                onChange={setInput}
+                pending={pending}
+                onExpand={aiFill}
+                onCancel={cancel}
+                onGenerateRaw={generateRaw}
+                generatingRaw={false}
+                onSkipText={skipText}
+                lockMode={lockMode}
+                onUnlock={unlock}
+                referenceImages={referenceImages}
+                onReferenceImagesChange={setReferenceImages}
+                size={size}
+                onSizeChange={setSize}
+                count={count}
+                onCountChange={setCount}
+                format={format}
+                onFormatChange={setFormat}
+                backendStatus={
+                  <button
+                    type="button"
+                    onClick={() => setConfigOpen(true)}
+                    className="cursor-pointer hover:text-foreground"
+                    title={t.composer.backendVia}
+                  >
+                    {t.composer.backendVia}{" "}
+                    <span className="text-foreground/70">
+                      {backendDisplayName(defaultBackend, llmProviders, t.config.builtin.claudeCode)}
+                    </span>
+                  </button>
+                }
+              />
+            </section>
+
+            <section className="flex min-h-0 flex-col overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+              <PromptFieldEditor
+                value={prompt}
+                onChange={handlePromptChange}
+                aiSuggestedFields={aiSuggested}
+                meta={meta}
+                pending={pending}
+                generating={false}
+                onGenerate={expanded ? generate : undefined}
+                collapsed={!expanded}
+              />
+            </section>
+
+            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
+              <SessionWorkspace
+                sessionGenerationIds={sessionGenerationIds}
+                activeJobs={activeJobs}
+                onReuse={reuseFromHistory}
+              />
+            </section>
+          </div>
+        )}
+
+        {tab === "gallery" && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <GalleryPage refreshKey={galleryKey} onReuse={reuseFromHistory} />
+          </div>
+        )}
+
+        {tab === "plugin-gallery" && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <PluginGalleryPage />
+          </div>
+        )}
+
+        <Footer />
       </div>
-      <textarea
-        value={prompt}
-        onChange={e => setPrompt(e.target.value)}
-        placeholder="描述你想要的图片(prompt)"
-        rows={3}
-        className="border-border bg-background mb-2 w-full rounded-md border px-3 py-2 text-sm"
-        disabled={busy}
+
+      <ProviderConfigDialog
+        open={configOpen}
+        onClose={() => setConfigOpen(false)}
+        onChange={list =>
+          setLlmProviders(list.filter(p => p.capabilities.some(c => c.kind === "llm")))
+        }
       />
-      <button
-        onClick={submit}
-        disabled={busy || !prompt.trim()}
-        className="bg-primary text-primary-foreground w-full rounded-md px-3 py-2 text-sm font-medium disabled:opacity-50"
-      >
-        {busy ? "生成中…" : "生成"}
-      </button>
-
-      {error && (
-        <div className="text-destructive mt-3 text-xs">{error}</div>
-      )}
-
-      {result && (
-        <div className="mt-3 space-y-2">
-          <div className="text-muted-foreground text-xs">
-            ✓ {result.model} · {result.duration_ms}ms
-            {result.balance_after !== undefined && ` · 余额 ${result.balance_after}`}
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {result.images.map((img, i) => (
-              <ImageView key={i} image={img} />
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
-function ImageView({ image }: { image: GeneratedImage }) {
-  const src = image.url ?? (image.b64 ? `data:image/png;base64,${image.b64}` : "");
-  if (!src) return null;
+function backendDisplayName(
+  backend: ReturnType<typeof useEffectiveLlmBackend>,
+  llmProviders: ProviderSummary[],
+  claudeCodeLabel: string,
+): string {
+  if (backend === "claude-code") return claudeCodeLabel;
+  if (backend.providerId === BUILTIN_CLAUDE_CODE_PROVIDER_ID) return claudeCodeLabel;
+  const found = llmProviders.find(p => p.id === backend.providerId);
+  const cap = found?.capabilities.find(c => c.kind === "llm");
+  return found && cap ? `${found.name} · ${cap.model}` : claudeCodeLabel;
+}
+
+function computeAiFields(p: ImagePrompt): Set<string> {
+  const out = new Set<string>();
+  for (const [k, v] of Object.entries(p)) {
+    if (v == null) continue;
+    if (typeof v === "string" && v.length > 0) out.add(k);
+    else if (Array.isArray(v) && v.length > 0) out.add(k);
+    else if (typeof v === "number" || typeof v === "boolean") out.add(k);
+  }
+  return out;
+}
+
+function diffKeys(prev: ImagePrompt, next: ImagePrompt): string[] {
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  const changed: string[] = [];
+  for (const k of keys) {
+    const a = (prev as Record<string, unknown>)[k];
+    const b = (next as Record<string, unknown>)[k];
+    if (!shallowEqual(a, b)) changed.push(k);
+  }
+  return changed;
+}
+
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!shallowEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a as object);
+    const kb = Object.keys(b as object);
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) {
+      if (
+        !shallowEqual(
+          (a as Record<string, unknown>)[k],
+          (b as Record<string, unknown>)[k],
+        )
+      )
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function Banner({
+  kind,
+  title,
+  message,
+  onClose,
+}: {
+  kind: "success" | "error";
+  title: string;
+  message: string;
+  onClose?: () => void;
+}) {
+  const { t } = useLanguage();
+  const Icon = kind === "success" ? CheckCircle2 : AlertCircle;
   return (
-    <img
-      src={src}
-      alt=""
-      className="border-border w-full rounded-md border"
-    />
+    <Alert
+      variant={kind === "error" ? "destructive" : "default"}
+      className={cn(
+        "relative rounded-md pr-10",
+        kind === "success" && "border-primary/30 bg-primary/5",
+      )}
+    >
+      <Icon
+        className={kind === "success" ? "text-primary" : "text-destructive"}
+        strokeWidth={1.75}
+      />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>
+        <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
+          {message}
+        </pre>
+      </AlertDescription>
+      {onClose && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onClose}
+          className="absolute right-2 top-2 text-muted-foreground"
+          aria-label={t.banner.close}
+        >
+          <X strokeWidth={1.75} />
+        </Button>
+      )}
+    </Alert>
+  );
+}
+
+function Header({
+  tab,
+  onTab,
+  dark,
+  onToggleDark,
+  onOpenConfig,
+  backToDraft,
+}: {
+  tab: AppTab;
+  onTab: (t: AppTab) => void;
+  dark: boolean;
+  onToggleDark: () => void;
+  onOpenConfig: () => void;
+  backToDraft?: () => void;
+}) {
+  const { t, lang, setLang } = useLanguage();
+  return (
+    <header className="flex items-center justify-between border-b border-border/60 pb-4">
+      <div className="flex items-center gap-3">
+        <Feather className="size-5 text-primary" strokeWidth={1.5} />
+        <span className="text-xl font-medium tracking-tight">{t.app.title}</span>
+        <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
+          {t.app.tagline}
+        </span>
+
+        <nav className="ml-6 flex items-center gap-1">
+          <TabButton
+            active={tab === "draft"}
+            onClick={() => onTab("draft")}
+            icon={<Sparkles className="size-3.5" strokeWidth={1.5} />}
+          >
+            {t.tabs.draft}
+          </TabButton>
+          <TabButton
+            active={tab === "gallery"}
+            onClick={() => onTab("gallery")}
+            icon={<ImageIcon className="size-3.5" strokeWidth={1.5} />}
+          >
+            {t.tabs.gallery}
+          </TabButton>
+          <TabButton
+            active={tab === "plugin-gallery"}
+            onClick={() => onTab("plugin-gallery")}
+            icon={<Plug className="size-3.5" strokeWidth={1.5} />}
+          >
+            {t.tabs.pluginGallery}
+          </TabButton>
+        </nav>
+      </div>
+      <div className="flex items-center gap-2">
+        {backToDraft && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={backToDraft}
+            className="border-accent/40 text-accent hover:bg-accent/10 hover:text-accent"
+          >
+            {t.composer.backToDraft}
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+          title={lang === "zh" ? "Switch to English" : "切换到中文"}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Languages strokeWidth={1.5} />
+          {lang === "zh" ? t.header.langEn : t.header.langZh}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          asChild
+          title="Plugin 通道统计 (内部 / loopback only)"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <a href="/admin/plugin-stats" target="_blank" rel="noopener noreferrer">
+            <Activity strokeWidth={1.5} />
+            Stats
+          </a>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenConfig}
+          title={t.header.config}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Settings strokeWidth={1.5} />
+          {t.header.config}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onToggleDark}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          {dark ? t.header.light : t.header.dark}
+        </Button>
+      </div>
+    </header>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+        active
+          ? "bg-card text-foreground shadow-(--shadow-paper) border border-border/60"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+      )}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="mt-auto border-t border-border/60 pt-4 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between">
+        <span>Phase 1 · MVP</span>
+        <span>v0.0.1</span>
+      </div>
+    </footer>
   );
 }
