@@ -1,5 +1,6 @@
 import OpenAI, { APIError } from "openai";
 import { getProviderCapability } from "../../storage/providers.js";
+import { resolveExtraHeaders } from "../codex-header.js";
 import {
   LlmDriverError,
   type CompleteJsonOptions,
@@ -101,11 +102,13 @@ export class OpenAiCompatibleDriver implements LlmDriver {
 
     const extras = (record.capability.extras ?? {}) as Record<string, unknown>;
     const schema = opts.schema ?? DEFAULT_PROMPT_DRAFT_SCHEMA;
+    const extraHeaders = resolveExtraHeaders(record.capability);
 
     const client = new OpenAI({
       apiKey: record.apiKey,
       baseURL: record.provider.baseUrl,
       timeout: opts.timeoutMs ?? 120_000,
+      ...(extraHeaders ? { defaultHeaders: extraHeaders } : {}),
     });
 
     try {

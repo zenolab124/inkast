@@ -17,6 +17,7 @@ import {
   type ProviderCapability,
 } from "../../storage/providers.js";
 import { acquireProviderSlot } from "../../lib/throttle.js";
+import { resolveExtraHeaders } from "../codex-header.js";
 import { callImageGenerationTool } from "./openai-responses.js";
 import {
   ImageGenError,
@@ -92,33 +93,6 @@ function resolveProviderMinIntervalMs(capability: ProviderCapability): number {
     if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
   return 0;
-}
-
-/**
- * Fixed header set that mimics the official Codex CLI client. Some proxies
- * gate on these (only "official client" gets full quota / loose moderation);
- * a single checkbox in the Web UI is enough — no reason to expose the raw
- * header values to the operator.
- *
- * Pinned version intentionally — Codex bumps these strings but the proxies
- * we target don't care about exact version match, only the originator tag
- * and a Codex-shaped User-Agent.
- */
-const CODEX_CLI_HEADERS: Record<string, string> = {
-  originator: "codex_cli_rs",
-  "User-Agent": "codex_cli_rs/0.49.0 (Darwin 25.5.0; arm64) terminal",
-};
-
-/**
- * Read `extras.useCodexHeader` off a capability. When the flag is true we
- * inject the canonical Codex CLI header set (above) so the upstream proxy
- * treats us as an official client. Operator toggles a checkbox in the Web
- * UI; the actual header values are not user-editable to avoid drift.
- */
-export function resolveExtraHeaders(
-  capability: ProviderCapability,
-): Record<string, string> | undefined {
-  return capability.extras?.useCodexHeader === true ? CODEX_CLI_HEADERS : undefined;
 }
 
 /**

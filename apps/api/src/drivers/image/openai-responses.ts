@@ -1,6 +1,6 @@
 import { IMAGE_FORMAT_DEFAULT, extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
-import { resolveExtraHeaders } from "./openai-compatible.js";
+import { resolveExtraHeaders } from "../codex-header.js";
 import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 600_000;

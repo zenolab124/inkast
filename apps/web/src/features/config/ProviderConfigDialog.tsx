@@ -84,6 +84,8 @@ interface FormState {
   /** Inject the canonical Codex CLI headers (originator + User-Agent). */
   imageUseCodexHeader: boolean;
   llmModel: string;
+  /** Same flag, per-kind: some proxies gate LLM quota on Codex headers too. */
+  llmUseCodexHeader: boolean;
 }
 
 const RETRY_LIMIT_MAX = 5;
@@ -132,6 +134,7 @@ function emptyForm(): FormState {
     imageRetryLimit: "",
     imageUseCodexHeader: false,
     llmModel: "",
+    llmUseCodexHeader: false,
   };
 }
 
@@ -148,6 +151,7 @@ function buildFormFromProvider(p: ProviderSummary): FormState {
     imageRetryLimit: readRetryLimit(image),
     imageUseCodexHeader: readUseCodexHeader(image),
     llmModel: llm?.model ?? "",
+    llmUseCodexHeader: readUseCodexHeader(llm),
   };
 }
 
@@ -174,7 +178,15 @@ function formToCapabilities(form: FormState): CapabilityInput[] {
     });
   }
   if (form.llmModel.trim()) {
-    caps.push({ kind: "llm", model: form.llmModel.trim() });
+    const extras: Record<string, unknown> = {};
+    if (form.llmUseCodexHeader) {
+      extras.useCodexHeader = true;
+    }
+    caps.push({
+      kind: "llm",
+      model: form.llmModel.trim(),
+      extras: Object.keys(extras).length > 0 ? extras : null,
+    });
   }
   return caps;
 }
@@ -519,7 +531,7 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                           value={form.imageRetryLimit}
                           onChange={v => setForm(prev => (prev ? { ...prev, imageRetryLimit: v } : prev))}
                         />
-                        <ImageCodexHeaderRow
+                        <CodexHeaderRow
                           value={form.imageUseCodexHeader}
                           onChange={v => setForm(prev => (prev ? { ...prev, imageUseCodexHeader: v } : prev))}
                         />
@@ -540,6 +552,12 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                     onModelChange={v => setForm({ ...form, llmModel: v })}
                     options={modelOptions}
                   />
+                  {form.llmModel.trim().length > 0 && (
+                    <CodexHeaderRow
+                      value={form.llmUseCodexHeader}
+                      onChange={v => setForm(prev => (prev ? { ...prev, llmUseCodexHeader: v } : prev))}
+                    />
+                  )}
                 </div>
 
                 <div className="mt-4 flex justify-end gap-2">
@@ -822,7 +840,7 @@ function ImageRetryRow({
  * on these. The actual header values are fixed in the backend driver — the
  * UI only exposes on/off so operators don't have to know the magic strings.
  */
-function ImageCodexHeaderRow({
+function CodexHeaderRow({
   value,
   onChange,
 }: {
