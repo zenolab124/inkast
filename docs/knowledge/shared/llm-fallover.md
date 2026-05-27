@@ -16,9 +16,10 @@ completeJsonWithFallover<T>(
 
 ## Candidate 顺序(每次调用都重算)
 
-1. `INKAST_DEFAULT_LLM_PROVIDER_ID`(env 指定的 primary,优先级最高)
-2. 所有 enabled LLM-kind capability 按 priority 升序(去重 primary + 内置 claude-code id)
-3. **`"claude-code"` tail(v2.32 起受 DB disabled 控制)**——只在 `listEnabledCapabilities("llm")` 包含 `BUILTIN_CLAUDE_CODE_ID` 时才追加;jdc 操作员显式 disable 后,所有远程 LLM 都挂时直接干净 fail,见 [claude-code-tail-bypassed-disabled](../pitfalls/claude-code-tail-bypassed-disabled.md)。
+1. 所有 enabled LLM-kind capability 按 **DB priority 升序**(= Web UI 拖拽顺序,所见即所得),去重内置 claude-code id
+2. **`"claude-code"` tail(v2.32 起受 DB disabled 控制)**——只在 `listEnabledCapabilities("llm")` 包含 `BUILTIN_CLAUDE_CODE_ID` 时才追加;jdc 操作员显式 disable 后,所有远程 LLM 都挂时直接干净 fail,见 [claude-code-tail-bypassed-disabled](../pitfalls/claude-code-tail-bypassed-disabled.md)。
+
+> **历史变更(v2.37)**:之前 `INKAST_DEFAULT_LLM_PROVIDER_ID` env 会把 primary 顶到位置 1,造成 Web 拖拽顺序 ≠ 实际 fallover 顺序。从 v2.37 起这层覆盖被砍掉,env 只剩 [`resolveLlmBackend()`](../../../apps/api/src/plugins/registry.ts) 那个用途(plugin overlay 没写 `llmBackend` 时的回落),不再影响 fallover 池序。
 
 ## 失败分类与跳转策略
 

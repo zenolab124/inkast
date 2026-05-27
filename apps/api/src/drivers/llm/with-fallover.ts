@@ -2,12 +2,13 @@
  * LLM call with multi-backend fallover.
  *
  * Replaces the "one backend per call" pattern (single getLlmDriver call,
- * single completeJson try). Now: env primary backend goes first, then any
- * other enabled LLM provider by priority, with the local ClaudeCode driver
- * as final tail. Each candidate gets a same-backend `invalid_json`
- * retry-once (gpt-5.5 stochastic refusals); other transient failures
- * (HTTP 5xx / timeout / rate_limited / network) jump straight to the next
- * candidate. `aborted` short-circuits.
+ * single completeJson try). Now: all enabled LLM providers are walked in
+ * DB priority ASC order (= the Web UI's drag-to-reorder order), with the
+ * local ClaudeCode driver as final tail when its builtin capability is
+ * enabled. Each candidate gets a same-backend `invalid_json` retry-once
+ * (gpt-5.5 stochastic refusals); other transient failures (HTTP 5xx /
+ * timeout / rate_limited / network) jump straight to the next candidate.
+ * `aborted` short-circuits.
  *
  * Why this exists: 2026-05-24 Doom2099 task burned through all 6 image
  * providers (last one returned content_blocked), entered rewrite r1,
@@ -37,25 +38,22 @@ function backendLabel(b: LlmBackendDescriptor): string {
 
 /**
  * Build the ordered list of candidate backends to try:
- *   1. env INKAST_DEFAULT_LLM_PROVIDER_ID (if set) — operator's chosen
- *      primary, goes first regardless of priority
- *   2. all other enabled LLM-kind capabilities, ordered by priority
- *      (skipping the primary so it's not tried twice, and skipping the
- *      builtin claude-code id which represents the local OAuth driver)
- *   3. claude-code as the final tail — always present so we degrade to
- *      the local driver if every remote provider is down. On jdc this
- *      typically fails (no local OAuth), but on a developer's machine
- *      it'll save the request.
+ *   1. all enabled LLM-kind capabilities in DB priority ASC order (same
+ *      order the Web UI shows after drag-to-reorder), skipping the
+ *      builtin claude-code id which represents the local OAuth driver
+ *   2. claude-code as the final tail, only when its builtin capability
+ *      is enabled in DB (operator can disable it on jdc to avoid the
+ *      "Not logged in" error trail when every remote LLM fails)
+ *
+ * What we DON'T do anymore: env INKAST_DEFAULT_LLM_PROVIDER_ID is no
+ * longer pinned to position 1. It used to be — that hid the actual
+ * fallover order from the Web UI ("why is provider X tried first when
+ * I dragged Y to the top?"). The env is still read elsewhere (see
+ * resolveLlmBackend in plugins/registry.ts, for plugins that don't
+ * declare their own llmBackend), but it no longer reorders this pool.
  */
 function resolveCandidates(): LlmBackendDescriptor[] {
   const candidates: LlmBackendDescriptor[] = [];
-  const seen = new Set<string>();
-
-  const primaryId = process.env.INKAST_DEFAULT_LLM_PROVIDER_ID?.trim();
-  if (primaryId && primaryId !== BUILTIN_CLAUDE_CODE_ID) {
-    candidates.push({ kind: "openai-compatible", providerId: primaryId });
-    seen.add(primaryId);
-  }
 
   const enabledLlms = listEnabledCapabilities("llm");
   let claudeCodeEnabled = false;
@@ -65,15 +63,9 @@ function resolveCandidates(): LlmBackendDescriptor[] {
       claudeCodeEnabled = true;
       continue;
     }
-    if (seen.has(id)) continue;
     candidates.push({ kind: "openai-compatible", providerId: id });
-    seen.add(id);
   }
 
-  // Only add claude-code tail when the builtin capability is actually
-  // enabled in DB. On jdc the operator disables it by intent (no local
-  // OAuth); adding it unconditionally wastes an SDK call and surfaces a
-  // misleading "Not logged in" error trail when every remote LLM fails.
   if (claudeCodeEnabled) {
     candidates.push("claude-code");
   }

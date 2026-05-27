@@ -187,11 +187,12 @@ cpa / e 是 responses-mode(经 OpenAI Responses API + image_generation tool),其
 
 ## 附录 B: LLM 池 fallover 顺序
 
-1. env `INKAST_DEFAULT_LLM_PROVIDER_ID` 指定的 primary(优先级最高)
-2. 其它 enabled LLM kind capability(按 capability.priority 升序)
-3. `claude-code` 兜底(jdc 上没 OAuth,会失败但作为最后一根稻草)
+1. 所有 enabled LLM kind capability 按 **`capability.priority` 升序**(= Web UI 拖拽顺序,所见即所得)
+2. `claude-code` 兜底——仅当 builtin claude-code 在 DB 里 disabled=0 时才追加(jdc 默认 disable 它,避免每次 fallover 末尾撞"Not logged in")
 
 每个 candidate 内:对 `invalid_json` 做 same-backend retry-once(stochastic refusal),其它 `LlmDriverError` 立刻跳下一个,`aborted` 立刻 throw。
+
+**v2.37 变更**:env `INKAST_DEFAULT_LLM_PROVIDER_ID` 不再把指定 provider 顶到 fallover 池首位。env 只剩 `resolveLlmBackend()` 一个用途(plugin overlay 没写 `llmBackend` 时的回落)。
 
 源:[drivers/llm/with-fallover.ts](../apps/api/src/drivers/llm/with-fallover.ts)。
 
