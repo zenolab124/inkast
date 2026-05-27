@@ -12,8 +12,12 @@
     "dev": "concurrently -n api,web -c cyan,magenta \"pnpm api:dev\" \"pnpm web:dev\"",
     "api:dev": "pnpm --filter @inkast/api dev",
     "web:dev": "pnpm --filter @inkast/web dev",
+    "public:dev": "concurrently -n api-pub,web-pub -c yellow,green \"pnpm public:api:dev\" \"pnpm public:web:dev\"",
+    "public:api:dev": "pnpm --filter @inkast/api-public dev",
+    "public:web:dev": "pnpm --filter @inkast/web-public dev",
     "build": "pnpm --filter @inkast/shared build && pnpm --filter @inkast/web build && pnpm --filter @inkast/api build",
-    "typecheck": "pnpm --filter @inkast/shared typecheck && pnpm --filter @inkast/web typecheck && pnpm --filter @inkast/api typecheck"
+    "public:build": "pnpm --filter @inkast/shared build && pnpm --filter @inkast/web-public build && pnpm --filter @inkast/api-public build",
+    "typecheck": "pnpm --filter @inkast/shared typecheck && pnpm --filter @inkast/web typecheck && pnpm --filter @inkast/api typecheck && pnpm --filter @inkast/web-public typecheck && pnpm --filter @inkast/api-public typecheck"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
