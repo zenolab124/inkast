@@ -6,9 +6,11 @@ import {
   Feather,
   ImageIcon,
   Languages,
+  Moon,
   Plug,
   Settings,
   Sparkles,
+  Sun,
   X,
 } from "lucide-react";
 import {
@@ -635,7 +637,9 @@ function Header({
           className="text-muted-foreground hover:text-foreground"
         >
           <Languages strokeWidth={1.5} />
-          {lang === "zh" ? t.header.langEn : t.header.langZh}
+          <span className="hidden md:inline">
+            {lang === "zh" ? t.header.langEn : t.header.langZh}
+          </span>
         </Button>
         <Button
           variant="outline"
@@ -646,7 +650,7 @@ function Header({
         >
           <a href="/admin/plugin-stats" target="_blank" rel="noopener noreferrer">
             <Activity strokeWidth={1.5} />
-            Stats
+            <span className="hidden md:inline">Stats</span>
           </a>
         </Button>
         <Button
@@ -657,7 +661,7 @@ function Header({
           className="text-muted-foreground hover:text-foreground"
         >
           <Settings strokeWidth={1.5} />
-          {t.header.config}
+          <span className="hidden md:inline">{t.header.config}</span>
         </Button>
         <Button
           variant="outline"
@@ -665,7 +669,10 @@ function Header({
           onClick={onToggleDark}
           className="text-muted-foreground hover:text-foreground"
         >
-          {dark ? t.header.light : t.header.dark}
+          {dark ? <Sun strokeWidth={1.5} /> : <Moon strokeWidth={1.5} />}
+          <span className="hidden md:inline">
+            {dark ? t.header.light : t.header.dark}
+          </span>
         </Button>
       </div>
     </header>
@@ -695,7 +702,7 @@ function TabButton({
       )}
     >
       {icon}
-      {children}
+      <span className="hidden sm:inline">{children}</span>
     </button>
   );
 }
