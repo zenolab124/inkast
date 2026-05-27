@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity,
   AlertCircle,
   CheckCircle2,
   Feather,
   ImageIcon,
   Languages,
-  Plug,
   Settings,
   Sparkles,
   X,
@@ -34,24 +32,22 @@ import { draftPrompt, warmupLlm, type DraftPromptError } from "./features/prompt
 import { useEffectiveLlmBackend } from "./features/prompt/useDefaultLlmBackend.js";
 import { ProviderConfigDialog } from "./features/config/ProviderConfigDialog.js";
 import { GalleryPage } from "./features/gallery/GalleryPage.js";
-import { PluginGalleryPage } from "./features/plugin-gallery/PluginGalleryPage.js";
 import { SessionWorkspace } from "./features/workspace/SessionWorkspace.js";
 import { useJobs } from "./features/jobs/useJobs.js";
 import { AuthHeader } from "./features/auth/AuthHeader.js";
 
 const EMPTY_PROMPT: ImagePrompt = { type: "", style: "", subject: "" };
 
-type AppTab = "draft" | "gallery" | "plugin-gallery";
+type AppTab = "draft" | "gallery";
 
 /**
- * Resolve the initial tab from `?tab=` so admin dashboard links like
- * `/?tab=plugin-gallery` open the right page. Unknown values fall back to
- * draft. SSR-safe (window undefined → draft).
+ * Resolve the initial tab from `?tab=`. Public 版本砍掉了 plugin-gallery
+ * (主线 admin / plugin 概念,公开版用户不该看到)。
  */
 function readTabFromUrl(): AppTab {
   if (typeof window === "undefined") return "draft";
   const v = new URLSearchParams(window.location.search).get("tab");
-  if (v === "gallery" || v === "plugin-gallery" || v === "draft") return v;
+  if (v === "gallery" || v === "draft") return v;
   return "draft";
 }
 
@@ -336,7 +332,6 @@ export function App() {
         dark && "dark",
       )}
     >
-      <AuthHeader />
       <div className="relative z-10 mx-auto flex h-full w-full max-w-[1500px] flex-col gap-3 px-6 py-4">
         <Header
           tab={tab}
@@ -442,11 +437,6 @@ export function App() {
           </div>
         )}
 
-        {tab === "plugin-gallery" && (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <PluginGalleryPage />
-          </div>
-        )}
 
         <Footer />
       </div>
@@ -609,13 +599,6 @@ function Header({
           >
             {t.tabs.gallery}
           </TabButton>
-          <TabButton
-            active={tab === "plugin-gallery"}
-            onClick={() => onTab("plugin-gallery")}
-            icon={<Plug className="size-3.5" strokeWidth={1.5} />}
-          >
-            {t.tabs.pluginGallery}
-          </TabButton>
         </nav>
       </div>
       <div className="flex items-center gap-2">
@@ -642,18 +625,6 @@ function Header({
         <Button
           variant="outline"
           size="sm"
-          asChild
-          title="Plugin 通道统计 (内部 / loopback only)"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <a href="/admin/plugin-stats" target="_blank" rel="noopener noreferrer">
-            <Activity strokeWidth={1.5} />
-            Stats
-          </a>
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
           onClick={onOpenConfig}
           title={t.header.config}
           className="text-muted-foreground hover:text-foreground"
@@ -669,6 +640,7 @@ function Header({
         >
           {dark ? t.header.light : t.header.dark}
         </Button>
+        <AuthHeader />
       </div>
     </header>
   );

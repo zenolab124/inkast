@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { LogIn, LogOut, Wallet, Gift } from "lucide-react";
+import { Gift, LogIn, LogOut, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,11 +22,12 @@ interface MeResponse {
 }
 
 /**
- * 公开版独有:右上角浮窗 widget。
- *   - 未登录:"登录" → /api/auth/linuxdo/authorize?redirect_to=/
- *   - 已登录:头像 + 用户名 + 余额 + 兑换码弹窗 + 登出
+ * 公开版独有:嵌入主线 Header 右侧 buttons 那一行的紧凑 widget。
+ *   - 未登录:"用 Linux.do 登录" 按钮 → /api/auth/linuxdo/authorize
+ *   - 已登录:头像 + 用户名 + 余额 chip + 兑换码弹窗 + 登出
  *
- * 主线 App.tsx fork 后只加一行 <AuthHeader /> 渲染,其它代码不动。
+ * 跟主线 Header 其它 Button 同尺寸/样式(variant=outline size=sm)对齐,
+ * 不抢镜不撞位置。
  */
 export function AuthHeader() {
   const [me, setMe] = useState<MeResponse | null>(null);
@@ -55,56 +56,61 @@ export function AuthHeader() {
 
   if (!me) return null;
 
+  if (!me.user) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={login}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <LogIn strokeWidth={1.5} />
+        Linux.do 登录
+      </Button>
+    );
+  }
+
   return (
-    <div className="fixed top-4 right-4 z-50">
-      {me.user ? (
-        <div className="bg-card shadow-(--shadow-paper) flex items-center gap-2 rounded-md border p-1.5">
-          {me.user.avatar_url && (
-            <img
-              src={me.user.avatar_url}
-              alt=""
-              className="border-border h-7 w-7 rounded-full border"
-            />
-          )}
-          <div className="px-1 text-xs">
-            <div className="font-medium">{me.user.username}</div>
-            <div className="text-muted-foreground flex items-center gap-1">
-              <Wallet className="size-3" />
-              {me.balance} 次
-            </div>
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => setRedeemOpen(true)}
-          >
-            <Gift className="size-3" />
-            兑换
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2"
-            onClick={logout}
-            aria-label="登出"
-          >
-            <LogOut className="size-3" />
-          </Button>
-        </div>
-      ) : (
-        <Button size="sm" onClick={login} className="shadow-(--shadow-paper)">
-          <LogIn className="size-4" />
-          用 Linux.do 登录
-        </Button>
-      )}
+    <>
+      <div className="border-border/60 bg-card flex items-center gap-2 rounded-md border px-2 py-1">
+        {me.user.avatar_url && (
+          <img
+            src={me.user.avatar_url}
+            alt=""
+            className="border-border/40 size-6 rounded-full border"
+          />
+        )}
+        <span className="text-foreground text-xs font-medium">{me.user.username}</span>
+        <span className="text-muted-foreground flex items-center gap-0.5 text-xs">
+          <Wallet className="size-3" strokeWidth={1.5} />
+          {me.balance}
+        </span>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setRedeemOpen(true)}
+        className="text-muted-foreground hover:text-foreground"
+        title="兑换邀请码"
+      >
+        <Gift strokeWidth={1.5} />
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={logout}
+        className="text-muted-foreground hover:text-foreground"
+        title="登出"
+      >
+        <LogOut strokeWidth={1.5} />
+      </Button>
 
       <RedeemDialog
         open={redeemOpen}
         onOpenChange={setRedeemOpen}
         onRedeemed={reload}
       />
-    </div>
+    </>
   );
 }
 
