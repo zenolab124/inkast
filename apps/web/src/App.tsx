@@ -6,11 +6,9 @@ import {
   Feather,
   ImageIcon,
   Languages,
-  Moon,
   Plug,
   Settings,
   Sparkles,
-  Sun,
   X,
 } from "lucide-react";
 import {
@@ -371,13 +369,13 @@ export function App() {
         {tab === "draft" && (
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto md:grid md:overflow-hidden md:transition-[grid-template-columns] md:duration-300 md:ease-out",
+              "grid min-h-0 flex-1 gap-3 transition-[grid-template-columns] duration-300 ease-out",
               expanded
-                ? "md:grid-cols-[0.42fr_1.4fr_0.6fr]"
-                : "md:grid-cols-[1.4fr_0.42fr_0.6fr]",
+                ? "grid-cols-[0.42fr_1.4fr_0.6fr]"
+                : "grid-cols-[1.4fr_0.42fr_0.6fr]",
             )}
           >
-            <section className="rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper) md:min-h-0 md:overflow-y-auto">
+            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
               <PromptComposer
                 value={input}
                 onChange={setInput}
@@ -413,7 +411,7 @@ export function App() {
               />
             </section>
 
-            <section className="flex flex-col rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper) md:min-h-0 md:overflow-y-auto">
+            <section className="flex min-h-0 flex-col overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
               <PromptFieldEditor
                 value={prompt}
                 onChange={handlePromptChange}
@@ -426,7 +424,7 @@ export function App() {
               />
             </section>
 
-            <section className="rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper) md:min-h-0 md:overflow-y-auto">
+            <section className="min-h-0 overflow-y-auto rounded-md border border-border/60 bg-card p-4 shadow-(--shadow-paper)">
               <SessionWorkspace
                 sessionGenerationIds={sessionGenerationIds}
                 activeJobs={activeJobs}
@@ -637,9 +635,7 @@ function Header({
           className="text-muted-foreground hover:text-foreground"
         >
           <Languages strokeWidth={1.5} />
-          <span className="hidden md:inline">
-            {lang === "zh" ? t.header.langEn : t.header.langZh}
-          </span>
+          {lang === "zh" ? t.header.langEn : t.header.langZh}
         </Button>
         <Button
           variant="outline"
@@ -650,7 +646,7 @@ function Header({
         >
           <a href="/admin/plugin-stats" target="_blank" rel="noopener noreferrer">
             <Activity strokeWidth={1.5} />
-            <span className="hidden md:inline">Stats</span>
+            Stats
           </a>
         </Button>
         <Button
@@ -661,7 +657,7 @@ function Header({
           className="text-muted-foreground hover:text-foreground"
         >
           <Settings strokeWidth={1.5} />
-          <span className="hidden md:inline">{t.header.config}</span>
+          {t.header.config}
         </Button>
         <Button
           variant="outline"
@@ -669,10 +665,7 @@ function Header({
           onClick={onToggleDark}
           className="text-muted-foreground hover:text-foreground"
         >
-          {dark ? <Sun strokeWidth={1.5} /> : <Moon strokeWidth={1.5} />}
-          <span className="hidden md:inline">
-            {dark ? t.header.light : t.header.dark}
-          </span>
+          {dark ? t.header.light : t.header.dark}
         </Button>
       </div>
     </header>
@@ -702,7 +695,7 @@ function TabButton({
       )}
     >
       {icon}
-      <span className="hidden sm:inline">{children}</span>
+      {children}
     </button>
   );
 }

@@ -33,8 +33,7 @@ const MASONRY_BREAKPOINTS = {
   1279: 5,
   1023: 4,
   767: 3,
-  479: 2,
-  359: 1,
+  639: 2,
 };
 
 export function GalleryPage({ refreshKey, onReuse }: Props) {
