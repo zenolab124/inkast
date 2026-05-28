@@ -27,7 +27,7 @@ import { createStore } from "idb-keyval";
  * providers 保留原 dbName('inkast-public')以兼容已经配过 provider 的用户;
  * 其它 3 个之前因为 bug 从未真正创建过,改新 dbName 也不丢任何数据。
  */
-export const providersStore = createStore("inkast-public", "providers");
+export const providersStore = createStore("inkast-public-providers", "kv");
 export const jobsStore = createStore("inkast-public-jobs", "kv");
 export const generationsStore = createStore("inkast-public-generations", "kv");
 export const imagesStore = createStore("inkast-public-images", "kv");
