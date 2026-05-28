@@ -1,10 +1,16 @@
 import { Hono } from "hono";
 import { requireAuth } from "../../server/middleware/auth.js";
+import { rateLimit } from "../../server/middleware/rate-limit.js";
 import { RedeemError, redeem } from "./service.js";
 
 export const inviteCodeRoutes = new Hono();
 
-inviteCodeRoutes.post("/topups/invite/redeem", requireAuth, async c => {
+inviteCodeRoutes.post(
+  "/topups/invite/redeem",
+  requireAuth,
+  // 防暴力试码:同 IP 一小时最多 20 次,同 user 一小时最多 10 次
+  rateLimit({ tag: "redeem", window: "hour", ipLimit: 20, userLimit: 10 }),
+  async c => {
   const body = await c.req.json().catch(() => null) as { code?: unknown } | null;
   const code = typeof body?.code === "string" ? body.code.trim() : "";
   if (!code) return c.json({ error: "code required" }, 400);

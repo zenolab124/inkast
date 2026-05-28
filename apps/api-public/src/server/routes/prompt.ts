@@ -15,6 +15,7 @@ import {
 import { findValidSession } from "../../storage/sessions.js";
 import { findUserById } from "../../storage/users.js";
 import { SESSION_COOKIE } from "./auth.js";
+import { rateLimit } from "../middleware/rate-limit.js";
 
 export const promptRoutes = new Hono();
 
@@ -38,7 +39,12 @@ interface DraftBody {
  *
  * 输出契合主线 DraftPromptResponse:{ prompt, hints, _meta }。
  */
-promptRoutes.post("/prompt/draft", async c => {
+promptRoutes.post(
+  "/prompt/draft",
+  // passthrough 路径不需 auth,builtin 路径内部自己 require。rate-limit
+  // 自己解 cookie:有 session 走 user 限,匿名走 IP 限。
+  rateLimit({ tag: "prompt", window: "minute", ipLimit: 30, userLimit: 30 }),
+  async c => {
   const body = (await c.req.json().catch(() => null)) as DraftBody | null;
   if (!body) return c.json({ error: "invalid_body" }, 400);
 

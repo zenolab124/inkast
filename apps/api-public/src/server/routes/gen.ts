@@ -18,6 +18,7 @@ import {
   markGenTaskSuccess,
 } from "../../storage/gen-tasks.js";
 import { requireAuth } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/rate-limit.js";
 
 export const genRoutes = new Hono();
 
@@ -46,7 +47,12 @@ interface PassthroughBody {
  *
  * 用户自带 key,这里**不**扣公开版余额(cost=0)。失败也不扣。
  */
-genRoutes.post("/gen/passthrough", requireAuth, async c => {
+genRoutes.post(
+  "/gen/passthrough",
+  requireAuth,
+  // 透明代理:用户自己 key,主要防 jdc 转发资源被滥用。IP 维度足够。
+  rateLimit({ tag: "gen_pt", window: "minute", ipLimit: 30 }),
+  async c => {
   const body = (await c.req.json().catch(() => null)) as PassthroughBody | null;
   if (!body) return c.json({ error: "invalid_body" }, 400);
 
@@ -147,7 +153,13 @@ genRoutes.post("/gen/passthrough", requireAuth, async c => {
  * 步骤 4-5 不是原子(driver 是异步 HTTP),进程 crash 在中间会留下"扣了没出图"
  * 的孤儿——Phase 1 接受;后续严格做要引 reserved balance。
  */
-genRoutes.post("/gen/builtin", requireAuth, async c => {
+genRoutes.post(
+  "/gen/builtin",
+  requireAuth,
+  // 兜底通道:花我们的 provider 钱,严点。user 维度防同账号狂调,
+  // IP 维度防匿名滥用(虽然 requireAuth 已经挡住未登录,IP 限是双保险)
+  rateLimit({ tag: "gen_bi", window: "minute", ipLimit: 20, userLimit: 10 }),
+  async c => {
   const cfg = loadBuiltinConfig();
   if (!cfg.enabled) {
     return c.json(
