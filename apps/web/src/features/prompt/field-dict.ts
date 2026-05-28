@@ -47,7 +47,7 @@ export type FieldId =
 // Type: 15 options across 2 sheets (9 + 6). All cells 1:1 — square poster /
 // square banner / square cover work fine as visual category previews.
 const type = (n: number, i: number) => ({
-  src: `/previews/type-${n}.png`,
+  src: `https://static.124213.xyz/previews/type-${n}.png`,
   cols: 3,
   rows: 3,
   index: i,
@@ -77,7 +77,7 @@ export const TYPE_OPTIONS: FieldOption[] = [
 // 4 separate 3×3 sprite sheets to fit within the 1024×1024 API limit while
 // keeping each cell at ~341px for legible detail.
 const sheet = (n: number, i: number) => ({
-  src: `/previews/style-${n}.png`,
+  src: `https://static.124213.xyz/previews/style-${n}.png`,
   cols: 3,
   rows: 3,
   index: i,
@@ -134,7 +134,7 @@ export const STYLE_OPTIONS: FieldOption[] = [
 // empty. Order within each sheet is hand-tuned to give the model strong
 // visual contrast (warm vs cold, calm vs dramatic) within a single canvas.
 const mood = (n: number, i: number) => ({
-  src: `/previews/mood-${n}.png`,
+  src: `https://static.124213.xyz/previews/mood-${n}.png`,
   cols: 3,
   rows: 3,
   index: i,
@@ -165,7 +165,7 @@ export const MOOD_OPTIONS: FieldOption[] = [
 // cells at the end. Removed `natural` (too vague, covered by morning_soft /
 // golden_hour / window) and `top` (covered by top_long_shadow).
 const lighting = (n: number, i: number) => ({
-  src: `/previews/lighting-${n}.png`,
+  src: `https://static.124213.xyz/previews/lighting-${n}.png`,
   cols: 3,
   rows: 3,
   index: i,
@@ -195,7 +195,7 @@ export const LIGHTING_OPTIONS: FieldOption[] = [
 // Camera: 12 options across 2 sheets (9 + 3). Sheet 2 has 6 blank cells.
 // Removed `birds_eye` (overlaps top_down) and `worms_eye` (overlaps low_angle).
 const camera = (n: number, i: number) => ({
-  src: `/previews/camera-${n}.png`,
+  src: `https://static.124213.xyz/previews/camera-${n}.png`,
   cols: 3,
   rows: 3,
   index: i,
@@ -221,7 +221,7 @@ export const CAMERA_OPTIONS: FieldOption[] = [
 
 // Layout: 12 options across 2 sheets (9 + 3). Sheet 2 has 6 baseline cells.
 const layout = (n: number, i: number) => ({
-  src: `/previews/layout-${n}.png`,
+  src: `https://static.124213.xyz/previews/layout-${n}.png`,
   cols: 3,
   rows: 3,
   index: i,
