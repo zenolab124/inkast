@@ -219,6 +219,27 @@ export function markTaskRunning(id: string): void {
 }
 
 /**
+ * Increment-update a running task's live progress: which round it's on and the
+ * provider attempts walked so far. Driven by the plugin worker's onProgress
+ * hook (the image driver fires it once per provider attempt). The
+ * `status = 'running'` guard makes a late/racing ping a no-op once the row
+ * reached a terminal state — so it can never clobber the authoritative
+ * attempts written by markTaskSucceeded / markTaskFailed.
+ */
+export function updateTaskProgress(
+  id: string,
+  progress: { round: number; attempts: GenerateImageAttempt[] },
+): void {
+  db()
+    .prepare(
+      `UPDATE plugin_tasks
+       SET current_round = ?, attempts = ?
+       WHERE id = ? AND status = 'running'`,
+    )
+    .run(progress.round, JSON.stringify(progress.attempts), id);
+}
+
+/**
  * Exactly one of `b64Json` / `imageUrl` must be set, driven by the plugin's
  * imageStorage.kind. mime is always set so callers know the bytes' format
  * (even when bytes are remote — useful for client-side Content-Type assertions).

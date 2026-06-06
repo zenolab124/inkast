@@ -55,6 +55,14 @@ export interface RewritePolicy {
   maxRound?: 0 | 1 | 2 | 3;
 }
 
+/** Live progress snapshot pushed once per provider attempt (all rounds). */
+export interface ProgressSnapshot {
+  /** Round currently being attempted: 0 (original prompt) … maxRound. */
+  round: number;
+  /** Every provider attempt so far across all rounds (append-only, live). */
+  attempts: ImageGenAttempt[];
+}
+
 export interface DriveWithRewriteOutcome extends ImageGenOutcome {
   /**
    * One entry per LLM rewrite round actually performed. Empty when round 0
@@ -83,6 +91,7 @@ function collectTriggerProviders(attempts: ImageGenAttempt[]): string[] {
 export async function driveWithRewriteFallback(
   input: ImageGenInput,
   policy: RewritePolicy = {},
+  onProgress?: (snapshot: ProgressSnapshot) => void,
 ): Promise<DriveWithRewriteOutcome> {
   const skipOriginal = policy.skipOriginal === true;
   const maxRound: 0 | 1 | 2 | 3 = policy.maxRound ?? DEFAULT_MAX_ROUND;
@@ -98,6 +107,17 @@ export async function driveWithRewriteFallback(
   }
 
   const cumulativeAttempts: ImageGenAttempt[] = [];
+  // Live progress mirror: the driver's onAttempt fires once per provider
+  // attempt; we append here and ping onProgress so the plugin channel can
+  // persist in-flight progress (current round + channels walked so far). Kept
+  // separate from cumulativeAttempts — which the round-boundary logic below
+  // owns for the trigger-gate / return paths — so this stays non-invasive.
+  const liveAttempts: ImageGenAttempt[] = [];
+  let currentRound = skipOriginal ? 1 : 0;
+  const reportAttempt = (attempt: ImageGenAttempt): void => {
+    liveAttempts.push(attempt);
+    onProgress?.({ round: currentRound, attempts: liveAttempts });
+  };
   const rewritesHistory: string[] = [];
   let lastErr: ImageGenError | undefined;
   // Populated by round 1's vision-branch analysis; rounds 2/3 inherit from
@@ -108,7 +128,7 @@ export async function driveWithRewriteFallback(
   // ─── Round 0: caller's literal prompt, full pool ────────────────────────
   if (!skipOriginal) {
     try {
-      const outcome = await generateImage(input);
+      const outcome = await generateImage({ ...input, onAttempt: reportAttempt });
       return {
         ...outcome,
         rewrittenPromptHistory: [],
@@ -138,6 +158,7 @@ export async function driveWithRewriteFallback(
   // ─── Rounds 1..maxRound ─────────────────────────────────────────────────
   const baseExcludes = new Set(input.excludeProviderIds ?? []);
   for (let round = 1; round <= maxRound; round++) {
+    currentRound = round;
     console.log(
       `[generate] ▶ rewrite round ${round}/${maxRound} starting — ${collectTriggerProviders(cumulativeAttempts).length} trigger-coded provider(s) so far, ${rewritesHistory.length} rewrite(s) so far`,
     );
@@ -191,6 +212,7 @@ export async function driveWithRewriteFallback(
         ...input,
         promptText: rewrite.rewrittenPromptText,
         excludeProviderIds: excludesForRetry,
+        onAttempt: reportAttempt,
       });
       console.log(
         `[generate]   ✓ rewrite r${round} + retry succeeded via ${retryOutcome.providerName} in ${retryOutcome.totalDurationMs}ms`,

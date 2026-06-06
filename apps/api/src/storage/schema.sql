@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS plugin_tasks (
   prompt_json          TEXT,                  -- succeeded only: JSON.stringify of merged ImagePrompt
   rewritten_prompt     TEXT,                  -- JSON array string[]; one entry per LLM rewrite round actually performed; empty/null when no rewrite happened
   success_round        INTEGER,               -- succeeded only: 0=round 0 (original prompt) | 1=round 1 LLM vision rewrite | 2=fingerprint-degrade | 3=color-only anchor
+  current_round        INTEGER,               -- running only: 实时进度,当前进行到第几轮(0..3);driver 每走一个渠道增量更新,终态后不再维护(看 success_round)
   post_review_edited   INTEGER,               -- succeeded only: 0=post-review didn't run OR ran but didn't change image; 1=image was replaced by post-review edit
   error_code           TEXT,                  -- failed/interrupted only
   error_msg            TEXT,

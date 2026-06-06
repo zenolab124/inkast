@@ -21,6 +21,7 @@ import {
   markTaskFailed,
   markTaskRunning,
   markTaskSucceeded,
+  updateTaskProgress,
   reaperInflightPluginTasks,
   type PluginTaskRow,
 } from "../../storage/plugin-tasks.js";
@@ -213,6 +214,7 @@ async function runTask(taskId: string): Promise<void> {
           skipOriginal: callerPolicy?.skipOriginal,
           maxRound: callerPolicy?.maxRound,
         },
+        snapshot => updateTaskProgress(taskId, snapshot),
       );
     } finally {
       imageDurationMs = Date.now() - imageStart;

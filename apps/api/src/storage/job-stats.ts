@@ -108,7 +108,7 @@ export function getJobsTopErrorCodes(sinceMs: number, limit = 10): JobErrorCodeR
 export function getJobsHourBuckets(sinceMs: number): JobHourBucket[] {
   const rows = db()
     .prepare(
-      `SELECT strftime('%Y-%m-%d %H:00', created_at/1000, 'unixepoch') AS hour,
+      `SELECT strftime('%Y-%m-%d %H:00', created_at/1000, 'unixepoch', '+8 hours') AS hour,
               COUNT(*) AS total,
               SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed

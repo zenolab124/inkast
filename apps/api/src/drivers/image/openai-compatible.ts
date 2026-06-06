@@ -177,12 +177,14 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
             ? await callImageGenerationTool(provider, capability, apiKey, input)
             : await callProvider(provider, capability, apiKey, input);
         clearInterval(heartbeat);
-        attempts.push({
+        const okAttempt = {
           providerId: provider.id,
           providerName: provider.name,
           ok: true,
           durationMs: Date.now() - started,
-        });
+        };
+        attempts.push(okAttempt);
+        input.onAttempt?.(okAttempt);
         console.log(
           `[image] ✓ ${provider.name} succeeded in ${Date.now() - started}ms (image-b64-bytes=${b64.length})`,
         );
@@ -198,7 +200,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
         clearInterval(heartbeat);
         const classified = classifyError(err);
         lastClassified = classified;
-        attempts.push({
+        const failAttempt = {
           providerId: provider.id,
           providerName: provider.name,
           ok: false,
@@ -208,7 +210,9 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           httpStatus: classified.httpStatus,
           requestId: classified.requestId,
           errorBody: truncateErrorBody(classified.body),
-        });
+        };
+        attempts.push(failAttempt);
+        input.onAttempt?.(failAttempt);
         console.log(
           `[image] ✗ ${provider.name} failed (${classified.code}) in ${Date.now() - started}ms`,
         );
@@ -251,14 +255,28 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           break;
         }
         if (classified.code === "quota_exhausted") {
-          // Wallet / daily quota depleted. Auto-disable this capability
-          // until next 06:00 Beijing time — no point burning more attempts
-          // before upstream resets. Manual Web UI toggle clears the auto
-          // flag and re-enables immediately if user tops up the account.
-          markCapabilityAutoDisabledUntilNext6am(provider.id, capability.kind);
-          break;
+          // Wallet / daily quota depleted. For a normal single-channel provider
+          // this is a hard-stop: auto-disable the capability until next 06:00
+          // Beijing time and fall over — retrying won't conjure budget before
+          // the daily reset. Manual Web UI toggle clears the auto flag and
+          // re-enables immediately after a top-up.
+          if (!capability.extras?.exemptAutoDisable) {
+            markCapabilityAutoDisabledUntilNext6am(provider.id, capability.kind);
+            break;
+          }
+          // Exception: a capability flagged `extras.exemptAutoDisable` is a
+          // multi-channel aggregate (e.g. `gpt`), where one quota signal means
+          // a single upstream sub-channel is full, not the whole pool. Don't
+          // auto-disable it, and — unlike a real hard-stop — DO retry on this
+          // same provider: the next attempt may land on a sibling sub-channel
+          // that still has budget. Fall through to the backoff/retry path
+          // below; we only fall over once retryLimit is spent.
+          console.log(
+            `[image]   ${provider.name} quota signal but exempt (multi-channel) — retrying on same provider instead of auto-disable`,
+          );
         }
-        // Transient — back off briefly, then retry on the same provider.
+        // Transient (or exempt-quota fall-through) — back off briefly, then
+        // retry on the same provider.
         if (retry < retryLimit) {
           console.log(
             `[image]   …retrying ${provider.name} in ${PROVIDER_RETRY_BACKOFF_MS}ms (transient: ${classified.code})`,

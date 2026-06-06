@@ -53,6 +53,8 @@ export interface RecentTaskRow {
   imageDurationMs: number | null;
   totalDurationMs: number | null;
   attempts: GenerateImageAttempt[];
+  /** running only: live round (0..3) the task is on; null on terminal/old rows. */
+  currentRound: number | null;
   createdAt: number;
 }
 
@@ -214,11 +216,10 @@ export function getTopErrorCodes(sinceMs: number, limit = 10): ErrorCodeRow[] {
 }
 
 export function getHourBuckets(sinceMs: number): HourBucket[] {
-  // SQLite strftime to bucket by hour (UTC). Frontend can re-localize if needed;
-  // for an admin view we keep it simple and just label by hour.
+  // 按北京时间(Asia/Shanghai, UTC+8)的小时分桶,跟 admin 页面表格里的创建时间口径一致。
   const rows = db()
     .prepare(
-      `SELECT strftime('%Y-%m-%d %H:00', created_at/1000, 'unixepoch') AS hour,
+      `SELECT strftime('%Y-%m-%d %H:00', created_at/1000, 'unixepoch', '+8 hours') AS hour,
               COUNT(*) AS total,
               SUM(CASE WHEN status = 'succeeded' OR status = 'callback_lost' THEN 1 ELSE 0 END) AS succeeded,
               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
@@ -236,7 +237,7 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
     .prepare(
       `SELECT id, plugin_id, status, callback_url, error_code, error_msg,
               callback_attempts, callback_lost, llm_duration_ms,
-              image_duration_ms, provider_name, attempts,
+              image_duration_ms, provider_name, attempts, current_round,
               created_at, completed_at
        FROM plugin_tasks
        ORDER BY created_at DESC
@@ -255,6 +256,7 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
       image_duration_ms: number | null;
       provider_name: string | null;
       attempts: string;
+      current_round: number | null;
       created_at: number;
       completed_at: number | null;
     }>;
@@ -273,6 +275,7 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
     imageDurationMs: r.image_duration_ms,
     totalDurationMs: r.completed_at != null ? r.completed_at - r.created_at : null,
     attempts: safeParseAttempts(r.attempts),
+    currentRound: r.current_round,
     createdAt: r.created_at,
   }));
 }

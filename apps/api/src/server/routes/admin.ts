@@ -189,8 +189,24 @@ const STATUS_ZH: Record<string, string> = {
   callback_lost: "回调丢失",
 };
 
+// 北京时间(Asia/Shanghai)格式化。sv-SE locale 天然输出 "YYYY-MM-DD HH:mm:ss"
+// ISO 风格,免去手动 padStart。short=true 返回 "MM-DD HH:mm:ss"。
+function formatBeijing(ms: number, opts?: { short?: boolean }): string {
+  const full = new Date(ms).toLocaleString("sv-SE", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  return opts?.short ? full.slice(5) : full;
+}
+
 function renderHtml(d: RenderInput): string {
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const now = formatBeijing(Date.now());
   const winLink = (w: string, label: string) =>
     `<a href="?window=${w}" class="${d.window === w ? "active" : ""}">${label}</a>`;
 
@@ -323,12 +339,18 @@ function renderHtml(d: RenderInput): string {
 
   const recentRows = d.recent
     .map(r => {
-      const created = new Date(r.createdAt).toISOString().replace("T", " ").slice(5, 19);
+      const created = formatBeijing(r.createdAt, { short: true });
       const total = r.totalDurationMs != null ? fmtMs(r.totalDurationMs) : "—";
       const llm = r.llmDurationMs ? fmtMs(r.llmDurationMs) : "—";
       const img = r.imageDurationMs ? fmtMs(r.imageDurationMs) : "—";
       const lostMark = r.callbackLost ? `<span title="回调重试已耗尽">⚠</span>` : "";
-      const chain = renderAttemptChain(r.providerName, r.attempts);
+      // 进行中任务:实时进度由 worker 的 onProgress 增量写库(current_round +
+      // 已走渠道 attempts)。终态行不显示轮徽章(看 chain / err 即可)。
+      const roundTag =
+        r.status === "running" && r.currentRound != null
+          ? `<span class="round-tag" title="当前进行到第 ${r.currentRound} 轮(0=原图 1/2/3=改写降级轮)">r${r.currentRound}</span> `
+          : "";
+      const chain = roundTag + renderAttemptChain(r.providerName, r.attempts);
       const errCell = r.errorCode
         ? `<code title="${escapeAttr(r.errorMsg ?? "")}">${escapeText(r.errorCode)}</code>`
         : "—";
@@ -381,7 +403,7 @@ function renderHtml(d: RenderInput): string {
 
   const webRecentRows = d.webRecent
     .map(r => {
-      const created = new Date(r.createdAt).toISOString().replace("T", " ").slice(5, 19);
+      const created = formatBeijing(r.createdAt, { short: true });
       const total = r.totalDurationMs != null ? fmtMs(r.totalDurationMs) : "—";
       const chain = renderAttemptChain(r.providerName, r.attempts);
       const errCell = r.errorCode
@@ -461,6 +483,7 @@ table tr:hover td { background: rgba(70,45,20,0.03); }
 code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px; background: rgba(70,45,20,0.06); padding: 1px 4px; border-radius: 2px; }
 .meta { color: #7A6F5E; font-size: 11px; margin: 4px 0; }
 .chain { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; line-height: 1.5; }
+.round-tag { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; background: #3A5A40; color: #FBF6EA; margin-bottom: 3px; }
 .att { position: relative; display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; border-radius: 3px; font-size: 11px; white-space: nowrap; cursor: default; }
 .att-ok { background: rgba(58,90,64,0.12); color: #2A4A2E; }
 .att-fail { background: rgba(164,69,59,0.10); color: #6B2620; cursor: help; }

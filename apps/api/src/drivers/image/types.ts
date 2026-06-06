@@ -68,6 +68,15 @@ export interface ImageGenInput {
    * providers don't accept reference-based edits the same way).
    */
   requireMode?: "images" | "responses";
+  /**
+   * Progress hook: invoked once per provider attempt the moment the driver
+   * records it (both successes and failures), BEFORE the overall call
+   * resolves. Lets the plugin channel persist live progress (which channel,
+   * how far) to plugin_tasks so the admin dashboard can show in-flight tasks
+   * instead of only terminal ones. Optional — the Web UI channel doesn't pass
+   * it. Implementations must not throw.
+   */
+  onAttempt?: (attempt: ImageGenAttempt) => void;
 }
 
 export type AttemptErrorCode =
