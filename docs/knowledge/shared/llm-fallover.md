@@ -75,3 +75,4 @@ journal 里 grep `[llm]` 就能看 fallover 路径。
 - [llm-half-refusal-empty-rewritten](../pitfalls/llm-half-refusal-empty-rewritten.md) — postValidate 修的是这个
 - [claude-code-tail-bypassed-disabled](../pitfalls/claude-code-tail-bypassed-disabled.md) — v2.32 修:tail 受 DB disabled 控制
 - [claude-code-not-logged-in-as-result](../pitfalls/claude-code-not-logged-in-as-result.md) — claude-code SDK 没登录时把提示当 result 返回
+- [fallover-pool-db-order](../decisions/fallover-pool-db-order.md) — v2.37:env 不再重排 fallover 池序,完全以 DB priority 为准

@@ -27,10 +27,14 @@ image driver 已经支持读 `extras.headers` 注入自定义请求头(用于模
 
 ## 副作用
 
-- **LLM driver 当前不读 extras.headers**(独立 bug,跟 image driver 不一致)。要让 LLM driver 也支持 Codex header,要先改 LLM driver——**不在本次任务范围内**,等用户后续提需求再开。用户明确"跟那个没关系,这是两个事"。
+- **v2.37(commit e919f19)起 LLM driver 也已支持 useCodexHeader**:codex-header 逻辑抽成共享模块 `apps/api/src/drivers/codex-header.ts`,导出 `CODEX_CLI_HEADERS` 常量和 `resolveExtraHeaders()` 函数;image driver(`openai-compatible.ts`)和 LLM driver(`openai-compatible.ts`)都从该模块导入,两条路径行为完全对称。
+- **ProviderConfigDialog 已通用化**:原先的 `ImageCodexHeaderRow` 子组件提炼为通用 `CodexHeaderRow`,在 image kind 和 LLM kind 编辑表单里都可复用;前端 form state 增加 `llmUseCodexHeader: boolean`。
+- **`openai-responses.ts` 同步**:responses mode driver 也改从 `../codex-header.js` 导入,与 images mode 路径对齐。
 - 未来要新增另一套 header 集合(比如 Browser CLI 兼容)时,需要后端发布新 flag,**这是设计上接受的代价**。
 
 ## 关联条目
 
 - [provider-pool](../domains/provider-pool.md) — extras 字段的容身处
-- [llm-driver-knobs](llm-driver-knobs.md) — LLM driver 调参体系(暂未接 useCodexHeader)
+- [llm-driver-knobs](llm-driver-knobs.md) — LLM driver 调参体系
+- [fallover-pool-db-order](fallover-pool-db-order.md) — v2.37 同批次:LLM fallover 池序改为纯 DB priority
+- [shared/llm-fallover](../shared/llm-fallover.md) — LLM fallover helper 完整文档

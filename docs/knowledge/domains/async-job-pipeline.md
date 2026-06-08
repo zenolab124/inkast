@@ -65,10 +65,15 @@ API 进程重启(HMR / 部署)时,**正在跑的 promise 没人 await**——这
 
 `POST /api/generate-image` 仍保留(`routes/generate.ts`)但前端不再调用——保留作兜底 / 第三方调用接口。
 
+## 进度回调注记
+
+Web UI 通道**不实现**进度回调。`runGenerationJob` 调用 `driveWithRewriteFallback` 时**不传** `onProgress`，`jobs` 表也没有 `current_round` 列。原因:浏览器走 2s polling GET `/api/jobs?status=pending,running`，无 server-push 机制；实时进度写库对 polling 客户端无意义。实时进度(增量写 `current_round` + `attempts`)是 **plugin 通道专有**特性，见 [plugin-channel](plugin-channel.md)。
+
 ## 关联条目
 
 - [async-jobs-over-sync-http](../decisions/async-jobs-over-sync-http.md) — 为什么异步化
 - [reaper-abandoned-jobs](../decisions/reaper-abandoned-jobs.md) — 重启时为什么 reap
 - [image-generation](image-generation.md) — `generate()` 函数本身的端到端
+- [plugin-channel](plugin-channel.md) — 实时进度(current_round/attempts 写库)的 plugin 通道实现
 - [hmr-restart-aborts-jobs](../pitfalls/hmr-restart-aborts-jobs.md) — reaper 解决的问题
 - [browser-idle-timeout-long-http](../pitfalls/browser-idle-timeout-long-http.md) — 异步化的根本驱动

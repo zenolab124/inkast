@@ -33,6 +33,8 @@ inkast **两条通道**的运行状态可视化页面——Plugin 通道(对外�
 
 **header 顶部新增"插件作品图 →" chip**(2026-05-22)——跳转 `/?tab=plugin-gallery` 看 plugin 通道生成图的瀑布流(react-masonry-css SPA 页)。chip 是 dashboard ↔ gallery 的双向入口之一。
 
+**running 任务进度徽章**(2026-06)——"最近 50 条任务"表中,`status='running'` 的行在"渠道"列前显示墨绿 `r{n}` 轮徽章(`r0` 原图、`r1/r2/r3` 改写降级轮)。数据来源:plugin worker 的 `onProgress` 回调增量写 `plugin_tasks.current_round`(详见 [plugin-channel](plugin-channel.md) 实时进度小节)。终态行不显示徽章。
+
 ## Section 2: Web UI 通道(本机生图)
 
 数据源 `jobs` 表(Web UI 通道异步任务),聚合查询在 `apps/api/src/storage/job-stats.ts`。
@@ -47,13 +49,21 @@ inkast **两条通道**的运行状态可视化页面——Plugin 通道(对外�
 | 最近 24h 趋势 | 同 Plugin section |
 | 最近 50 条任务 | task_id 短/状态/**size**/**quality**/总耗时/错误/创建时间(无 plugin/渠道/callback 列) |
 
+## 北京时间显示
+
+**2026-06 新增**。所有时间戳统一显示北京时间(UTC+8)。
+
+- `admin.ts` 内 `formatBeijing(ms, { short? })` 函数:用 `new Date(ms).toLocaleString("sv-SE", { timeZone: "Asia/Shanghai", ... })`——sv-SE locale 天然输出 `YYYY-MM-DD HH:mm:ss` 格式,免去手动 `padStart`。`short=true` 截取后 14 位得 `MM-DD HH:mm:ss`。
+- 页面顶部"生成时间"用完整格式,recent 表各行创建时间用 `short` 格式。
+- `plugin-stats.ts` 的 `getHourBuckets` 和 `job-stats.ts` 的 `getJobsHourBuckets` SQL 里 `strftime` 加 `'+8 hours'` 偏移,使小时分桶坐标轴与 recent 表时间同口径(都显示北京时)。
+
 ## 关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `apps/api/src/server/routes/admin.ts` | 路由 + HTML 渲染 + `/admin/plugin-gallery.json` JSON endpoint(供 SPA gallery 拉数据) |
-| `apps/api/src/storage/plugin-stats.ts` | Plugin 通道 aggregate(`getOverview` / `getLatency` / `getCallbackHealth` / `getTopErrorCodes` / `getProviderBreakdown` / `getHourBuckets` / `getRecentTasks`) |
-| `apps/api/src/storage/job-stats.ts` | **Web UI 通道 aggregate**(`getJobsOverview` / `getJobsLatency` / `getJobsTopErrorCodes` / `getJobsHourBuckets` / `getRecentJobs`) |
+| `apps/api/src/server/routes/admin.ts` | 路由 + HTML 渲染 + `formatBeijing` 时间格式化 + running 任务 `r{n}` 轮徽章渲染 + `/admin/plugin-gallery.json` JSON endpoint |
+| `apps/api/src/storage/plugin-stats.ts` | Plugin 通道 aggregate(`getOverview` / `getLatency` / `getCallbackHealth` / `getTopErrorCodes` / `getProviderBreakdown` / `getHourBuckets` / `getRecentTasks`);`RecentTaskRow.currentRound` 字段;`getHourBuckets` strftime +8h 偏移 |
+| `apps/api/src/storage/job-stats.ts` | **Web UI 通道 aggregate**(`getJobsOverview` / `getJobsLatency` / `getJobsTopErrorCodes` / `getJobsHourBuckets` / `getRecentJobs`);`getJobsHourBuckets` strftime +8h 偏移 |
 | `apps/web/src/App.tsx`(header 段) | Web UI Stats 按钮 + plugin-gallery Tab 路由 |
 
 ## 设计原则
@@ -66,6 +76,6 @@ inkast **两条通道**的运行状态可视化页面——Plugin 通道(对外�
 
 ## 关联条目
 
-- [plugin-channel](plugin-channel.md) — dashboard 服务的是这个通道
+- [plugin-channel](plugin-channel.md) — dashboard 服务的是这个通道;running 任务进度来源
 - [plugin-gallery](plugin-gallery.md) — header chip 跳转的 SPA 作品图页
 - [paper-theme-tokens](../shared/paper-theme-tokens.md) — 视觉对齐用

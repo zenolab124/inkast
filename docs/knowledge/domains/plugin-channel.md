@@ -62,18 +62,57 @@ nginx /inkast/ → 127.0.0.1:8787 ───┬──────┴────�
         └──────────────────────────────────────────────────────────────────┘
 ```
 
+## 进行中任务实时进度
+
+**2026-06 新增**。plugin worker 在任务 running 期间将已走渠道 + 当前轮次增量写库,admin dashboard 可展示进行中任务的实时进度,而不只是终态。
+
+### 链路
+
+```
+driveWithRewriteFallback(input, policy, onProgress?)
+  │  内部维护 liveAttempts[]  ← image driver 每试完一个渠道触发 input.onAttempt?(attempt)
+  │  每次 onAttempt 触发:
+  │    liveAttempts.push(attempt)
+  │    onProgress?.({ round: currentRound, attempts: liveAttempts })
+  │
+  ▼
+plugin-async worker 传入的 onProgress:
+  snapshot => updateTaskProgress(taskId, snapshot)
+  │
+  ▼
+storage/plugin-tasks.ts  updateTaskProgress(id, { round, attempts })
+  UPDATE plugin_tasks
+    SET current_round = ?, attempts = ?
+    WHERE id = ? AND status = 'running'   ← 终态守卫:终态行不覆写
+```
+
+### 关键接口
+
+- `ImageGenInput.onAttempt?: (attempt: ImageGenAttempt) => void`(定义在 `drivers/image/types.ts`)——image driver 每个 attempt(成功或失败)完成时调用,实现不得抛异常
+- `ProgressSnapshot { round: number; attempts: ImageGenAttempt[] }`(定义在 `domain/generate/with-rewrite.ts`)——聚合体,`round` 是当前轮(0=原图,1/2/3=改写),`attempts` 是截至目前全部 attempt(append-only)
+- `updateTaskProgress(id, progress)`——`status = 'running'` 守卫防止竞态 ping 覆写终态
+
+### Schema 变更
+
+`plugin_tasks` 表新增 `current_round INTEGER` 列(schema.sql DDL + db.ts 启动时 migrate `ALTER TABLE … ADD COLUMN current_round INTEGER`)。`RecentTaskRow.currentRound: number | null` 供 plugin-stats 查询使用,admin dashboard 仅对 `status='running'` 行显示 `r{n}` 轮徽章。
+
+### 边界
+
+Web UI 通道(`jobs` 表)**不实现** onProgress——浏览器走轮询,无 server-push;进度写库纯属 plugin 通道的特性。
+
 ## 关键文件
 
 | 文件 | 职责 |
 |---|---|
 | `apps/api/src/server/routes/plugins.ts` | submit + status 两个 endpoint + 参数校验(含 `pipeline_policy`) |
 | `apps/api/src/server/middleware/plugin-auth.ts` | Bearer Token 中间件,挂 plugin 到 `c.var.plugin` |
-| `apps/api/src/domain/plugin-async/index.ts` | 整个 worker + queue + callback + transcode + recovery + GC,**MAX_CONCURRENT=25** |
-| `apps/api/src/domain/generate/with-rewrite.ts` | `driveWithRewriteFallback`,round 0 → rewrite chain 编排 |
+| `apps/api/src/domain/plugin-async/index.ts` | 整个 worker + queue + callback + transcode + recovery + GC,**MAX_CONCURRENT=25**;onProgress 传 `updateTaskProgress` |
+| `apps/api/src/domain/generate/with-rewrite.ts` | `driveWithRewriteFallback(input, policy, onProgress?)`,round 0 → rewrite chain 编排;维护 `liveAttempts` + 每 attempt 触发 `onProgress(ProgressSnapshot)` |
+| `apps/api/src/drivers/image/types.ts` | `ImageGenInput.onAttempt` 字段 + `ImageGenAttempt` + `ProgressSnapshot` 所在模块 |
 | `apps/api/src/domain/rewrite-prompt/index.ts` | r1/r2/r3 单轮改写 + force-prepend 三锚定 + HARD_CONSTRAINTS |
 | `apps/api/src/domain/post-review-edit/index.ts` | reviewAndMaybeEdit(LLM 视觉审 + image edit pipeline) |
-| `apps/api/src/storage/plugin-tasks.ts` | SQLite CRUD + reaperInflightPluginTasks + gcOldPluginTasks + 新字段 rewritten_prompt/success_round/post_review_edited |
-| `apps/api/src/storage/plugin-stats.ts` | dashboard 用的 aggregate 查询 |
+| `apps/api/src/storage/plugin-tasks.ts` | SQLite CRUD + reaperInflightPluginTasks + gcOldPluginTasks + `updateTaskProgress` + 新字段 rewritten_prompt/success_round/post_review_edited/**current_round** |
+| `apps/api/src/storage/plugin-stats.ts` | dashboard 用的 aggregate 查询;`RecentTaskRow.currentRound` 字段 |
 | `apps/api/src/plugins/types.ts` | `InkastPlugin` 接口契约 |
 | `apps/api/src/plugins/registry.ts` | 启动时从 `INKAST_PLUGIN_DIR` 加载 JSON + env 加载 token |
 | `apps/api/src/plugins/loader.ts` | JSON + zod 校验 |
@@ -114,6 +153,7 @@ systemd 重启时 `initPluginAsync` 顺序跑三件事:
 
 ## 关联条目
 
+- [admin-dashboard](admin-dashboard.md) — 进度展示(running 任务 r{n} 轮徽章)
 - [rewrite-chain](rewrite-chain.md) — round 0 失败后的 3 轮 LLM 重写
 - [post-review-edit](post-review-edit.md) — r2/r3 成功后的视觉审查 + edit
 - [plugin-gallery](plugin-gallery.md) — Web 端浏览本通道生成图(永久归档,r2 模式)

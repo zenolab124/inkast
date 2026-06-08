@@ -46,6 +46,8 @@ endpoint 由 account_id 拼:`https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`�
 
 ## 路径与公网读
 
+### Plugin 通道(snap-ub-ai-variants)
+
 | 维度 | 配在哪 | 谁定 |
 |---|---|---|
 | bucket | plugin overlay `imageStorage.bucket` | 客户(snap-ub 选 `snap-ub-ai-variants`) |
@@ -56,16 +58,42 @@ endpoint 由 account_id 拼:`https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`�
 inkast 拼 key:`${keyPrefix}${task_id}.${ext}`,如 `aiVariants/ink-uuid.png`。
 公网 URL:`${publicBase}/${key}`,如 `https://aivariants.124213.xyz/aiVariants/ink-uuid.png`。
 
+### inkast-storage bucket(平台自用)
+
+bucket:`inkast-storage`,自定义域名:`static.124213.xyz`。bucket 内靠**路径约定**隔离,token 无前缀强制:
+
+**previews/ 路径 — sprite 预览图**
+
+14 张 sprite sheet PNG,上传脚本:`apps/api-public/scripts/upload-previews.mjs`。来源目录:`apps/web/public/previews/`。上传后浏览器从 `https://static.124213.xyz/previews/<file>.png` 直接拉图。迁 R2 前这些图放 `apps/web-public/public/previews/`,被 nginx SPA fallback 兜底成 `text/html`——迁 R2 根治了这个坑(见 [nginx-spa-fallback-swallows-static](../pitfalls/nginx-spa-fallback-swallows-static.md))。详见 [decisions/previews-migrate-r2](../decisions/r2-direct-upload-v2.1.md) 和 [domains/sprite-previews](../domains/sprite-previews.md)。
+
+**public/gen/ 路径 — 公开版生图中转**
+
+公开版生图成功后,后端把图片 PUT 到 `public/gen/<uuid>.png`,浏览器从 `${PUBLIC_R2_PUBLIC_BASE}/${key}` 拉图,绕开 jdc 5 Mbps 上行带宽。配置来自 `apps/api-public/src/domain/gen/r2-config.ts`,driver 在 `apps/api-public/src/drivers/r2.ts`(与主线 `apps/api/src/drivers/storage/r2.ts` 逻辑相同,独立复制)。
+
+公开版专用 env:
+
+| env | 示例 | 说明 |
+|---|---|---|
+| `PUBLIC_R2_BUCKET` | `inkast-storage` | bucket 名 |
+| `PUBLIC_R2_PUBLIC_BASE` | `https://static.124213.xyz` | 不带尾斜杠 |
+| `PUBLIC_R2_KEY_PREFIX` | `public/gen/` | 末尾带斜杠,默认即 `public/gen/` |
+
+凭据复用主线同一套 `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`。R2Config 三项 env 加凭据全齐才 `enabled = true`;缺任一项 fallback 返 b64,本地 dev 友好。详见 [domains/public-image-gen](../domains/public-image-gen.md)。
+
 ## 限制与注意
 
 - **不做幂等覆盖检查**(没用 `IfNoneMatch: '*'`)——plugin_tasks.id 是 PK,同 task_id 不会重生图,所以幂等性由上游保证
 - **bucket 归属**:R2 token `inkast-rw` scope 两个 bucket(`snap-ub-ai-variants` + `inkast-storage`),snap-ub 那个 token 不动。**inkast 写 snap-ub bucket 是君子约定路径前缀隔离**——token 上没有强制
+- **inkast-storage 内三条路径**(`previews/` / `public/gen/` / `aiVariants/`)同样靠命名约定隔离,token 无前缀强制
 - **公网 URL 公开**:UUID 做 key,128 bit 不可枚举猜不到。但有 URL 就能下载,客户方应保护 URL 不外泄
 - **凭据加固**:env 文件权限 600,只 root 可读
 
 ## 关联
 
-- [[r2-direct-upload-v2.1]] — 为什么 inkast 直传不让客户兜底
-- [[plugin-channel]] — Plugin 通道(v2.1 改造的入口)
-- [[plugin-overlay-loader]] — imageStorage 字段在 plugin overlay schema 里
-- [[crypto-utils]] — 凭据加密只用于 SQLite provider key,R2 凭据走 env
+- [r2-direct-upload-v2.1](../decisions/r2-direct-upload-v2.1.md) — 为什么 inkast 直传不让客户兜底
+- [plugin-channel](../domains/plugin-channel.md) — Plugin 通道(v2.1 改造的入口)
+- [plugin-overlay-loader](../shared/plugin-overlay-loader.md) — imageStorage 字段在 plugin overlay schema 里
+- [crypto-utils](../shared/crypto-utils.md) — 凭据加密只用于 SQLite provider key,R2 凭据走 env
+- [domains/public-image-gen](../domains/public-image-gen.md) — 公开版生图中转(R2 enabled/disabled 两路)
+- [domains/sprite-previews](../domains/sprite-previews.md) — sprite 预览图(存于 previews/ 路径)
+- [pitfalls/nginx-spa-fallback-swallows-static](../pitfalls/nginx-spa-fallback-swallows-static.md) — 迁 R2 解决 nginx 把静态图兜底成 html 的根因

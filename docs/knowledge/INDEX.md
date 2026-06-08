@@ -4,6 +4,8 @@
 
 **技术栈**: pnpm monorepo · Hono + better-sqlite3(后端) · Vite + React 18 + Tailwind v4 + shadcn/ui(前端) · @anthropic-ai/claude-agent-sdk(LLM 默认通道) · openai SDK(图像生成 + 参考图) · sharp(JPEG transcode + cover-fit resize) · zod(plugin overlay schema 校验)
 
+> **两套部署**:① 主线 inkast(本地优先 BYOK,Web UI + Plugin 通道) ② **公开版(apps/api-public + apps/web-public)** —— 多用户平台:Linux.do OAuth · 余额 saga · 充值外挂 · 透明代理/兜底生图 · 限流 · IndexedDB 本地存。新人先读 [architecture-overview](domains/architecture-overview.md)(主线)与 [public-edition-overview](domains/public-edition-overview.md)(公开版)。
+
 <!-- codewise-docs:start -->
 ## 项目文档导航
 
@@ -28,7 +30,7 @@
 
 inkast 所有对外调用入口的快速地图。**完整签名以代码为准**——本表只列"名 + 职责 + 入口位置"。
 
-### REST endpoints(20 个 + 1 个 admin JSON 接口)
+### REST endpoints(主线 Web UI + Plugin + admin + 公开版)
 
 **Web UI 通道(`/api/*`,本机访问)**:
 
@@ -67,6 +69,22 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 **详情**: [async-job-pipeline](domains/async-job-pipeline.md) · [provider-pool](domains/provider-pool.md) · [image-generation](domains/image-generation.md) · [prompt-engine](domains/prompt-engine.md) · [reference-image](domains/reference-image.md) · **[plugin-channel](domains/plugin-channel.md)** · **[rewrite-chain](domains/rewrite-chain.md)** · **[post-review-edit](domains/post-review-edit.md)** · **[admin-dashboard](domains/admin-dashboard.md)** · **[plugin-gallery](domains/plugin-gallery.md)**
 
+**公开版通道(`/api/*`,apps/api-public 独立进程,公网 inkast.124213.xyz)**:
+
+| 方法 | 路径 | 职责 | 入口 |
+| --- | --- | --- | --- |
+| GET | `/api/health` | 健康检查 | `apps/api-public/src/server/app.ts` |
+| GET | `/api/auth/linuxdo/authorize` | Linux.do OAuth 授权跳转(state CSRF + PKCE S256) | `apps/api-public/src/server/routes/auth.ts` |
+| GET | `/api/auth/linuxdo/callback` | OAuth 回调,换 token + upsertUser + 建 session | `apps/api-public/src/server/routes/auth.ts` |
+| POST | `/api/auth/logout` | 删 session + 清 cookie | `apps/api-public/src/server/routes/auth.ts` |
+| GET | `/api/auth/me` | 当前用户 + 余额 | `apps/api-public/src/server/routes/auth.ts` |
+| POST | `/api/gen/passthrough` | 透明代理生图(用户自带 key,cost=0,凭据零持久化) | `apps/api-public/src/server/routes/gen.ts` |
+| POST | `/api/gen/builtin` | 兜底生图(平台 key,saga 扣余额 + 失败退款) | `apps/api-public/src/server/routes/gen.ts` |
+| POST | `/api/prompt/draft` | 散文→JSON prompt(透明代理或 builtin) | `apps/api-public/src/server/routes/prompt.ts` |
+| POST | `/api/topups/invite/redeem` | 邀请码兑换余额(tryClaim 原子) | `apps/api-public/src/topups/invite-code/routes.ts` |
+
+**详情(公开版)**: [public-edition-overview](domains/public-edition-overview.md) · [public-auth](domains/public-auth.md) · [public-image-gen](domains/public-image-gen.md) · [public-prompt-engine](domains/public-prompt-engine.md) · [public-topup](domains/public-topup.md) · [public-rate-limit](domains/public-rate-limit.md)
+
 ### 契约文件(前后端共享类型)
 
 | 文件 | 类型 | 关键导出 |
@@ -78,7 +96,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 
 **详情**: [shared-contracts](shared/shared-contracts.md) · [plugin-overlay-loader](shared/plugin-overlay-loader.md)
 
-### 数据库 Schema(5 表)
+### 数据库 Schema(主线 6 表)
 
 `apps/api/src/storage/schema.sql` —— 启动时幂等 `CREATE TABLE IF NOT EXISTS` + `db.ts migrate()` ALTER 补列:
 
@@ -92,6 +110,23 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | **`plugin_gallery_items`** | **Plugin 通道长期作品归档**(v2 引入):`markTaskSucceeded(r2)` 同事务双写,**不参与 GC**;按 `(created_at DESC, id DESC)` 索引,keyset cursor 分页;b64 模式不入此表 |
 
 **详情**: [better-sqlite3](integrations/better-sqlite3.md) · [async-job-pipeline](domains/async-job-pipeline.md) · [plugin-channel](domains/plugin-channel.md) · [provider-capability-table-split](decisions/provider-capability-table-split.md)
+
+### 公开版数据库 Schema(apps/api-public,8 表)
+
+`apps/api-public/src/storage/schema.sql` + `topups/*/schema.sql` —— 独立 DB `inkast-public.sqlite`(`data-public/`):
+
+| 表 | 用途 |
+| --- | --- |
+| `users` | Linux.do 用户(`linux_do_id` 唯一 + status active/banned) |
+| `sessions` | 会话 token(32B hex,30 天 TTL,httpOnly cookie) |
+| `oauth_states` | OAuth state + PKCE verifier(10min TTL,一次性消费防重放) |
+| `user_balance` | 用户余额(单位"次",每用户 1 行,better-sqlite3 事务原子) |
+| `balance_ledger` | 余额流水(`type` 开放字符串,`delta` 正负,`balance_after` 冗余可对账) |
+| `gen_tasks` | 生图任务元数据(channel passthrough/builtin,凭据绝不入) |
+| `rate_limit` | 限流计数(scope PK,固定窗口) |
+| `invite_codes` | 邀请码(topups 外挂表,tryClaim 原子标记防并发) |
+
+**详情**: [public-balance](domains/public-balance.md) · [public-auth](domains/public-auth.md) · [public-topup](domains/public-topup.md) · [public-image-gen](domains/public-image-gen.md) · [public-rate-limit](domains/public-rate-limit.md)
 
 ### Plugin Overlay 加载(运行时)
 
@@ -111,9 +146,9 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | Bucket | 自定义域名 | 用途 |
 | --- | --- | --- |
 | `snap-ub-ai-variants` | `aivariants.124213.xyz` | snapub plugin 回写图(inkast 写 `aiVariants/ink-<uuid>.png`) |
-| `inkast-storage` | (未绑域名) | inkast 平台自用预留 |
+| `inkast-storage` | `static.124213.xyz` | (1) `previews/` sprite 预览图(主线+公开版同步);(2) `public/gen/` 公开版生图中转 |
 
-**详情**: [cloudflare-r2](integrations/cloudflare-r2.md) · cc 仓库 `servers/cloudflare-r2/README.md`
+**详情**: [cloudflare-r2](integrations/cloudflare-r2.md) · [previews-migrate-r2](decisions/previews-migrate-r2.md) · [public-image-gen](domains/public-image-gen.md) · cc 仓库 `servers/cloudflare-r2/README.md`
 <!-- codewise-interfaces:end -->
 
 ---
@@ -139,6 +174,19 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [image-generation](domains/image-generation.md) | 生图端到端(driver → 落盘 → 入库) |
 | [gallery](domains/gallery.md) | [作品] Tab 历史 · 搜索+type filter + 详情弹窗(readOnly 字段编辑器) |
 
+### 公开版(apps/api-public + apps/web-public)
+
+| 条目 | 一句话 |
+| --- | --- |
+| [public-edition-overview](domains/public-edition-overview.md) | **公开版整体架构 + 数据流全景** · 公开版新人第一站 |
+| [public-auth](domains/public-auth.md) | Linux.do OAuth 登录 + session(PKCE + state CSRF + httpOnly cookie) |
+| [public-balance](domains/public-balance.md) | 余额系统 + ledger 流水(better-sqlite3 事务原子 debit/credit) |
+| [public-topup](domains/public-topup.md) | 充值外挂架构 + 邀请码(topups 插件化,tryClaim 防并发) |
+| [public-image-gen](domains/public-image-gen.md) | 生图双通道(透明代理 cost=0 / 兜底 saga 扣费) + R2 中转 |
+| [public-prompt-engine](domains/public-prompt-engine.md) | 公开版散文→JSON 引擎(imagegen 蒸馏 120 行) |
+| [public-rate-limit](domains/public-rate-limit.md) | 限流(固定窗口 + IP/user 双维度) |
+| [public-web](domains/public-web.md) | 公开版前端(fork 主线 + IndexedDB 本地存 + 登录入口) |
+
 ## 按技术层
 
 | 条目 | 一句话 |
@@ -154,6 +202,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [paper-theme-tokens](shared/paper-theme-tokens.md) | paper.css token + globals 全站效果(**视觉真理源**) |
 | [cn-util](shared/cn-util.md) | clsx + tailwind-merge 的 cn() helper |
 | [crypto-utils](shared/crypto-utils.md) | AES-256-GCM 凭据加密 + master.key |
+| [public-idb-storage](shared/public-idb-storage.md) | **公开版前端 IndexedDB 本地存储**(4 个独立 dbName,idb-keyval) |
 
 ## 设计决策
 
@@ -172,6 +221,19 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | **[style-as-fourth-anchor](decisions/style-as-fourth-anchor.md)** | **v2.30**:style 升级为第四个硬锚定(identity+character+palette+style),force-prepend 兜底防 LLM 翻译/近义改写 |
 | **[palette-anchors-llm-not-keyword](decisions/palette-anchors-llm-not-keyword.md)** | **v2.31**:palette_anchors 用 R1 system prompt 加 style-aware 语义规则,**否决**关键词检测兜底(给 LLM 语义判断空间) |
 | **[plugin-gallery-long-term-archive](decisions/plugin-gallery-long-term-archive.md)** | **v2.34**:plugin gallery 拆独立成品表 `plugin_gallery_items`,`markTaskSucceeded(r2)` 同事务双写,跟 `plugin_tasks` 24h GC 解耦 |
+
+### 公开版(apps/api-public + apps/web-public)
+
+| 条目 | 一句话 |
+| --- | --- |
+| **[public-edition-separate-app](decisions/public-edition-separate-app.md)** | **公开版做独立 app,不做 plugin overlay / 模式开关**(主线本地优先宪法保持纯净) |
+| **[passthrough-vs-builtin-gen](decisions/passthrough-vs-builtin-gen.md)** | **生图二选一:透明代理(用户 key)vs 兜底(平台 key)**;CORS 下"零持久化"非"不出本机" |
+| **[balance-saga](decisions/balance-saga.md)** | **builtin 生图用 saga**(先扣后退),失败 credit 补偿 + ledger 双笔留痕 |
+| **[topup-plugin-architecture](decisions/topup-plugin-architecture.md)** | **充值通道插件化,核心只暴露 credit()**(新通道加目录 + 一行 register) |
+| **[ledger-open-string-type](decisions/ledger-open-string-type.md)** | **balance_ledger.type 用开放字符串非 enum**(新通道免 schema migration) |
+| **[ldc-deferred-invite-first](decisions/ldc-deferred-invite-first.md)** | **LDC 推迟 Phase 2,邀请码先行**(快速验证产品形态) |
+| **[public-idb-over-backend](decisions/public-idb-over-backend.md)** | **公开版前端用 IndexedDB 而非后端存储**(多用户 stateless,key 留客户端) |
+| **[responsive-deferred](decisions/responsive-deferred.md)** | **响应式做了又整体 revert**,改为以后单独做 mobile 版(演变记录) |
 
 ### 架构 / 接口
 
@@ -205,7 +267,9 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [no-main-ui-backend-selector](decisions/no-main-ui-backend-selector.md) | 主 UI 不放 LLM 选择器,只显示"via X"标签 |
 | [probe-models-endpoint](decisions/probe-models-endpoint.md) | `POST /api/probe-models` + Combobox 替代手填 |
 | [llm-driver-knobs](decisions/llm-driver-knobs.md) | 5 个 LLM 旋钮:model/effort/thinking/fallbackModel/maxTurns |
-| **[codex-header-via-flag-not-freeform](decisions/codex-header-via-flag-not-freeform.md)** | **v2.33**:Codex CLI header 通过 `extras.useCodexHeader: bool` 暴露,后端常量化 headers,**否决** free-form headers JSON |
+| **[codex-header-via-flag-not-freeform](decisions/codex-header-via-flag-not-freeform.md)** | **v2.33**:Codex CLI header 通过 `extras.useCodexHeader: bool` 暴露,后端常量化 headers,**否决** free-form headers JSON(v2.37 起 image + LLM driver 共用 `drivers/codex-header.ts`) |
+| **[multi-channel-quota-exemption](decisions/multi-channel-quota-exemption.md)** | **多渠道聚合 provider 的 quota 豁免**(`extras.exemptAutoDisable`,单子渠道满不熔断整条,fall through retry) |
+| **[fallover-pool-db-order](decisions/fallover-pool-db-order.md)** | **v2.37**:LLM fallover 池序以 DB priority 为准,env 不再重排(Web 拖拽所见即所得) |
 | [sqlite-over-keychain](decisions/sqlite-over-keychain.md) | 跨平台 SQLite 凭据 vs macOS Keychain |
 
 ### UI / 主题 / 数据
@@ -233,6 +297,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [edge-to-edge-no-border-prompts](decisions/edge-to-edge-no-border-prompts.md) | Sprite 提示词:严格边对边,无外框 |
 | [inset-zoom-on-sprite-slice](decisions/inset-zoom-on-sprite-slice.md) | Sprite 切片 4% inset 缩放 |
 | [square-sprite-cells](decisions/square-sprite-cells.md) | Sprite cells 一律 1:1 正方形 |
+| **[previews-migrate-r2](decisions/previews-migrate-r2.md)** | **Sprite 预览图迁 R2**(`static.124213.xyz`),jdc 带宽 + 公开版 SPA fallback 双动因 |
 
 ## 外部集成
 
@@ -247,7 +312,8 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [tailwind-v4](integrations/tailwind-v4.md) | Tailwind v4 CSS-first + `@theme inline` 映射 |
 | [vite-dev-proxy](integrations/vite-dev-proxy.md) | Vite dev proxy 超时(异步化后不再关键) |
 | [lucide-react](integrations/lucide-react.md) | 图标库,strokeWidth 1.5/1.75 视觉约定 |
-| **[cloudflare-r2](integrations/cloudflare-r2.md)** | **R2 对象存储 + S3 兼容 SDK**(plugin v2.1 直传) |
+| **[cloudflare-r2](integrations/cloudflare-r2.md)** | **R2 对象存储 + S3 兼容 SDK**(plugin v2.1 直传 + previews + 公开版生图中转) |
+| **[linuxdo-oauth](integrations/linuxdo-oauth.md)** | **Linux.do Connect OAuth**(Discourse OAuth2 + PKCE,公开版登录) |
 
 ## 工作流
 
@@ -255,6 +321,8 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | --- | --- |
 | [new-plugin-onboarding](workflows/new-plugin-onboarding.md) | **新客户接入 Plugin 通道**(链 docs/onboarding-new-plugin.md 完整版) |
 | [deploy-jdc](workflows/deploy-jdc.md) | **部署 inkast-api 到 jdc**(build + rsync + restart + 健康检查 + changelog 留痕,含 env 改 / DB 改不重启的边界) |
+| **[deploy-public-edition](workflows/deploy-public-edition.md)** | **部署公开版到 jdc**(api-public + web-public,systemd + nginx,含 chmod 711 / OAuth callback / R2 配置) |
+| **[add-topup-channel](workflows/add-topup-channel.md)** | **新增充值通道**(外挂模式:schema + repository + service + routes + index + 挂载,invite-code 为模板) |
 | [extend-image-mode](workflows/extend-image-mode.md) | 新增 image driver 模式(images / responses 之后再加 X) |
 | [dnd-kit-row-pattern](workflows/dnd-kit-row-pattern.md) | dnd-kit 行拖拽 + 嵌套交互标准模式 |
 | [add-sprite-preview-sheet](workflows/add-sprite-preview-sheet.md) | 新增字段 / 刷新 sprite preview sheet 流程 |
@@ -263,6 +331,16 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [update-paper-theme](workflows/update-paper-theme.md) | 改 paper token 的步骤 + 7 条自检 |
 
 ## 踩坑记录
+
+### 公开版(apps/api-public + apps/web-public)
+
+| 条目 | 一句话 |
+| --- | --- |
+| **[idb-shared-dbname-race](pitfalls/idb-shared-dbname-race.md)** | **IndexedDB 多 store 共用 dbName** → 第 2-4 个 store 从未创建，事务报 "object store was not found"——拆成 4 个独立 dbName |
+| **[nginx-spa-fallback-swallows-static](pitfalls/nginx-spa-fallback-swallows-static.md)** | **nginx SPA fallback 把缺失静态文件兜底成 index.html**，preview 图全返 text/html 404——迁 R2 绝对 URL 根治 |
+| **[root-700-blocks-nginx](pitfalls/root-700-blocks-nginx.md)** | **/root 权限 700 阻挡 nginx 访问静态文件**，新服务器部署必须 `chmod 711 /root` |
+| **[passthrough-key-in-transit](pitfalls/passthrough-key-in-transit.md)** | **透明代理 provider key 仍经 jdc 进程内存**，"不入库"≠"不出本机"——正确边界:零持久化,非零传输 |
+| **[balance-saga-orphan](pitfalls/balance-saga-orphan.md)** | **saga 非原子留孤儿账**:debit 成功后进程 crash → consume:gen 无配对 refund:gen——Phase 1 接受,对账 SQL 可查孤儿 |
 
 ### Plugin 通道 / 部署(2026-05-21 起持续)
 
@@ -288,6 +366,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | **[cf-120s-images-mode-only](pitfalls/cf-120s-images-mode-only.md)** | **CF 反代 120s 兜底 only 影响 images mode**,SSE 流式头立即返绕过——`ioll.pp.ua` 这类切到 responses+stream:true |
 | **[moderation-low-ineffective-on-resellers](pitfalls/moderation-low-ineffective-on-resellers.md)** | **moderation:"low" 对二道贩子代理无效**(2026-05-22 反转:虽对二道贩子无收益,但对未来 OpenAI 直连账号有用 + 没副作用,**默认开**;若 duck 因此挂死可回滚 1 行) |
 | **[quota-chinese-proxy-regex](pitfalls/quota-chinese-proxy-regex.md)** | **v2.32 修**:中文反代余额不足措辞多样(`预扣费/剩余额度`),quota regex 漏匹配 → auto-disable 不触发,每次提交浪费一次 attempt |
+| **[quota-multi-channel-false-positive](pitfalls/quota-multi-channel-false-positive.md)** | **多渠道聚合 provider quota 虚警**:单子渠道满被误熔断整条——`exemptAutoDisable` 豁免 + fall through retry |
 
 ### Rewrite Chain / Post-Review(2026-05-25 实测产物)
 
@@ -437,6 +516,22 @@ LLM 调用 fallover (apps/api/src/drivers/llm/with-fallover.ts):
   rewrite r1/r2/r3 + post-review LLM 都走;env primary → priority → claude-code 兜底
   invalid_json 同 backend retry-once,其它 LlmDriverError 立即跳下个
   postValidate hook 拒"合法 JSON 但业务字段空"(v2.25 修 LLM 半残 bug)
+
+────────────────────────────────────────────────────────────────────
+
+第三条通道:公开版(apps/api-public + apps/web-public,多用户平台,独立进程/独立 DB inkast-public.sqlite)
+
+公网 inkast.124213.xyz ──→ nginx ──→ api-public(:8788)
+  浏览器 ──(Linux.do OAuth: authorize→callback,PKCE + state CSRF)──→ session cookie + users 表
+  浏览器侧 provider 配置 / 生图历史 ──→ IndexedDB(4 个独立 dbName,本地存,不落后端)
+  生图二选一(前端按有无 user provider key 自动选):
+    有 key → POST /api/gen/passthrough(透明代理转发,cost=0,凭据零持久化)
+    无 key → POST /api/gen/builtin(平台 env 凭据 + saga)
+               debit consume:gen → passthroughGenerate → 成功 markSuccess / 失败 credit refund:gen
+               → uploadOrFallback(R2 inkast-storage/public/gen/ 或 b64 fallback)
+  充值:POST /api/topups/invite/redeem(tryClaim 原子标记 + credit topup:invite)
+  限流:固定窗口 IP/user 双维度(gen / prompt / redeem)
+  充值外挂(topups/*):每通道自带 schema+repository+service+routes+index,核心只暴露 credit()
 ```
 
 ---
@@ -445,10 +540,10 @@ LLM 调用 fallover (apps/api/src/drivers/llm/with-fallover.ts):
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `3b45b4af16ae9eb79b81d4c18acdc00ecfb1329c`
-- **synced_at**: `2026-05-26T22:13:25+08:00`
+- **baseline_commit**: `5e313cc0955389646999ca1bb2c2660b0a4a49da`
+- **synced_at**: `2026-06-09T01:18:50+08:00`
 - **scope_root**: `.`
-- **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/`
+- **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/, apps/api-public/src/, apps/web-public/src/`
 
 > 此区域由 codewise 自动维护,**请勿手动编辑**。增量更新基于 `baseline_commit` 计算 git 差量、基于 `synced_at` 判定会话提取边界。`multi_codetree` 字段记录本次扫描覆盖的代码树范围,便于追溯。
 <!-- codewise-meta:end -->

@@ -57,6 +57,42 @@ GET providers (SQL: ORDER BY priority ASC, created_at ASC)
 
 attempts 数组也回传到前端 `GenerateImageResponse.driver.attempts`,UI 在 flash 里显示 fallback 链。
 
+## Quota 豁免(多渠道聚合)
+
+**2026-06 新增**。某些 provider capability 是多个上游子渠道的聚合代理(例如同一 API key 背后路由到多个计费账号)。
+
+### 常规行为 vs 豁免行为
+
+| | 常规单渠道 | 多渠道聚合(`exemptAutoDisable=true`) |
+|---|---|---|
+| 触发条件 | `quota_exhausted` | `quota_exhausted` |
+| auto-disable | 是,直到次日 06:00 北京时间 | **否**,不 auto-disable |
+| fallover | 立即 break → 切下家 | **不 break**,fall through 到 backoff retry 路径 |
+| 语义 | 当前 provider 今日额度耗尽 | 某一子渠道满,下次 retry 可能命中未满子渠道 |
+| 失败条件 | 即时 fallover | retry 预算耗尽(`retryLimit`)才 fallover |
+
+### 配置
+
+在 provider capability 的 `extras` 字段设 `exemptAutoDisable: true`。通过 Web UI provider 配置弹窗的 extras JSON 编辑器写入。
+
+### 代码位置
+
+`apps/api/src/drivers/image/openai-compatible.ts` `quota_exhausted` 分支:
+
+```
+if (classified.code === "quota_exhausted") {
+  if (!capability.extras?.exemptAutoDisable) {
+    markCapabilityAutoDisabledUntilNext6am(...)
+    break;   // 常规:立即 fallover
+  }
+  // 豁免:打日志,fall through → backoff + retry 同一 provider
+}
+```
+
+### 注意
+
+`quota_exhausted` 豁免不影响 `moderation` / `auth` / `aborted` 的硬停逻辑——那些错误永远不重试同一 provider。
+
 ## bypassModeration 开关
 
 `generate-image` 路由接受 `bypassModeration: true`(目前前端没暴露 UI)。这个开关明确**不该轻易给用户**——防止把池子用成绕审工具。要做时需要弹个二次确认对话框。
@@ -90,3 +126,6 @@ provider 池的优先级**就是顺序** —— UI 拖动到顶 = 该 kind 的�
 - [image-mode-coexistence](../decisions/image-mode-coexistence.md) — image extras.mode 字段
 - [probe-models-endpoint](../decisions/probe-models-endpoint.md) — 模型探测
 - [crypto-utils](../shared/crypto-utils.md) — 凭据加密细节
+- [multi-channel-quota-exemption](../decisions/multi-channel-quota-exemption.md) — 豁免设计决策
+- [quota-multi-channel-false-positive](../pitfalls/quota-multi-channel-false-positive.md) — 聚合代理 quota 信号的误判风险
+- [per-capability-retry-budget](../decisions/per-capability-retry-budget.md) — provider retry 可在 Web UI 单独配
