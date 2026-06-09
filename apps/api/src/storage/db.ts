@@ -46,6 +46,7 @@ function migrate(conn: Database.Database): void {
 
   addColumnIfMissing(conn, "generations", "prose", "TEXT");
   addColumnIfMissing(conn, "generations", "ai_filled_fields", "TEXT");
+  addColumnIfMissing(conn, "generations", "image_url", "TEXT");
   addColumnIfMissing(conn, "jobs", "prose", "TEXT");
   addColumnIfMissing(conn, "jobs", "ai_filled_fields", "TEXT");
   addColumnIfMissing(conn, "plugin_tasks", "provider_id", "TEXT");

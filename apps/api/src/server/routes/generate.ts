@@ -84,6 +84,10 @@ generateRoutes.get("/generations/:id/image", c => {
   const id = c.req.param("id");
   const gen = getGeneration(id);
   if (!gen) throw new HTTPException(404, { message: `generation ${id} not found` });
+  // R2-enabled rows carry a public URL — bounce the browser straight to the
+  // CDN so the image bytes never traverse jdc's 5Mbps uplink. Local-only rows
+  // (dev / pre-R2 historical) fall through to the on-disk serve below.
+  if (gen.imageUrl) return c.redirect(gen.imageUrl, 302);
   try {
     const bytes = readImageBytes(gen.imagePath);
     const mime = gen.imageFormat === "jpeg" ? "image/jpeg"

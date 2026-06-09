@@ -273,6 +273,13 @@ export interface GenerationRecord {
   promptSnapshot: ImagePrompt;
   promptText: string;
   imagePath: string;
+  /**
+   * R2 public URL when the image lives on R2 (Web UI channel with R2 enabled).
+   * `null` for local-only rows (dev) and pre-R2 historical rows — the frontend
+   * keeps calling the `/api/generations/:id/image` serve endpoint either way,
+   * which 302-redirects to this URL when present and streams from disk when not.
+   */
+  imageUrl: string | null;
   imageFormat: string;
   size: string;
   quality: string;

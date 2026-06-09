@@ -27,6 +27,8 @@ import {
 } from "../../drivers/image/types.js";
 import { driveWithRewriteFallback } from "./with-rewrite.js";
 import { imagesDir } from "../../storage/runtime.js";
+import { putImage } from "../../drivers/storage/r2.js";
+import { loadWebuiR2Config, publicUrlForKey } from "./r2-config.js";
 import {
   createGeneration,
   getGeneration,
@@ -66,7 +68,7 @@ export interface GenerateOutcome {
  * End-to-end image generation:
  *   1. Build prompt text (JSON.stringify of the structured prompt)
  *   2. Drive the provider pool (image driver handles failover)
- *   3. Persist image bytes to <DATA_DIR>/images/YYYY/MM/<id>.png
+ *   3. Persist image bytes — R2 (pure, no local write) when configured, else local disk
  *   4. Insert a generations row
  *
  * Path layout matches gpt-image-canvas conventions so a future cloud-sync
@@ -114,17 +116,13 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
       `[generate]   ⚠ provider returned ${actualFormat} despite request for ${input.format}`,
     );
   }
-  const { relativePath, absolutePath } = imagePathFor(actualFormat);
-  const dir = absolutePath.slice(0, absolutePath.lastIndexOf("/"));
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const writeStart = Date.now();
-  await writeFile(absolutePath, bytes);
-  console.log(`[generate]   ✓ wrote ${relativePath} in ${Date.now() - writeStart}ms`);
+  const { imagePath, imageUrl } = await persistImage(bytes, actualFormat);
 
   const generation = createGeneration({
     promptSnapshot: input.prompt,
     promptText,
-    imagePath: relativePath,
+    imagePath,
+    imageUrl,
     imageFormat: actualFormat,
     size: input.size ?? "1024x1024",
     quality: input.quality ?? "high",
@@ -191,7 +189,11 @@ async function resolveReferenceImage(
     if (!gen) {
       throw new Error(`reference generation not found: ${ref.generationId}`);
     }
-    raw = readImageBytes(gen.imagePath);
+    // Pure-R2 rows have no local file — pull the bytes back from the CDN.
+    // Local-only rows (dev / pre-R2 historical) still read from disk.
+    raw = gen.imageUrl
+      ? await fetchImageBytes(gen.imageUrl)
+      : readImageBytes(gen.imagePath);
   } else {
     raw = Buffer.from(ref.dataBase64, "base64");
   }
@@ -224,6 +226,50 @@ async function normalizeReferenceImage(
     mimeType: "image/webp",
     filename: "reference.webp",
   };
+}
+
+/**
+ * 持久化生成的图片字节,返回 { imagePath, imageUrl }。
+ *
+ * R2 enabled(生产 jdc,凭据齐)→ 纯 R2:PUT 到 <bucket>/<prefix><uuid>.<ext>,
+ *   image_path 存 R2 key、image_url 存公开 URL,**不写本地磁盘**。上传失败抛
+ *   ImageGenError(对齐 plugin 通道 r2_upload_failed 语义),该次生图失败。
+ * R2 disabled(本地 dev / 未配凭据)→ 退回写本地 <DATA_DIR>/images/YYYY/MM/<uuid>.<ext>,
+ *   image_path 存相对路径、image_url 为 null。
+ */
+async function persistImage(
+  bytes: Buffer,
+  format: ImageFormat,
+): Promise<{ imagePath: string; imageUrl: string | null }> {
+  const cfg = loadWebuiR2Config();
+  if (cfg.enabled) {
+    const key = `${cfg.keyPrefix}${cryptoRandomId()}.${format}`;
+    const uploadStart = Date.now();
+    try {
+      await putImage({ bucket: cfg.bucket, key, body: bytes, contentType: `image/${format}` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new ImageGenError("unknown", `R2 upload failed: ${msg}`);
+    }
+    console.log(`[generate]   ✓ uploaded R2 ${key} in ${Date.now() - uploadStart}ms`);
+    return { imagePath: key, imageUrl: publicUrlForKey(key) };
+  }
+  const { relativePath, absolutePath } = imagePathFor(format);
+  const dir = absolutePath.slice(0, absolutePath.lastIndexOf("/"));
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const writeStart = Date.now();
+  await writeFile(absolutePath, bytes);
+  console.log(`[generate]   ✓ wrote ${relativePath} in ${Date.now() - writeStart}ms`);
+  return { imagePath: relativePath, imageUrl: null };
+}
+
+/** Fetch reference-image bytes back from R2/CDN (pure-R2 rows have no local file). */
+async function fetchImageBytes(url: string): Promise<Buffer> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`failed to fetch reference image ${url}: HTTP ${res.status}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
 }
 
 export function readImageBytes(relativePath: string): Buffer {
