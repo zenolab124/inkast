@@ -21,7 +21,7 @@
        │
        ▼
   domain/generate `resolveReferenceImage(ref)`:
-       ├── kind="generation" → getGeneration(id) → readImageBytes(imagePath) → Buffer
+       ├── kind="generation" → getGeneration(id) → image_url 有则 fetch CDN、否则 readImageBytes → Buffer
        └── kind="upload"     → Buffer.from(dataBase64, "base64")
        │
        ▼ driver `ImageGenInput.referenceImage = {buffer, mimeType, filename}`
@@ -47,7 +47,7 @@
 
 ## 数据流要点
 
-- **Gallery kind 不上传图**:前端只传 `generationId`,后端从磁盘读 → 省带宽 + 验证图存在
+- **Gallery kind 不上传图**:前端只传 `generationId`,后端解析 —— 纯 R2 row(有 `image_url`)→ `fetch` CDN 拉字节,本地 row → 磁盘读。省前端带宽 + 验证图存在。纯 R2 下依赖 jdc 能出站访问 `static.124213.xyz`(生产链路已验证可达)
 - **Upload kind 走 base64 in JSON body**:最大 8 MB(前端检查),没用 multipart form-data —— 跟现有 JSON API 风格一致
 - **图片格式自动识别 mimeType**:png/jpeg/webp 都行,driver toFile 用扩展名 hint(`reference.png` / `.jpg` / `.webp`)
 
@@ -67,3 +67,4 @@
 - [sprite-previews](sprite-previews.md) — 主要消费方
 - [image-generation](image-generation.md) — driver 的端到端
 - [openai-sdk-images](../integrations/openai-sdk-images.md) — SDK `client.images.edit` 用法
+- [webui-channel-pure-r2](../decisions/webui-channel-pure-r2.md) — 纯 R2 后 generation 参考图改 fetch CDN

@@ -41,7 +41,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | POST | `/api/draft-prompt` | 散文 → 结构化 JSON prompt(LLM 驱动) | `apps/api/src/server/routes/prompt.ts` |
 | POST | `/api/generate-image` | **同步**生图;前端已不调用,留作兜底 | `apps/api/src/server/routes/generate.ts` |
 | GET | `/api/generations` | 历史列表(默认 100,可 `?limit=`) | `apps/api/src/server/routes/generate.ts` |
-| GET | `/api/generations/:id/image` | 返图片字节(`image/png` + 长缓存) | `apps/api/src/server/routes/generate.ts` |
+| GET | `/api/generations/:id/image` | 有 image_url 则 **302 跳 R2 CDN**,否则返本地字节(dev/pre-R2) | `apps/api/src/server/routes/generate.ts` |
 | GET | `/api/providers` | provider 列表(keyMasked,内含 capabilities 数组) | `apps/api/src/server/routes/providers.ts` |
 | POST | `/api/providers` | 创建 provider(加密入库,接 capabilities 数组) | `apps/api/src/server/routes/providers.ts` |
 | PATCH | `/api/providers/:id` | 编辑 provider(apiKey 留空不变;capabilities 可 replace) | `apps/api/src/server/routes/providers.ts` |
@@ -171,7 +171,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [i18n](domains/i18n.md) | 中英双语 + LLM 输出语言切换 |
 | [prompt-engine](domains/prompt-engine.md) | 散文 → JSON prompt 引擎(imagegen 方法论的实现) |
 | [provider-pool](domains/provider-pool.md) | OpenAI 兼容 provider 池 + 故障切换语义 |
-| [image-generation](domains/image-generation.md) | 生图端到端(driver → 落盘 → 入库) |
+| [image-generation](domains/image-generation.md) | 生图端到端(driver → 纯 R2 持久化 → 入库) |
 | [gallery](domains/gallery.md) | [作品] Tab 历史 · 搜索+type filter + 详情弹窗(readOnly 字段编辑器) |
 
 ### 公开版(apps/api-public + apps/web-public)
@@ -214,6 +214,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | [v2-async-callback-protocol](decisions/v2-async-callback-protocol.md) | **Plugin 通道走 v2 异步 callback,不是 v1 同步**(60s 云函数硬约束 + 实测 533s 超长任务) |
 | [plugin-channel-isolation](decisions/plugin-channel-isolation.md) | **Plugin 通道与 Web UI 完全分离**(独立 plugin-async + plugin_tasks 表) |
 | **[r2-direct-upload-v2.1](decisions/r2-direct-upload-v2.1.md)** | **v2.1 R2 直传,callback 改返 image_url**(JDC 上行省 95% + uniCloud 出站归零) |
+| **[webui-channel-pure-r2](decisions/webui-channel-pure-r2.md)** | **Web UI 通道生图改纯 R2**(v2.43,不留本地,302 跳 CDN,对齐 plugin 通道) |
 | **[per-capability-retry-budget](decisions/per-capability-retry-budget.md)** | **每个 image provider 单独配 retry 次数**(0-5,默认 1) |
 | **[three-anchor-design](decisions/three-anchor-design.md)** | **Rewrite chain 三锚定演进**(body+palette+archetype),从 v2.20 五字段 → v2.21 两字段砍过头 → v2.22 加 archetype 折中 |
 | **[pipeline-policy](decisions/pipeline-policy.md)** | **调用方控制 rewrite chain + post-review 行为**(skipOriginal/maxRound/postReviewEdit,in-memory 不入库) |
@@ -321,6 +322,7 @@ inkast 所有对外调用入口的快速地图。**完整签名以代码为准**
 | --- | --- |
 | [new-plugin-onboarding](workflows/new-plugin-onboarding.md) | **新客户接入 Plugin 通道**(链 docs/onboarding-new-plugin.md 完整版) |
 | [deploy-jdc](workflows/deploy-jdc.md) | **部署 inkast-api 到 jdc**(build + rsync + restart + 健康检查 + changelog 留痕,含 env 改 / DB 改不重启的边界) |
+| [migrate-webui-images-to-r2](workflows/migrate-webui-images-to-r2.md) | **Web UI 存量图迁 R2**(部署 → dry-run → apply → verify → 守卫删本地,无停机) |
 | **[deploy-public-edition](workflows/deploy-public-edition.md)** | **部署公开版到 jdc**(api-public + web-public,systemd + nginx,含 chmod 711 / OAuth callback / R2 配置) |
 | **[add-topup-channel](workflows/add-topup-channel.md)** | **新增充值通道**(外挂模式:schema + repository + service + routes + index + 挂载,invite-code 为模板) |
 | [extend-image-mode](workflows/extend-image-mode.md) | 新增 image driver 模式(images / responses 之后再加 X) |
@@ -540,8 +542,8 @@ LLM 调用 fallover (apps/api/src/drivers/llm/with-fallover.ts):
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `5e313cc0955389646999ca1bb2c2660b0a4a49da`
-- **synced_at**: `2026-06-09T01:18:50+08:00`
+- **baseline_commit**: `e4b65f7c4a869b35bb628cc5a3546af7a8211a7d`
+- **synced_at**: `2026-06-09T10:50:43+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/, apps/api-public/src/, apps/web-public/src/`
 

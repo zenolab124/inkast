@@ -1,6 +1,6 @@
 # 生图端到端
 
-从用户点击"生图"到图落盘 + 入库的完整流水。
+从用户点击"生图"到图持久化(R2 / 本地)+ 入库的完整流水。
 
 ## 架构
 
@@ -20,11 +20,13 @@ domain/generate/index.ts  · generate()
     │     · for-of 走池,内部 new OpenAI(...) → client.images.generate({...})
     │     · 返 ImageGenOutcome { imageB64, format, providerId, attempts }
     │
-    │  3. 路径:imagePathFor("png") → YYYY/MM/<uuid>.png  (UTC)
-    │     · mkdirSync 递归
-    │     · writeFile(absolutePath, Buffer.from(b64, 'base64'))
+    │  3. persistImage(bytes, format)  ← 配置驱动(R2 enabled / 本地降级)
+    │     · R2 enabled(凭据齐,生产):PUT inkast-storage/webui/<uuid>.<ext>,
+    │       image_path 存 R2 key、image_url 存公开 URL,不写本地
+    │     · R2 disabled(dev 无凭据):writeFile <DATA_DIR>/images/YYYY/MM/<uuid>.<ext>,
+    │       image_path 存相对路径、image_url=null
     │
-    │  4. createGeneration({...}) → INSERT INTO generations
+    │  4. createGeneration({...imagePath, imageUrl}) → INSERT INTO generations
     │
     ▼
 { generation: GenerationRecord, driver: { providerName, providerId, attempts, totalDurationMs } }
@@ -38,27 +40,34 @@ domain/generate/index.ts  · generate()
 | `apps/api/src/domain/generate/index.ts` | 编排 driver + 落盘 + 入库 |
 | `apps/api/src/drivers/image/openai-compatible.ts` | 池 walk + openai SDK 调用 |
 | `apps/api/src/storage/generations.ts` | generations 表 CRUD |
-| `apps/api/src/storage/runtime.ts` | `imagesDir()` 解析 `<DATA_DIR>/images/` |
+| `apps/api/src/domain/generate/r2-config.ts` | Web UI 通道 R2 配置(`enabled = 凭据齐`,bucket/base/prefix 带默认值) |
+| `apps/api/src/storage/runtime.ts` | `imagesDir()` 解析 `<DATA_DIR>/images/`(仅 R2 disabled 降级时用) |
 | `apps/web/src/features/gallery/api.ts` | 前端 client + `generationImageUrl(id)` |
 
-## 落盘路径策略
+## 图片持久化:纯 R2 / 本地降级(v2.43 起)
 
-```
-<DATA_DIR>/images/YYYY/MM/<uuid>.png
-```
+`persistImage(bytes, format)` 配置驱动二选一,开关是 `loadWebuiR2Config().enabled`:
 
-- `<DATA_DIR>`: 默认 `<repo>/data`(开发),可由 `INKAST_DATA_DIR` 环境变量覆盖
-- `YYYY/MM` 按 UTC 计算
-- 文件名用 `crypto.randomUUID()`,**不复用 generation row id**——因为图先写,row 后建,id 顺序倒过来会冲突
+| | R2 enabled(生产 jdc) | R2 disabled(本地 dev) |
+| --- | --- | --- |
+| 触发条件 | `R2_*` 凭据三件齐(bucket/base 有默认值,实质只看凭据) | 缺凭据 |
+| 落点 | PUT `inkast-storage/webui/<uuid>.<ext>` | `<DATA_DIR>/images/YYYY/MM/<uuid>.<ext>` |
+| `image_path` | R2 key(`webui/<uuid>.<ext>`) | 本地相对路径(`YYYY/MM`,UTC) |
+| `image_url` | 公开 URL `https://static.124213.xyz/webui/...` | `null` |
+| 失败 | 抛 `ImageGenError`(该次生图失败,**无本地兜底**) | — |
 
-## 图片 URL
+- 文件名用 `crypto.randomUUID()`,**不复用 generation row id**——图先持久化,row 后建,id 顺序倒过来会冲突
+- bucket/base/prefix 默认 `inkast-storage` / `static.124213.xyz` / `webui/`,可 `INKAST_WEBUI_R2_*` env 覆盖,凭据复用 `R2_*`(与 plugin 通道同一套)
+- 为什么纯 R2 不留本地、为什么 R2 挂就 fail,见 [webui-channel-pure-r2](../decisions/webui-channel-pure-r2.md)
 
-`GET /api/generations/:id/image` 直接返图片字节(不是 base64),响应头:
+## 图片 URL:302 重定向
 
-- `Content-Type: image/png|jpeg|webp`(按 `imageFormat` 字段)
-- `Cache-Control: private, max-age=31536000, immutable`(uuid 文件名保证不变,可长缓存)
+`GET /api/generations/:id/image` —— **前端始终调这个端点**(`generationImageUrl(id)`),后端按 row 状态二选一:
 
-URL 路径用 `sanitizeRelativePath()` 防止 `..` 越界。
+- `image_url` 有值(纯 R2)→ `302` 重定向到 CDN,浏览器直连 `static.124213.xyz`,**图字节不过 jdc 上行**
+- `image_url` 为 null(dev / pre-R2 历史)→ 读本地字节返回(`Content-Type` 按 `imageFormat`,`Cache-Control: immutable`),路径用 `sanitizeRelativePath()` 防 `..` 越界
+
+302 方案让前端零改动,且存量迁移期间平滑兼容(未迁的走本地、已迁的走 CDN),见 [migrate-webui-images-to-r2](../workflows/migrate-webui-images-to-r2.md)。
 
 ## 默认参数
 
@@ -122,3 +131,6 @@ provider.extras.mode = "images"    → callProvider() = client.images.generate /
 - [sdk-output-format-missing](../pitfalls/sdk-output-format-missing.md) — output_format 字段的坑
 - [browser-idle-timeout-long-http](../pitfalls/browser-idle-timeout-long-http.md) — 推动异步化的根因
 - [shared-contracts](../shared/shared-contracts.md) — `GenerateImageRequest` / `JobRecord` / `ReferenceImage` 字段
+- [webui-channel-pure-r2](../decisions/webui-channel-pure-r2.md) — 生图存储为什么改纯 R2
+- [cloudflare-r2](../integrations/cloudflare-r2.md) — R2 driver + webui/ 路径
+- [migrate-webui-images-to-r2](../workflows/migrate-webui-images-to-r2.md) — 存量迁移流程

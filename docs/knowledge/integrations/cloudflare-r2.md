@@ -1,6 +1,6 @@
 # Cloudflare R2(对象存储)
 
-S3 兼容对象存储,Plugin 通道 v2.1 用它做"生图直传"——inkast 出图后 PUT R2,callback 给客户方 URL 而不是 b64。
+S3 兼容对象存储,三套消费方共用:Plugin 通道 v2.1 生图直传(callback 给客户方 URL)、公开版生图中转、**主线 Web UI 通道纯 R2(v2.43)**。统一模式:inkast 出图后 PUT R2,下游拿公网 URL 而非 b64。
 
 ## 选型原因
 
@@ -70,6 +70,10 @@ bucket:`inkast-storage`,自定义域名:`static.124213.xyz`。bucket 内靠**路
 
 公开版生图成功后,后端把图片 PUT 到 `public/gen/<uuid>.png`,浏览器从 `${PUBLIC_R2_PUBLIC_BASE}/${key}` 拉图,绕开 jdc 5 Mbps 上行带宽。配置来自 `apps/api-public/src/domain/gen/r2-config.ts`,driver 在 `apps/api-public/src/drivers/r2.ts`(与主线 `apps/api/src/drivers/storage/r2.ts` 逻辑相同,独立复制)。
 
+**webui/ 路径 — 主线 Web UI 通道生图(v2.43)**
+
+主线 Web UI 通道(jobs/generations)生图成功后 PUT `webui/<uuid>.<ext>`,generations 表 `image_url` 存公开 URL,`/api/generations/:id/image` 端点 302 重定向到 `static.124213.xyz`(浏览器直连 CDN,图字节不过 jdc)。配置 `apps/api/src/domain/generate/r2-config.ts`:`enabled = R2 凭据齐`(jdc 已有 `R2_*`,部署即自动启用;dev 无凭据降级写本地)。bucket/base/prefix 走 `INKAST_WEBUI_R2_*` env 带默认值(`inkast-storage` / `static.124213.xyz` / `webui/`),凭据复用主线 `R2_*`。**纯 R2 不留本地,上传失败 = 该次生图失败**(无本地兜底,对齐 plugin 通道)。存量 114 张已迁移。详见 [domains/image-generation](../domains/image-generation.md)、[decisions/webui-channel-pure-r2](../decisions/webui-channel-pure-r2.md)、[workflows/migrate-webui-images-to-r2](../workflows/migrate-webui-images-to-r2.md)。
+
 公开版专用 env:
 
 | env | 示例 | 说明 |
@@ -84,7 +88,7 @@ bucket:`inkast-storage`,自定义域名:`static.124213.xyz`。bucket 内靠**路
 
 - **不做幂等覆盖检查**(没用 `IfNoneMatch: '*'`)——plugin_tasks.id 是 PK,同 task_id 不会重生图,所以幂等性由上游保证
 - **bucket 归属**:R2 token `inkast-rw` scope 两个 bucket(`snap-ub-ai-variants` + `inkast-storage`),snap-ub 那个 token 不动。**inkast 写 snap-ub bucket 是君子约定路径前缀隔离**——token 上没有强制
-- **inkast-storage 内三条路径**(`previews/` / `public/gen/` / `aiVariants/`)同样靠命名约定隔离,token 无前缀强制
+- **inkast-storage 内多条路径**(`previews/` / `public/gen/` / `webui/`)同样靠命名约定隔离,token 无前缀强制(`aiVariants/` 在 snap-ub 自己的 bucket,不在 inkast-storage)
 - **公网 URL 公开**:UUID 做 key,128 bit 不可枚举猜不到。但有 URL 就能下载,客户方应保护 URL 不外泄
 - **凭据加固**:env 文件权限 600,只 root 可读
 
@@ -96,4 +100,7 @@ bucket:`inkast-storage`,自定义域名:`static.124213.xyz`。bucket 内靠**路
 - [crypto-utils](../shared/crypto-utils.md) — 凭据加密只用于 SQLite provider key,R2 凭据走 env
 - [domains/public-image-gen](../domains/public-image-gen.md) — 公开版生图中转(R2 enabled/disabled 两路)
 - [domains/sprite-previews](../domains/sprite-previews.md) — sprite 预览图(存于 previews/ 路径)
+- [domains/image-generation](../domains/image-generation.md) — Web UI 通道生图(存于 webui/ 路径,纯 R2)
+- [decisions/webui-channel-pure-r2](../decisions/webui-channel-pure-r2.md) — Web UI 通道为什么纯 R2
+- [workflows/migrate-webui-images-to-r2](../workflows/migrate-webui-images-to-r2.md) — 存量迁移流程
 - [pitfalls/nginx-spa-fallback-swallows-static](../pitfalls/nginx-spa-fallback-swallows-static.md) — 迁 R2 解决 nginx 把静态图兜底成 html 的根因
