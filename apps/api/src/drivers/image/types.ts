@@ -67,7 +67,7 @@ export interface ImageGenInput {
    * route — only available on images-mode providers (responses-mode
    * providers don't accept reference-based edits the same way).
    */
-  requireMode?: "images" | "responses";
+  requireMode?: "images" | "responses" | "c2i-tasks";
   /**
    * Progress hook: invoked once per provider attempt the moment the driver
    * records it (both successes and failures), BEFORE the overall call

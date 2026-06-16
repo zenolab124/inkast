@@ -187,7 +187,7 @@ export type ImageQuality = "low" | "medium" | "high";
  *
  * Persisted in `ProviderCapability.extras.mode` (image kind only).
  */
-export type ImageGenerationMode = "images" | "responses";
+export type ImageGenerationMode = "images" | "responses" | "c2i-tasks";
 
 export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
 

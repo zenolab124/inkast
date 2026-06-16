@@ -242,8 +242,10 @@ export interface Translations {
       label: string;
       images: string;
       responses: string;
+      c2iTasks: string;
       hintImages: string;
       hintResponses: string;
+      hintC2iTasks: string;
     };
     imageRetry: {
       label: string;

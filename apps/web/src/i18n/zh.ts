@@ -243,8 +243,10 @@ export const zh: Translations = {
       label: "调用方式",
       images: "images",
       responses: "responses",
+      c2iTasks: "c2i-tasks",
       hintImages: "POST /v1/images/generations,适用于 gpt-image-2 等专用生图模型,支持 size/quality 参数。",
       hintResponses: "POST /v1/responses + image_generation 工具,让通用模型(如 gpt-5.3-codex)调工具出图;size/quality 会自动拼到提示词。",
+      hintC2iTasks: "异步任务 API (chatgpt2api)。提交任务后轮询结果,原生支持多参考图。",
     },
     imageRetry: {
       label: "重试次数",

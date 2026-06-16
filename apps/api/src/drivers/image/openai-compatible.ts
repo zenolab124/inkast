@@ -18,6 +18,7 @@ import {
 } from "../../storage/providers.js";
 import { acquireProviderSlot } from "../../lib/throttle.js";
 import { resolveExtraHeaders } from "../codex-header.js";
+import { callC2iTasksApi } from "./c2i-tasks.js";
 import { callImageGenerationTool } from "./openai-responses.js";
 import {
   ImageGenError,
@@ -30,7 +31,9 @@ import {
 /** Read `extras.mode` off an image capability, with a safe default. */
 function resolveMode(capability: ProviderCapability): ImageGenerationMode {
   const raw = capability.extras?.mode;
-  return raw === "responses" || raw === "images" ? raw : IMAGE_GENERATION_MODE_DEFAULT;
+  return raw === "responses" || raw === "images" || raw === "c2i-tasks"
+    ? raw
+    : IMAGE_GENERATION_MODE_DEFAULT;
 }
 
 // gpt-image-2 high-quality jobs commonly take 1-5 minutes via third-party
@@ -173,9 +176,11 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       }, 15_000);
       try {
         const b64 =
-          mode === "responses"
-            ? await callImageGenerationTool(provider, capability, apiKey, input)
-            : await callProvider(provider, capability, apiKey, input);
+          mode === "c2i-tasks"
+            ? await callC2iTasksApi(provider, capability, apiKey, input)
+            : mode === "responses"
+              ? await callImageGenerationTool(provider, capability, apiKey, input)
+              : await callProvider(provider, capability, apiKey, input);
         clearInterval(heartbeat);
         const okAttempt = {
           providerId: provider.id,
