@@ -1,6 +1,6 @@
 # 参考图生图(reference-guided generation)
 
-把用户指定的图片作为视觉风格/主体参考,引导生成新图,保持构图、主体形态、画风一致。技术上从 `images.generate`(纯文本)切到 `images.edit`(图 + 文本)。
+把用户指定的图片作为视觉风格/主体参考,引导生成新图,保持构图、主体形态、画风一致。三条路径:images 模式走 `images.edit`(单张),responses 模式走 `input_image` content part(多张),c2i-tasks 模式走 chatgpt2api 异步任务 API(多张、无数量限制)。
 
 ## 架构
 
@@ -51,10 +51,20 @@
 - **Upload kind 走 base64 in JSON body**:最大 8 MB(前端检查),没用 multipart form-data —— 跟现有 JSON API 风格一致
 - **图片格式自动识别 mimeType**:png/jpeg/webp 都行,driver toFile 用扩展名 hint(`reference.png` / `.jpg` / `.webp`)
 
-## 限制
+## 各 mode 下的参考图支持
+
+| 方面 | images mode | responses mode | c2i-tasks mode |
+| --- | --- | --- | --- |
+| 上游端点 | `/v1/images/edits` | `/v1/responses` + `input_image` | `/api/image-tasks/edits` |
+| 参考图上限 | **1 张**(>1 报错) | 16 张(`MAX_REFERENCE_IMAGES`) | **无限制** |
+| 传输格式 | multipart form-data(`toFile`) | `data:<mime>;base64,...` content part | JSON `images` 数组(data URI) |
+| 所需上游支持 | `/v1/images/edits` | `/v1/responses` + image tool | chatgpt2api task API |
+
+## 限制(images mode)
 
 - 上游 OpenAI 兼容 API **必须实现 `/v1/images/edits`** —— 不是所有第三方代理都支持,见 [pitfalls/reference-edit-endpoint-not-universal](../pitfalls/reference-edit-endpoint-not-universal.md)
 - `images.edit` 不接 `quality` / `output_format` 参数(driver `buildEditBody` 只传 `model / image / prompt / size / n`)
+- **多参考图需切到 responses 或 c2i-tasks 模式**——images mode 硬限 1 张
 
 ## 主要用途
 

@@ -38,7 +38,8 @@ domain/generate/index.ts  · generate()
 | --- | --- |
 | `apps/api/src/server/routes/generate.ts` | POST /generate-image, GET /generations, GET /generations/:id/image |
 | `apps/api/src/domain/generate/index.ts` | 编排 driver + 落盘 + 入库 |
-| `apps/api/src/drivers/image/openai-compatible.ts` | 池 walk + openai SDK 调用 |
+| `apps/api/src/drivers/image/openai-compatible.ts` | 池 walk + 三路 mode 分发 |
+| `apps/api/src/drivers/image/c2i-tasks.ts` | c2i-tasks 异步任务 driver(chatgpt2api) |
 | `apps/api/src/storage/generations.ts` | generations 表 CRUD |
 | `apps/api/src/domain/generate/r2-config.ts` | Web UI 通道 R2 配置(`enabled = 凭据齐`,bucket/base/prefix 带默认值) |
 | `apps/api/src/storage/runtime.ts` | `imagesDir()` 解析 `<DATA_DIR>/images/`(仅 R2 disabled 降级时用) |
@@ -87,28 +88,44 @@ driver 内部根据 `input.referenceImage` 是否存在,分流走 `client.images
 
 `generate()` 也接受 `rawPrompt?: string` —— "直接生图"路径绕过 prompt engine,把散文文本直接喂给图像模型,见 [generate-now-raw-prompt-path](../decisions/generate-now-raw-prompt-path.md)。
 
-## 两种 image mode 调度(images / responses)
+## 三种 image mode 调度(images / responses / c2i-tasks)
 
-`drivers/image/openai-compatible.ts` 池循环里现在按 `capability.extras.mode` 派发,默认 `images`:
+`drivers/image/openai-compatible.ts` 池循环里按 `capability.extras.mode` 派发(默认 `images`):
 
 ```
-provider.extras.mode = "images"    → callProvider() = client.images.generate / images.edit
+provider.extras.mode = "images"    → callProvider() = client.images.generate / images.edit (OpenAI SDK)
                      = "responses" → callImageGenerationTool() = raw fetch /v1/responses + SSE
+                     = "c2i-tasks" → callC2iTasksApi() = chatgpt2api 异步任务 API
 ```
 
-`responses` mode 是为接入"通用聊天模型 + image_generation 工具"(gpt-5.3-codex 等)新加的,**走完全不同的代码路径**——不用 OpenAI SDK,直接 fetch + 手写 SSE 解析。详见 [image-mode-coexistence](../decisions/image-mode-coexistence.md) 和 [responses-mode-raw-fetch-sse](../decisions/responses-mode-raw-fetch-sse.md)。
+`responses` mode 为接入"通用聊天模型 + image_generation 工具"(gpt-5.3-codex 等)新加的,不用 OpenAI SDK,直接 fetch + SSE。详见 [image-mode-coexistence](../decisions/image-mode-coexistence.md) 和 [responses-mode-raw-fetch-sse](../decisions/responses-mode-raw-fetch-sse.md)。
 
-错误分类、attempts 计数、fallback 切换在两个 mode 之间**共享**——池语义不变。
+`c2i-tasks` mode 为接入 chatgpt2api 异步任务 API 新加,支持**无数量限制的多参考图**。流程:
+
+1. **submit**: POST `/api/image-tasks/{edits|generations}`(有参考图走 edits,无走 generations）
+2. **poll**: GET `/api/image-tasks?ids=${taskId}`——初始 3s,×1.5 退避,cap 15s
+3. **success** → 取 `data[0].b64_json`;**error** → 抛错进 classifyError
+4. running 超 5 分钟 → 触发一次 `resume-poll` 续期
+
+参考图传输格式:JSON `images` 数组,每项 `data:${mimeType};base64,${buffer}`。
+
+| 方面 | images | responses | c2i-tasks |
+| --- | --- | --- | --- |
+| 参考图上限 | 1 张 | 16 张 | 无限制 |
+| 同步性 | 同步 | 同步(SSE) | 异步(轮询) |
+| 上游 API | /v1/images/* | /v1/responses | /api/image-tasks/* |
+
+错误分类、attempts 计数、fallback 切换在三个 mode 之间**共享**——池语义不变。
 
 ## Size 三种 wire 形态翻译
 
 `input.size` 字段(类型 `ImageSize = string`)目前接受三种形态,driver 在传给上游前必须翻译:
 
-| Wire 值 | images mode | responses mode |
-| --- | --- | --- |
-| `"auto"` | `size: "auto"` 给 SDK | prompt 不加 dimension 提示 |
-| `"WxH"`(如 `1024x1536`) | `size: "1024x1536"` | prompt 加 `Target size: 1024x1536.` |
-| `"ratio:W:H"`(如 `ratio:9:16`) | **不传 size 参数** + prompt 加 `Target aspect ratio: 9:16.` | prompt 加 `Target aspect ratio: 9:16.` |
+| Wire 值 | images mode | responses mode | c2i-tasks mode |
+| --- | --- | --- | --- |
+| `"auto"` | `size: "auto"` 给 SDK | prompt 不加 dimension 提示 | 不传 size |
+| `"WxH"`(如 `1024x1536`) | `size: "1024x1536"` | prompt 加 `Target size: 1024x1536.` | `size: "1024x1536"` |
+| `"ratio:W:H"`(如 `ratio:9:16`) | **不传 size** + prompt 加 ratio | prompt 加 ratio | **不传 size** + prompt 加 ratio |
 
 详见 [ratio-wire-encoding](../decisions/ratio-wire-encoding.md)。
 

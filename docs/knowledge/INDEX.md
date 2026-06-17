@@ -23,6 +23,10 @@
 ### 故障排查(2026-05-25 新增)
 
 - [docs/debugging-playbook.md](../debugging-playbook.md) — 用户报"失败了 / 出错了 / 效果不对"时按这份 SOP 走。通道速记(Web UI vs Plugin)、信息源三件套(SQLite/journal/用户描述)、Step1-3 决策树 Q1-Q6(error_code / trigger code / rewritten 非空 / success_round / post_review_edited / throttle)、附录:image pool 现状、LLM fallover 顺序、rewrite chain 速记、部署节奏、凭据红线、常用 grep 关键字、**附录 G plugin gallery 数据缺失排查(v2 长期表语义)**。**任何 plugin 通道排查任务的第一阅读源**。
+
+### Skill 接入(2026-06-16 新增)
+
+- [docs/skill-integration.md](../skill-integration.md) — Inkast 本机生图 API Skill 接入手册。Base URL `localhost:21731`,4 个核心端点(`draft-prompt` / `jobs/generate` / `jobs/:id` / `generations/:id/image`),完整 bash 示例,参考图格式(`generation` / `upload` 两种 kind),**三种 image mode 下参考图的自动路由表**(images 单张 / responses 多张 / c2i-tasks 无限制),c2i-tasks 异步任务流程说明。Claude Code skill 或本地 Agent 接入前必读。
 <!-- codewise-docs:end -->
 
 <!-- codewise-interfaces:start -->
@@ -542,8 +546,8 @@ LLM 调用 fallover (apps/api/src/drivers/llm/with-fallover.ts):
 ## 同步元信息
 
 - **codewise_version**: `1`
-- **baseline_commit**: `e4b65f7c4a869b35bb628cc5a3546af7a8211a7d`
-- **synced_at**: `2026-06-09T10:50:43+08:00`
+- **baseline_commit**: `642753e192d0849a06296aae2a21944d462e1fd4`
+- **synced_at**: `2026-06-17T00:15:00+08:00`
 - **scope_root**: `.`
 - **multi_codetree**: `apps/api/src/, apps/web/src/, packages/shared/src/, apps/api-public/src/, apps/web-public/src/`
 
