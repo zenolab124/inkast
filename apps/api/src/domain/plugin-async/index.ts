@@ -4,7 +4,7 @@ import type { ImagePrompt } from "@inkast/shared";
 import { draftPrompt } from "../prompt-engine/index.js";
 import { driveWithRewriteFallback } from "../generate/with-rewrite.js";
 import { reviewAndMaybeEdit } from "../post-review-edit/index.js";
-import { ImageGenError } from "../../drivers/image/types.js";
+import { ImageGenError, type ImageGenInput } from "../../drivers/image/types.js";
 import { putImage, R2UploadError } from "../../drivers/storage/r2.js";
 import {
   listRegisteredPlugins,
@@ -31,6 +31,7 @@ import { backfillPluginGalleryFromTasks } from "../../storage/plugin-gallery.js"
  * v2 异步协议的核心。负责:
  *   - submit 入口(synchronous,立刻返 task_id,不阻塞 LLM/image 调用)
  *   - 后台 worker(in-memory queue + concurrency cap)
+ *   - source_image 源图拉取(v2.3 编辑任务:fetch 源图字节 → 参考图直传 driver)
  *   - JPEG transcode(image driver 输出 PNG → JPEG q80 缩减 callback payload)
  *   - callback 推送 + 5s/30s/5min × 3 重试
  *   - startup recovery(interrupted tasks 立即 callback)
@@ -78,6 +79,13 @@ export interface PipelinePolicy {
 export interface SubmitInput {
   plugin: InkastPlugin;
   prompt: string;
+  /**
+   * v2.3 source_image: validated-at-route source image URL (must live under
+   * the plugin's imageStorage.publicBase — SSRF scoping happens there, not
+   * here). Persisted on the task row so restart recovery keeps the edit
+   * semantics; see PluginTaskRow.sourceImageUrl for the rationale.
+   */
+  sourceImageUrl?: string;
   callbackUrl: string;
   callbackToken: string;
   pipelinePolicy?: PipelinePolicy;
@@ -102,6 +110,7 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
   const task = createPluginTask({
     pluginId: input.plugin.id,
     prompt: input.prompt,
+    sourceImageUrl: input.sourceImageUrl,
     callbackUrl: input.callbackUrl,
     callbackToken: input.callbackToken,
   });
@@ -109,7 +118,7 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
     taskPolicies.set(task.id, input.pipelinePolicy);
   }
   console.log(
-    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}${input.pipelinePolicy ? ` policy=${JSON.stringify(input.pipelinePolicy)}` : ""}`,
+    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}${input.sourceImageUrl ? ` source_image=${input.sourceImageUrl}` : ""}${input.pipelinePolicy ? ` policy=${JSON.stringify(input.pipelinePolicy)}` : ""}`,
   );
   enqueueTask(task.id);
   return task;
@@ -194,6 +203,17 @@ async function runTask(taskId: string): Promise<void> {
       promptJsonStr = promptText;
     }
 
+    // 2.5 源图拉取(v2.3 source_image,编辑任务)— 从任务行读 source_image_url,
+    // fetch 字节后作参考图**全尺寸**直传 image driver(照 post-review-edit 的
+    // 先例;绝不走 Web UI 通道 normalizeReferenceImage 的 384px 压缩路径 —
+    // 编辑任务的源图保真度直接决定产出质量)。只传 1 张,恰好落在 images-mode
+    // 的单参考图硬限内(driver 对 >1 张会 fail loudly)。
+    // 拉取失败抛 SourceImageFetchError → 下方 catch 按任务失败路径处理。
+    let referenceImages: ImageGenInput["referenceImages"];
+    if (task.sourceImageUrl) {
+      referenceImages = [await fetchSourceImage(task.sourceImageUrl)];
+    }
+
     // 3. 出图(走 image driver 池)— 两种模式共享
     // driveWithRewriteFallback 会按 pipeline_policy 控制的策略跑 round 0 → 3,
     // 内容相关失败(provider_blocked_content / upstream_safety_rejected /
@@ -209,6 +229,7 @@ async function runTask(taskId: string): Promise<void> {
           size: plugin.imageDefaults.size,
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
+          referenceImages,
         },
         {
           skipOriginal: callerPolicy?.skipOriginal,
@@ -344,28 +365,44 @@ async function runTask(taskId: string): Promise<void> {
       );
     }
   } catch (err) {
-    const mapped = toOpenAiError(err);
-    // When the image driver exhausted its provider pool it throws ImageGenError
-    // with the full attempts array attached — surface it on the task so the
-    // dashboard shows the failover trail even on terminal failure.
-    const attempts = err instanceof ImageGenError ? err.attempts : undefined;
-    // rewrite history is also attached to ImageGenError when the rewrite
-    // wrapper threw (all_providers_failed_after_rewrite or LLM mid-flight
-    // failure). Persisting it on failure rows is precisely what the operator
-    // needs for diagnostics — "what did the rewrite say before giving up".
-    const rewrittenPrompts =
-      err instanceof ImageGenError ? err.rewrittenPromptHistory : undefined;
-    markTaskFailed(taskId, {
-      errorCode: mapped.body.error.code,
-      errorMsg: mapped.body.error.message,
-      llmDurationMs: llmDurationMs || null,
-      imageDurationMs: imageDurationMs || null,
-      attempts,
-      rewrittenPrompts,
-    });
-    console.warn(
-      `[plugin-async] ✗ task=${taskId} ${mapped.body.error.code}: ${mapped.body.error.message}`,
-    );
+    if (err instanceof SourceImageFetchError) {
+      // 源图拉取失败是编辑任务特有的前置失败 — 不属于 LLM / image driver 的
+      // 错误域,不走 toOpenAiError 映射。error_msg 保留 fetch 层的诊断细节
+      // (HTTP status / content-type / 字节数 / 超时),调用方按 status:failed
+      // 统一走退款链路。
+      markTaskFailed(taskId, {
+        errorCode: "source_image_fetch_failed",
+        errorMsg: err.message,
+        llmDurationMs: llmDurationMs || null,
+        imageDurationMs: imageDurationMs || null,
+      });
+      console.warn(
+        `[plugin-async] ✗ task=${taskId} source_image_fetch_failed: ${err.message}`,
+      );
+    } else {
+      const mapped = toOpenAiError(err);
+      // When the image driver exhausted its provider pool it throws ImageGenError
+      // with the full attempts array attached — surface it on the task so the
+      // dashboard shows the failover trail even on terminal failure.
+      const attempts = err instanceof ImageGenError ? err.attempts : undefined;
+      // rewrite history is also attached to ImageGenError when the rewrite
+      // wrapper threw (all_providers_failed_after_rewrite or LLM mid-flight
+      // failure). Persisting it on failure rows is precisely what the operator
+      // needs for diagnostics — "what did the rewrite say before giving up".
+      const rewrittenPrompts =
+        err instanceof ImageGenError ? err.rewrittenPromptHistory : undefined;
+      markTaskFailed(taskId, {
+        errorCode: mapped.body.error.code,
+        errorMsg: mapped.body.error.message,
+        llmDurationMs: llmDurationMs || null,
+        imageDurationMs: imageDurationMs || null,
+        attempts,
+        rewrittenPrompts,
+      });
+      console.warn(
+        `[plugin-async] ✗ task=${taskId} ${mapped.body.error.code}: ${mapped.body.error.message}`,
+      );
+    }
   } finally {
     // Always drop the policy entry once the task reaches a terminal state,
     // even if we hit an unexpected throw. Leaving entries around would slow-
@@ -392,6 +429,109 @@ function buildSkipLlmPromptText(userPrompt: string, plugin: InkastPlugin): strin
   const constraints = plugin.skipLlmConstraintsText?.trim();
   if (!constraints) return userPrompt;
   return `${userPrompt}\n\n${constraints}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Source image fetch (v2.3 source_image, edit tasks)
+// ─────────────────────────────────────────────────────────────────────────
+
+const SOURCE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;          // 10MB
+const SOURCE_IMAGE_FETCH_TIMEOUT_MS = 30_000;             // 30s, covers headers + body
+const SOURCE_IMAGE_ALLOWED_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+/**
+ * Thrown by fetchSourceImage on any defense-gate or network failure. Caught
+ * by runTask's catch and mapped to error_code `source_image_fetch_failed`
+ * (never toOpenAiError — this isn't an LLM/image-driver error domain).
+ */
+class SourceImageFetchError extends Error {
+  override readonly name = "SourceImageFetchError";
+}
+
+/**
+ * Fetch the source image bytes for an edit task and shape them as a driver
+ * reference image. URL 已在 submit 路由做过 SSRF 限域(必须落在 plugin 自己
+ * 的 imageStorage.publicBase 之下),这里只做字节层防御:
+ *   - redirect:"error":限域只约束首跳,拒绝跟随 3xx 防止防线被重定向绕过
+ *   - 30s 总超时(AbortController 覆盖 headers + body 下载)
+ *   - mime 白名单:以响应 Content-Type 为准(R2 上的 contentType 是 inkast
+ *     自己上传时写的,可信;不做字节 sniff)
+ *   - ≤10MB:Content-Length 先挡一道(省下载),下载后按实际字节数复查
+ *     (chunked 响应没有 Content-Length)
+ * 任何一道失败抛 SourceImageFetchError,message 带全部可诊断细节。
+ */
+async function fetchSourceImage(
+  url: string,
+): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOURCE_IMAGE_FETCH_TIMEOUT_MS);
+  const started = Date.now();
+  try {
+    let res: Response;
+    try {
+      // redirect:"error" — submit 路由的 publicBase 前缀限域只约束首跳 URL,
+      // 跟随 3xx 会让 SSRF 防线静默失效(可被引到任意目标含内网)。R2 直出
+      // 对象从不合法重定向,直接抛错落入下方 SourceImageFetchError 包装。
+      res = await fetch(url, { signal: controller.signal, redirect: "error" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new SourceImageFetchError(
+        controller.signal.aborted
+          ? `source image fetch timed out after ${SOURCE_IMAGE_FETCH_TIMEOUT_MS}ms: ${url}`
+          : `source image fetch failed (${msg}): ${url}`,
+      );
+    }
+    if (!res.ok) {
+      throw new SourceImageFetchError(
+        `source image fetch returned HTTP ${res.status}: ${url}`,
+      );
+    }
+    const contentType = (res.headers.get("content-type") ?? "")
+      .split(";")[0]!
+      .trim()
+      .toLowerCase();
+    if (!SOURCE_IMAGE_ALLOWED_MIMES.has(contentType)) {
+      throw new SourceImageFetchError(
+        `source image content-type not allowed (got "${contentType || "(none)"}", want image/png|jpeg|webp): ${url}`,
+      );
+    }
+    const declaredLen = Number(res.headers.get("content-length") ?? "0");
+    if (declaredLen > SOURCE_IMAGE_MAX_BYTES) {
+      throw new SourceImageFetchError(
+        `source image too large (Content-Length ${declaredLen} > ${SOURCE_IMAGE_MAX_BYTES}): ${url}`,
+      );
+    }
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(await res.arrayBuffer());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new SourceImageFetchError(
+        controller.signal.aborted
+          ? `source image download timed out after ${SOURCE_IMAGE_FETCH_TIMEOUT_MS}ms: ${url}`
+          : `source image download failed (${msg}): ${url}`,
+      );
+    }
+    if (buffer.length > SOURCE_IMAGE_MAX_BYTES) {
+      throw new SourceImageFetchError(
+        `source image too large (${buffer.length} bytes > ${SOURCE_IMAGE_MAX_BYTES}): ${url}`,
+      );
+    }
+    // Filename hint 走 mime 对应扩展名 — OpenAI SDK toFile 在 driver 里
+    // 会读扩展名判格式(见 buildEditBody)。
+    const filename =
+      contentType === "image/png"
+        ? "source.png"
+        : contentType === "image/webp"
+          ? "source.webp"
+          : "source.jpg";
+    console.log(
+      `[plugin-async]   source image fetched: ${buffer.length} bytes (${contentType}) in ${Date.now() - started}ms`,
+    );
+    return { buffer, mimeType: contentType, filename };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

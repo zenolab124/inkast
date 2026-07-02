@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS plugin_tasks (
   id                   TEXT PRIMARY KEY,
   plugin_id            TEXT NOT NULL,
   prompt               TEXT NOT NULL,
+  source_image_url     TEXT,                  -- v2.3 source_image(编辑任务源图,plugin publicBase 域内 URL);worker fetch 字节后作参考图直传 image driver。必须落库 — 重启恢复后丢了它,编辑任务会退化成无关生成
   callback_url         TEXT NOT NULL,
   callback_token       TEXT NOT NULL,         -- caller-supplied one-time token; outbound on X-Callback-Token header
   status               TEXT NOT NULL,         -- queued | running | succeeded | failed | callback_lost

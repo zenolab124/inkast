@@ -57,6 +57,7 @@ function migrate(conn: Database.Database): void {
   addColumnIfMissing(conn, "plugin_tasks", "success_round", "INTEGER");
   addColumnIfMissing(conn, "plugin_tasks", "post_review_edited", "INTEGER");
   addColumnIfMissing(conn, "plugin_tasks", "current_round", "INTEGER");
+  addColumnIfMissing(conn, "plugin_tasks", "source_image_url", "TEXT");
   addColumnIfMissing(conn, "jobs", "provider_id", "TEXT");
   addColumnIfMissing(conn, "jobs", "provider_name", "TEXT");
   addColumnIfMissing(conn, "provider_capabilities", "auto_disabled_until", "INTEGER");

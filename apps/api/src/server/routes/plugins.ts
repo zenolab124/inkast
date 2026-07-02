@@ -12,6 +12,7 @@ const PROMPT_MIN_LEN = 2;
 const PROMPT_MAX_LEN = 2000;
 const CALLBACK_TOKEN_MIN_LEN = 16;
 const CALLBACK_URL_MAX_LEN = 2048;
+const SOURCE_IMAGE_URL_MAX_LEN = 2048;
 
 /**
  * POST /plugins/v1/images/submit
@@ -123,9 +124,68 @@ pluginRoutes.post("/v1/images/submit", async c => {
     );
   }
 
+  // source_image — v2.3 可选源图(编辑任务)。传了就把任务从"文生图"切成
+  // "改已有图":worker 会 fetch image_url 的字节作参考图直传 image driver。
+  // SSRF 限域:worker 稍后要真的去 fetch 这个 URL,不限域就是任意内网探测
+  // 入口 — 所以要求 plugin 配了 imageStorage.publicBase(r2 模式才有的
+  // "自家公开图床"概念),且 image_url 落在 publicBase 之下。校验失败一律
+  // 400 invalid_source_image。
+  const sourceImageRaw = (body as { source_image?: unknown }).source_image;
+  let sourceImageUrl: string | undefined;
+  if (sourceImageRaw !== undefined && sourceImageRaw !== null) {
+    if (
+      typeof sourceImageRaw !== "object" ||
+      typeof (sourceImageRaw as { image_url?: unknown }).image_url !== "string"
+    ) {
+      return c.json(
+        errBody(
+          "invalid_source_image",
+          "'source_image' must be an object with a string 'image_url'",
+          "invalid_request_error",
+        ),
+        400,
+      );
+    }
+    const imageUrl = (sourceImageRaw as { image_url: string }).image_url.trim();
+    if (imageUrl.length === 0 || imageUrl.length > SOURCE_IMAGE_URL_MAX_LEN) {
+      return c.json(
+        errBody(
+          "invalid_source_image",
+          `'source_image.image_url' must be 1..${SOURCE_IMAGE_URL_MAX_LEN} characters`,
+          "invalid_request_error",
+        ),
+        400,
+      );
+    }
+    const storage = plugin.imageStorage;
+    if (!storage || storage.kind !== "r2" || !storage.publicBase) {
+      return c.json(
+        errBody(
+          "invalid_source_image",
+          "this plugin has no imageStorage.publicBase configured — 'source_image' is not supported",
+          "invalid_request_error",
+        ),
+        400,
+      );
+    }
+    const base = storage.publicBase.replace(/\/+$/, "");
+    if (!imageUrl.startsWith(`${base}/`)) {
+      return c.json(
+        errBody(
+          "invalid_source_image",
+          `'source_image.image_url' must start with ${base}/`,
+          "invalid_request_error",
+        ),
+        400,
+      );
+    }
+    sourceImageUrl = imageUrl;
+  }
+
   const task = submitForPlugin({
     plugin,
     prompt,
+    sourceImageUrl,
     callbackUrl: body.callback_url,
     callbackToken: body.callback_token,
     pipelinePolicy: policy,

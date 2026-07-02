@@ -14,6 +14,16 @@ export interface PluginTaskRow {
   id: string;
   pluginId: string;
   prompt: string;
+  /**
+   * v2.3 source_image: caller-supplied source image URL (already validated
+   * at submit to live under the plugin's imageStorage.publicBase). The worker
+   * fetches its bytes and passes them as a reference image to the driver —
+   * turning the task into an edit-of-existing-image instead of a fresh
+   * generation. Persisted (unlike the in-memory pipeline-policy map) because
+   * losing it across a restart would silently degrade an edit task into an
+   * unrelated generation — a wrong image, not just wrong policy.
+   */
+  sourceImageUrl: string | null;
   callbackUrl: string;
   /**
    * Plaintext one-time token caller supplied at submit. Echoed back as
@@ -82,6 +92,7 @@ interface DbRow {
   id: string;
   plugin_id: string;
   prompt: string;
+  source_image_url: string | null;
   callback_url: string;
   callback_token: string;
   status: PluginTaskStatus;
@@ -111,6 +122,7 @@ function rowToTask(row: DbRow): PluginTaskRow {
     id: row.id,
     pluginId: row.plugin_id,
     prompt: row.prompt,
+    sourceImageUrl: row.source_image_url,
     callbackUrl: row.callback_url,
     callbackToken: row.callback_token,
     status: row.status,
@@ -171,6 +183,8 @@ function parseRewrittenPrompts(raw: string | null | undefined): string[] {
 export interface CreatePluginTaskInput {
   pluginId: string;
   prompt: string;
+  /** See PluginTaskRow.sourceImageUrl. Route handler validates before passing. */
+  sourceImageUrl?: string;
   callbackUrl: string;
   callbackToken: string;
 }
@@ -181,14 +195,23 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
   db()
     .prepare(
       `INSERT INTO plugin_tasks
-        (id, plugin_id, prompt, callback_url, callback_token, status, created_at)
-       VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
+        (id, plugin_id, prompt, source_image_url, callback_url, callback_token, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
     )
-    .run(id, input.pluginId, input.prompt, input.callbackUrl, input.callbackToken, now);
+    .run(
+      id,
+      input.pluginId,
+      input.prompt,
+      input.sourceImageUrl ?? null,
+      input.callbackUrl,
+      input.callbackToken,
+      now,
+    );
   return {
     id,
     pluginId: input.pluginId,
     prompt: input.prompt,
+    sourceImageUrl: input.sourceImageUrl ?? null,
     callbackUrl: input.callbackUrl,
     callbackToken: input.callbackToken,
     status: "queued",
