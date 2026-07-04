@@ -94,4 +94,10 @@ export interface InkastPlugin {
    * 不设则原样输出 driver 给的尺寸。
    */
   readonly outputDimensions?: { width: number; height: number };
+  /**
+   * source_image 的额外允许域(完整 origin 前缀,如 "https://msnap.124213.xyz")。
+   * SSRF 白名单默认只放行 imageStorage.publicBase(自家图床);调用方另有
+   * 素材图床(如官方原画库)时在这里显式列出。按 `${host}/` 前缀匹配。
+   */
+  readonly sourceImageHosts?: readonly string[];
 }

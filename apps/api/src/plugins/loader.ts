@@ -80,6 +80,8 @@ const InkastPluginSchema = z.object({
       height: z.number().int().positive(),
     })
     .optional(),
+  // source_image 额外允许域：必须是 https origin 前缀（SSRF 白名单，防裸 host / http 降级混入）
+  sourceImageHosts: z.array(z.string().regex(/^https:\/\/[^/]+$/)).optional(),
 });
 
 export function loadPluginConfigsFromDir(dir: string): InkastPlugin[] {

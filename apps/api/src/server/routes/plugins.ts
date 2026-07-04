@@ -168,12 +168,17 @@ pluginRoutes.post("/v1/images/submit", async c => {
         400,
       );
     }
-    const base = storage.publicBase.replace(/\/+$/, "");
-    if (!imageUrl.startsWith(`${base}/`)) {
+    // 允许域 = 自家图床 publicBase + 可选的 sourceImageHosts 扩展白名单(如调用方
+    // 另有官方素材图床)。全部按"URL 前缀"匹配(归一化尾斜杠 + 强制 `${base}/`
+    // 边界,防 https://host.evil.com 这类前缀伪装)。
+    const allowedBases = [storage.publicBase, ...(plugin.sourceImageHosts ?? [])].map((b) =>
+      b.replace(/\/+$/, ""),
+    );
+    if (!allowedBases.some((base) => imageUrl.startsWith(`${base}/`))) {
       return c.json(
         errBody(
           "invalid_source_image",
-          `'source_image.image_url' must start with ${base}/`,
+          `'source_image.image_url' must start with one of: ${allowedBases.map((b) => `${b}/`).join(", ")}`,
           "invalid_request_error",
         ),
         400,
