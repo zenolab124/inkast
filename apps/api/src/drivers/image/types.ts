@@ -76,12 +76,6 @@ export interface ImageGenInput {
    * instead of only terminal ones. Optional — the Web UI channel doesn't pass
    * it. Implementations must not throw.
    */
-  /**
-   * When true AND the provider declares imageOutput=url, request
-   * response_format=url and return the persistent URL without downloading.
-   * When false or omitted, always request b64_json.
-   */
-  preferUrl?: boolean;
   onAttempt?: (attempt: ImageGenAttempt) => void;
 }
 
