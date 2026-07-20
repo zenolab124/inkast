@@ -237,6 +237,7 @@ async function runTask(taskId: string): Promise<void> {
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
           referenceImages,
+          preferUrl: !plugin.outputDimensions,
         },
         {
           skipOriginal: callerPolicy?.skipOriginal,

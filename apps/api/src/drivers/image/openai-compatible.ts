@@ -177,14 +177,13 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       try {
         let b64: string;
         let imageUrl: string | undefined;
-        // extras.imageOutput: "url" = 该 provider 返回持久 URL（如自建
-        // chatgpt2api 直传 R2）。声明后请求 response_format=url，driver
-        // 返回 URL 而非 b64；下游需要字节时自行下载。
-        const urlPassthrough = capability.extras?.imageOutput === "url";
+        // useUrl = 调用方想要 URL 且 provider 有此能力。c2i-tasks 自带
+        // URL(任务完成后上游已存图),images mode 靠 response_format 控制。
+        const useUrl = input.preferUrl === true && capability.extras?.imageOutput === "url";
         if (mode === "c2i-tasks") {
           const result = await callC2iTasksApi(provider, capability, apiKey, input);
           b64 = result.b64;
-          if (urlPassthrough) imageUrl = result.url;
+          if (useUrl) imageUrl = result.url;
           if (!b64 && result.url) {
             const dl = await fetch(result.url, { signal: input.signal });
             if (!dl.ok) throw new Error(`download c2i-tasks image failed: HTTP ${dl.status}`);
@@ -358,7 +357,7 @@ async function callProvider(
   const promptForUpstream = ratioHint
     ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
     : input.promptText;
-  const wantUrl = capability.extras?.imageOutput === "url";
+  const useUrl = input.preferUrl === true && capability.extras?.imageOutput === "url";
   const requestedFormat = input.format ?? IMAGE_FORMAT_DEFAULT;
   const body = {
     model: capability.model,
@@ -366,7 +365,7 @@ async function callProvider(
     ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
     quality: input.quality ?? "high",
     output_format: requestedFormat,
-    response_format: wantUrl ? "url" : "b64_json",
+    response_format: useUrl ? "url" : "b64_json",
     n: input.n ?? 1,
     // 放宽 OpenAI 自家 moderation 层(对直连 OpenAI 的渠道有效;对二道贩子代理
     // 是 best-effort —— 他们自家审查不读这个字段,但 OpenAI 上游层会按此放宽)。
@@ -405,10 +404,10 @@ async function callProvider(
   const first = response.data?.[0];
   if (first?.b64_json) {
     console.log(`[image]   ← b64_json received (${first.b64_json.length} chars)`);
-    return { b64: first.b64_json, url: wantUrl && first.url ? first.url : undefined };
+    return { b64: first.b64_json, url: useUrl && first.url ? first.url : undefined };
   }
   if (first?.url) {
-    if (wantUrl) {
+    if (useUrl) {
       console.log(`[image]   ← url received: ${first.url}`);
       return { b64: "", url: first.url };
     }
@@ -453,7 +452,7 @@ async function buildEditBody(
     image: file,
     prompt: promptForUpstream,
     ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
-    response_format: capability.extras?.imageOutput === "url" ? "url" : "b64_json",
+    response_format: input.preferUrl && capability.extras?.imageOutput === "url" ? "url" : "b64_json",
     n: input.n ?? 1,
   } as unknown as ImageEditParams;
 }
