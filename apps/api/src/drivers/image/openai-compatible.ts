@@ -175,12 +175,28 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
         );
       }, 15_000);
       try {
-        const b64 =
-          mode === "c2i-tasks"
-            ? await callC2iTasksApi(provider, capability, apiKey, input)
-            : mode === "responses"
-              ? await callImageGenerationTool(provider, capability, apiKey, input)
-              : await callProvider(provider, capability, apiKey, input);
+        let b64: string;
+        let imageUrl: string | undefined;
+        // extras.imageOutput: "url" = provider 返回的 URL 是持久的（如自建
+        // chatgpt2api 直传 R2），可直接透传给下游，省掉下载+重传。
+        // 默认 "b64" = URL 是临时的（如 OpenAI 官方），必须下载转 b64。
+        const urlPassthrough = capability.extras?.imageOutput === "url";
+        if (mode === "c2i-tasks") {
+          const result = await callC2iTasksApi(provider, capability, apiKey, input);
+          b64 = result.b64;
+          if (urlPassthrough) imageUrl = result.url;
+          else if (!b64 && result.url) {
+            const dl = await fetch(result.url, { signal: input.signal });
+            if (!dl.ok) throw new Error(`download c2i-tasks image failed: HTTP ${dl.status}`);
+            b64 = Buffer.from(await dl.arrayBuffer()).toString("base64");
+          }
+        } else if (mode === "responses") {
+          b64 = await callImageGenerationTool(provider, capability, apiKey, input);
+        } else {
+          const result = await callProvider(provider, capability, apiKey, input);
+          b64 = result.b64;
+          imageUrl = result.url;
+        }
         clearInterval(heartbeat);
         const okAttempt = {
           providerId: provider.id,
@@ -191,10 +207,11 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
         attempts.push(okAttempt);
         input.onAttempt?.(okAttempt);
         console.log(
-          `[image] ✓ ${provider.name} succeeded in ${Date.now() - started}ms (image-b64-bytes=${b64.length})`,
+          `[image] ✓ ${provider.name} succeeded in ${Date.now() - started}ms (image-b64-bytes=${b64.length}${imageUrl ? `, url=${imageUrl}` : ""})`,
         );
         return {
           imageB64: b64,
+          imageUrl,
           format: "png",
           providerId: provider.id,
           providerName: provider.name,
@@ -309,7 +326,7 @@ async function callProvider(
   capability: ProviderCapability,
   apiKey: string,
   input: ImageGenInput,
-): Promise<string> {
+): Promise<DriverResult> {
   const extraHeaders = resolveExtraHeaders(capability);
   const client = new OpenAI({
     apiKey,
@@ -341,6 +358,7 @@ async function callProvider(
   const promptForUpstream = ratioHint
     ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
     : input.promptText;
+  const wantUrl = capability.extras?.imageOutput === "url";
   const requestedFormat = input.format ?? IMAGE_FORMAT_DEFAULT;
   const body = {
     model: capability.model,
@@ -348,6 +366,7 @@ async function callProvider(
     ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
     quality: input.quality ?? "high",
     output_format: requestedFormat,
+    response_format: wantUrl ? "url" : "b64_json",
     n: input.n ?? 1,
     // 放宽 OpenAI 自家 moderation 层(对直连 OpenAI 的渠道有效;对二道贩子代理
     // 是 best-effort —— 他们自家审查不读这个字段,但 OpenAI 上游层会按此放宽)。
@@ -384,22 +403,29 @@ async function callProvider(
   console.log(`[image]   ← response in ${Date.now() - reqStart}ms`);
 
   const first = response.data?.[0];
-  // gpt-image-2 returns b64_json by default. Some compat endpoints might
-  // return url instead — fall back to fetching and base64-encoding.
   if (first?.b64_json) {
     console.log(`[image]   ← b64_json received (${first.b64_json.length} chars)`);
-    return first.b64_json;
+    return { b64: first.b64_json };
   }
   if (first?.url) {
+    if (wantUrl) {
+      console.log(`[image]   ← url passthrough: ${first.url}`);
+      return { b64: "", url: first.url };
+    }
     console.log(`[image]   ← url received (${first.url}), fetching bytes…`);
     const fetchStart = Date.now();
     const res = await fetch(first.url, { signal: input.signal });
     if (!res.ok) throw new Error(`download image url failed: HTTP ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
     console.log(`[image]   ← url download done in ${Date.now() - fetchStart}ms (${buf.length} bytes)`);
-    return buf.toString("base64");
+    return { b64: buf.toString("base64") };
   }
   throw new Error("provider returned no image (neither b64_json nor url)");
+}
+
+interface DriverResult {
+  b64: string;
+  url?: string;
 }
 
 async function buildEditBody(
@@ -422,11 +448,13 @@ async function buildEditBody(
   const promptForUpstream = ratioHint
     ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
     : input.promptText;
+  const wantUrl = capability.extras?.imageOutput === "url";
   return {
     model: capability.model,
     image: file,
     prompt: promptForUpstream,
     ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
+    response_format: wantUrl ? "url" : "b64_json",
     n: input.n ?? 1,
   } as unknown as ImageEditParams;
 }

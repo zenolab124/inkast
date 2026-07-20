@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import type { ImagePrompt } from "@inkast/shared";
+import { makeRatioSize } from "@inkast/shared";
 
 import { draftPrompt } from "../prompt-engine/index.js";
 import { driveWithRewriteFallback } from "../generate/with-rewrite.js";
@@ -86,6 +87,8 @@ export interface SubmitInput {
    * semantics; see PluginTaskRow.sourceImageUrl for the rationale.
    */
   sourceImageUrl?: string;
+  /** Caller-supplied aspect ratio (e.g. "1:1", "3:4", "9:16"). Overrides plugin.imageDefaults.size. */
+  ratio?: string;
   callbackUrl: string;
   callbackToken: string;
   pipelinePolicy?: PipelinePolicy;
@@ -111,6 +114,7 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
     pluginId: input.plugin.id,
     prompt: input.prompt,
     sourceImageUrl: input.sourceImageUrl,
+    ratio: input.ratio,
     callbackUrl: input.callbackUrl,
     callbackToken: input.callbackToken,
   });
@@ -223,10 +227,13 @@ async function runTask(taskId: string): Promise<void> {
     const imageStart = Date.now();
     let imageOutcome;
     try {
+      const effectiveSize = task.ratio
+        ? makeRatioSize(task.ratio)
+        : plugin.imageDefaults.size;
       imageOutcome = await driveWithRewriteFallback(
         {
           promptText,
-          size: plugin.imageDefaults.size,
+          size: effectiveSize,
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
           referenceImages,
@@ -252,6 +259,11 @@ async function runTask(taskId: string): Promise<void> {
       callerPolicy?.postReviewEdit === true &&
       (imageOutcome.successRound === 2 || imageOutcome.successRound === 3)
     ) {
+      if (!imageOutcome.imageB64 && imageOutcome.imageUrl) {
+        const dlRes = await fetch(imageOutcome.imageUrl);
+        if (!dlRes.ok) throw new Error(`download upstream image for review failed: HTTP ${dlRes.status}`);
+        imageOutcome = { ...imageOutcome, imageB64: Buffer.from(await dlRes.arrayBuffer()).toString("base64") };
+      }
       const reviewOutcome = await reviewAndMaybeEdit({
         originalPromptText: promptText,
         currentImageB64: imageOutcome.imageB64,
@@ -283,32 +295,20 @@ async function runTask(taskId: string): Promise<void> {
     // 4. 出图持久化:按 plugin.imageStorage 分两条路
     //    - "b64"(默认):JPEG transcode(payload 缩 5x)+ DB b64_json 字段
     //    - "r2":可选 resize 后保留 PNG → R2 PUT → DB image_url 字段
+    //    - "r2" + driver 已返 imageUrl 且落在 publicBase 下 → 跳过上传直接用
     const storage: PluginImageStorage = plugin.imageStorage ?? { kind: "b64" };
 
     if (storage.kind === "r2") {
-      const bodyBytes = await prepareImageForR2(
-        imageOutcome.imageB64,
-        plugin.outputDimensions,
-        storage.contentType,
-      );
-      const ext =
-        storage.contentType === "image/png"
-          ? "png"
-          : storage.contentType === "image/webp"
-            ? "webp"
-            : "jpg";
-      const key = `${storage.keyPrefix}${taskId}.${ext}`;
-      try {
-        const r2Out = await putImage({
-          bucket: storage.bucket,
-          key,
-          body: bodyBytes,
-          contentType: storage.contentType,
-        });
-        const imageUrl = `${storage.publicBase.replace(/\/+$/, "")}/${key}`;
+      // 快速路径：driver 已经把图存到 R2/CDN 并返回了 URL（如 chatgpt2api
+      // 直接出 img.124213.xyz URL）。只要不需要 resize 就直接用——driver 来自
+      // 我们自己配置的可信 provider 池，URL 无需二次校验。
+      const upstreamUrl = imageOutcome.imageUrl;
+      const canSkipUpload = !!upstreamUrl && !plugin.outputDimensions;
+
+      if (canSkipUpload) {
         markTaskSucceeded(taskId, {
           kind: "r2",
-          imageUrl,
+          imageUrl: upstreamUrl,
           mime: storage.contentType,
           promptJson: promptJsonStr,
           llmDurationMs,
@@ -321,29 +321,75 @@ async function runTask(taskId: string): Promise<void> {
           postReviewEdited,
         });
         console.log(
-          `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms r2=${r2Out.durationMs}ms(att=${r2Out.attempts}) total=${Date.now() - overallStart}ms url=${imageUrl}`,
+          `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms r2=skipped(upstream-url) total=${Date.now() - overallStart}ms url=${upstreamUrl}`,
         );
-      } catch (err) {
-        // R2 上传失败 → 任务标 failed,callback 走 r2_upload_failed,不 fallback b64
-        // (避免两套路径并存;snap-ub 端会按 status:failed 自动退能量)
-        const isR2Err = err instanceof R2UploadError;
-        const msg = err instanceof Error ? err.message : String(err);
-        markTaskFailed(taskId, {
-          errorCode: isR2Err ? "r2_upload_failed" : "internal_error",
-          errorMsg: msg,
-          llmDurationMs,
-          imageDurationMs,
-          // Driver succeeded — its attempt trail is preserved so the dashboard
-          // can still show which provider produced the bytes (and any prior
-          // failed attempts during failover), even though we couldn't upload.
-          attempts: imageOutcome.attempts,
-          rewrittenPrompts: imageOutcome.rewrittenPromptHistory,
-        });
-        console.warn(`[plugin-async] ✗ task=${taskId} r2_upload_failed: ${msg}`);
+      } else {
+        let srcB64 = imageOutcome.imageB64;
+        if (!srcB64 && imageOutcome.imageUrl) {
+          const dlRes = await fetch(imageOutcome.imageUrl);
+          if (!dlRes.ok) throw new Error(`download upstream image failed: HTTP ${dlRes.status}`);
+          srcB64 = Buffer.from(await dlRes.arrayBuffer()).toString("base64");
+        }
+        const bodyBytes = await prepareImageForR2(
+          srcB64,
+          plugin.outputDimensions,
+          storage.contentType,
+        );
+        const ext =
+          storage.contentType === "image/png"
+            ? "png"
+            : storage.contentType === "image/webp"
+              ? "webp"
+              : "jpg";
+        const key = `${storage.keyPrefix}${taskId}.${ext}`;
+        try {
+          const r2Out = await putImage({
+            bucket: storage.bucket,
+            key,
+            body: bodyBytes,
+            contentType: storage.contentType,
+          });
+          const imageUrl = `${storage.publicBase.replace(/\/+$/, "")}/${key}`;
+          markTaskSucceeded(taskId, {
+            kind: "r2",
+            imageUrl,
+            mime: storage.contentType,
+            promptJson: promptJsonStr,
+            llmDurationMs,
+            imageDurationMs,
+            providerId: imageOutcome.providerId,
+            providerName: imageOutcome.providerName,
+            attempts: imageOutcome.attempts,
+            rewrittenPrompts: imageOutcome.rewrittenPromptHistory,
+            successRound: imageOutcome.successRound,
+            postReviewEdited,
+          });
+          console.log(
+            `[plugin-async] ✓ task=${taskId} llm=${llmDurationMs}ms image=${imageDurationMs}ms r2=${r2Out.durationMs}ms(att=${r2Out.attempts}) total=${Date.now() - overallStart}ms url=${imageUrl}`,
+          );
+        } catch (err) {
+          const isR2Err = err instanceof R2UploadError;
+          const msg = err instanceof Error ? err.message : String(err);
+          markTaskFailed(taskId, {
+            errorCode: isR2Err ? "r2_upload_failed" : "internal_error",
+            errorMsg: msg,
+            llmDurationMs,
+            imageDurationMs,
+            attempts: imageOutcome.attempts,
+            rewrittenPrompts: imageOutcome.rewrittenPromptHistory,
+          });
+          console.warn(`[plugin-async] ✗ task=${taskId} r2_upload_failed: ${msg}`);
+        }
       }
     } else {
+      let b64ForTranscode = imageOutcome.imageB64;
+      if (!b64ForTranscode && imageOutcome.imageUrl) {
+        const dlRes = await fetch(imageOutcome.imageUrl);
+        if (!dlRes.ok) throw new Error(`download upstream image failed: HTTP ${dlRes.status}`);
+        b64ForTranscode = Buffer.from(await dlRes.arrayBuffer()).toString("base64");
+      }
       const { b64Json, mime } = await transcodeToJpeg(
-        imageOutcome.imageB64,
+        b64ForTranscode,
         plugin.outputDimensions,
       );
       markTaskSucceeded(taskId, {

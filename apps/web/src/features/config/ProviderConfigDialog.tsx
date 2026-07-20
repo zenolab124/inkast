@@ -68,6 +68,8 @@ interface Props {
   onChange?: (providers: ProviderSummary[]) => void;
 }
 
+type ImageOutputMode = "b64" | "url";
+
 interface FormState {
   id: string | null;
   name: string;
@@ -83,9 +85,13 @@ interface FormState {
   imageRetryLimit: string;
   /** Inject the canonical Codex CLI headers (originator + User-Agent). */
   imageUseCodexHeader: boolean;
+  imageOutput: ImageOutputMode;
+  /** Extras fields not managed by UI — preserved on save so API-set values survive UI edits. */
+  imageExtrasPassthrough: Record<string, unknown>;
   llmModel: string;
   /** Same flag, per-kind: some proxies gate LLM quota on Codex headers too. */
   llmUseCodexHeader: boolean;
+  llmExtrasPassthrough: Record<string, unknown>;
 }
 
 const RETRY_LIMIT_MAX = 5;
@@ -126,6 +132,22 @@ function readUseCodexHeader(cap: ProviderCapability | undefined): boolean {
   return cap?.extras?.useCodexHeader === true;
 }
 
+function readImageOutput(cap: ProviderCapability | undefined): ImageOutputMode {
+  return cap?.extras?.imageOutput === "url" ? "url" : "b64";
+}
+
+const IMAGE_MANAGED_EXTRAS = new Set(["mode", "retryLimit", "useCodexHeader", "imageOutput"]);
+const LLM_MANAGED_EXTRAS = new Set(["useCodexHeader"]);
+
+function collectPassthrough(cap: ProviderCapability | undefined, managed: Set<string>): Record<string, unknown> {
+  if (!cap?.extras) return {};
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(cap.extras)) {
+    if (!managed.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 function emptyForm(): FormState {
   return {
     id: null,
@@ -136,8 +158,11 @@ function emptyForm(): FormState {
     imageMode: IMAGE_GENERATION_MODE_DEFAULT,
     imageRetryLimit: "",
     imageUseCodexHeader: false,
+    imageOutput: "b64",
+    imageExtrasPassthrough: {},
     llmModel: "",
     llmUseCodexHeader: false,
+    llmExtrasPassthrough: {},
   };
 }
 
@@ -153,15 +178,18 @@ function buildFormFromProvider(p: ProviderSummary): FormState {
     imageMode: readImageMode(image),
     imageRetryLimit: readRetryLimit(image),
     imageUseCodexHeader: readUseCodexHeader(image),
+    imageOutput: readImageOutput(image),
+    imageExtrasPassthrough: collectPassthrough(image, IMAGE_MANAGED_EXTRAS),
     llmModel: llm?.model ?? "",
     llmUseCodexHeader: readUseCodexHeader(llm),
+    llmExtrasPassthrough: collectPassthrough(llm, LLM_MANAGED_EXTRAS),
   };
 }
 
 function formToCapabilities(form: FormState): CapabilityInput[] {
   const caps: CapabilityInput[] = [];
   if (form.imageModel.trim()) {
-    const extras: Record<string, unknown> = {};
+    const extras: Record<string, unknown> = { ...form.imageExtrasPassthrough };
     if (form.imageMode !== IMAGE_GENERATION_MODE_DEFAULT) {
       extras.mode = form.imageMode;
     }
@@ -174,6 +202,9 @@ function formToCapabilities(form: FormState): CapabilityInput[] {
     if (form.imageUseCodexHeader) {
       extras.useCodexHeader = true;
     }
+    if (form.imageOutput === "url") {
+      extras.imageOutput = "url";
+    }
     caps.push({
       kind: "image",
       model: form.imageModel.trim(),
@@ -181,7 +212,7 @@ function formToCapabilities(form: FormState): CapabilityInput[] {
     });
   }
   if (form.llmModel.trim()) {
-    const extras: Record<string, unknown> = {};
+    const extras: Record<string, unknown> = { ...form.llmExtrasPassthrough };
     if (form.llmUseCodexHeader) {
       extras.useCodexHeader = true;
     }
@@ -538,6 +569,10 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                           value={form.imageUseCodexHeader}
                           onChange={v => setForm(prev => (prev ? { ...prev, imageUseCodexHeader: v } : prev))}
                         />
+                        <ImageOutputRow
+                          value={form.imageOutput}
+                          onChange={v => setForm(prev => (prev ? { ...prev, imageOutput: v } : prev))}
+                        />
                       </>
                     )}
                   </div>
@@ -868,6 +903,37 @@ function CodexHeaderRow({
         onCheckedChange={v => onChange(v === true)}
         aria-label={t.config.codexHeader.label}
       />
+    </div>
+  );
+}
+
+function ImageOutputRow({
+  value,
+  onChange,
+}: {
+  value: ImageOutputMode;
+  onChange: (next: ImageOutputMode) => void;
+}) {
+  const hintMap: Record<ImageOutputMode, string> = {
+    b64: "下载图片字节 → base64（适用于临时 URL 的第三方代理）",
+    url: "直接透传 URL（适用于自建代理直传 R2 的持久链接）",
+  };
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium text-foreground">出图交付</span>
+        <span className="text-[11px] text-muted-foreground">{hintMap[value]}</span>
+      </div>
+      <ToggleGroup
+        type="single"
+        size="sm"
+        value={value}
+        onValueChange={v => v && onChange(v as ImageOutputMode)}
+        aria-label="出图交付方式"
+      >
+        <ToggleGroupItem value="b64" aria-label="b64">b64</ToggleGroupItem>
+        <ToggleGroupItem value="url" aria-label="url">url</ToggleGroupItem>
+      </ToggleGroup>
     </div>
   );
 }

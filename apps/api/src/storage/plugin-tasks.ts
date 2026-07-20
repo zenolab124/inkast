@@ -24,6 +24,8 @@ export interface PluginTaskRow {
    * unrelated generation — a wrong image, not just wrong policy.
    */
   sourceImageUrl: string | null;
+  /** Caller-supplied aspect ratio override (e.g. "1:1", "3:4"). Null = use plugin.imageDefaults.size. */
+  ratio: string | null;
   callbackUrl: string;
   /**
    * Plaintext one-time token caller supplied at submit. Echoed back as
@@ -93,6 +95,7 @@ interface DbRow {
   plugin_id: string;
   prompt: string;
   source_image_url: string | null;
+  ratio: string | null;
   callback_url: string;
   callback_token: string;
   status: PluginTaskStatus;
@@ -123,6 +126,7 @@ function rowToTask(row: DbRow): PluginTaskRow {
     pluginId: row.plugin_id,
     prompt: row.prompt,
     sourceImageUrl: row.source_image_url,
+    ratio: row.ratio,
     callbackUrl: row.callback_url,
     callbackToken: row.callback_token,
     status: row.status,
@@ -185,6 +189,8 @@ export interface CreatePluginTaskInput {
   prompt: string;
   /** See PluginTaskRow.sourceImageUrl. Route handler validates before passing. */
   sourceImageUrl?: string;
+  /** Caller-supplied aspect ratio (e.g. "1:1", "3:4", "9:16"). Overrides plugin.imageDefaults.size via makeRatioSize(). */
+  ratio?: string;
   callbackUrl: string;
   callbackToken: string;
 }
@@ -195,14 +201,15 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
   db()
     .prepare(
       `INSERT INTO plugin_tasks
-        (id, plugin_id, prompt, source_image_url, callback_url, callback_token, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        (id, plugin_id, prompt, source_image_url, ratio, callback_url, callback_token, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
     )
     .run(
       id,
       input.pluginId,
       input.prompt,
       input.sourceImageUrl ?? null,
+      input.ratio ?? null,
       input.callbackUrl,
       input.callbackToken,
       now,
@@ -212,6 +219,7 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
     pluginId: input.pluginId,
     prompt: input.prompt,
     sourceImageUrl: input.sourceImageUrl ?? null,
+    ratio: input.ratio ?? null,
     callbackUrl: input.callbackUrl,
     callbackToken: input.callbackToken,
     status: "queued",

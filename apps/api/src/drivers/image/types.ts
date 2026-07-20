@@ -111,8 +111,15 @@ export interface ImageGenAttempt {
 }
 
 export interface ImageGenOutcome {
-  /** Base64-encoded image bytes. Caller decides format / file path. */
+  /** Base64-encoded image bytes. Empty string when imageUrl is set (bytes not downloaded). */
   imageB64: string;
+  /**
+   * Direct URL to the generated image. Set when the upstream already persisted
+   * the image (e.g. c2i-tasks writing to R2) and the URL is the final artifact.
+   * When set, imageB64 may be empty — consumers that need bytes should download
+   * from this URL; consumers whose storage matches can skip the round-trip.
+   */
+  imageUrl?: string;
   format: "png" | "jpeg" | "webp";
   providerId: string;
   providerName: string;

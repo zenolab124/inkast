@@ -16,12 +16,18 @@ const RESUME_POLL_THRESHOLD_MS = 300_000;
  * Supports multi-reference images natively via the /api/image-tasks/edits
  * endpoint (multiple entries in the JSON `images` array).
  */
+export interface C2iTasksResult {
+  b64: string;
+  /** Set when upstream returned a URL — consumer can use it directly. */
+  url?: string;
+}
+
 export async function callC2iTasksApi(
   provider: Provider,
   capability: ProviderCapability,
   apiKey: string,
   input: ImageGenInput,
-): Promise<string> {
+): Promise<C2iTasksResult> {
   const rootUrl = deriveRootUrl(provider.baseUrl);
   const refs = input.referenceImages ?? [];
   const hasRefs = refs.length > 0;
@@ -37,10 +43,9 @@ export async function callC2iTasksApi(
     const taskId = await submitTask(
       url, apiKey, capability, input, refs, hasRefs, controller.signal,
     );
-    const b64 = await pollUntilDone(
+    return await pollUntilDone(
       rootUrl, apiKey, taskId, controller.signal,
     );
-    return b64;
   } finally {
     clearTimeout(timeoutHandle);
     input.signal?.removeEventListener("abort", onParentAbort);
@@ -131,7 +136,7 @@ async function pollUntilDone(
   apiKey: string,
   taskId: string,
   signal: AbortSignal,
-): Promise<string> {
+): Promise<C2iTasksResult> {
   const pollUrl = `${rootUrl}/api/image-tasks?ids=${encodeURIComponent(taskId)}`;
   const pollStart = Date.now();
   let interval = POLL_INITIAL_MS;
@@ -194,27 +199,25 @@ async function pollUntilDone(
 
 async function extractResult(
   task: C2iTaskItem,
-  signal: AbortSignal,
-): Promise<string> {
+  _signal: AbortSignal,
+): Promise<C2iTasksResult> {
   const first = task.data?.[0];
   if (!first) {
     throw new Error("c2i-tasks: task succeeded but data is empty");
+  }
+
+  if (first.url) {
+    console.log(
+      `[image]   ← c2i-tasks url: ${first.url} (duration=${task.duration_ms}ms)`,
+    );
+    return { b64: "", url: first.url };
   }
 
   if (first.b64_json) {
     console.log(
       `[image]   ← c2i-tasks b64_json (${first.b64_json.length} chars, duration=${task.duration_ms}ms)`,
     );
-    return first.b64_json;
-  }
-
-  if (first.url) {
-    console.log(`[image]   ← c2i-tasks url, fetching bytes…`);
-    const dlRes = await fetch(first.url, { signal });
-    if (!dlRes.ok) throw new Error(`download c2i-tasks image failed: HTTP ${dlRes.status}`);
-    const buf = Buffer.from(await dlRes.arrayBuffer());
-    console.log(`[image]   ← downloaded ${buf.length} bytes`);
-    return buf.toString("base64");
+    return { b64: first.b64_json };
   }
 
   throw new Error("c2i-tasks: task data has neither b64_json nor url");
