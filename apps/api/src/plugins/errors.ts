@@ -36,11 +36,13 @@ export function toOpenAiError(err: unknown): MappedError {
         if (codes.includes("rate_limit")) {
           return mk(429, "image_provider_rate_limited", err.message, "rate_limit_error");
         }
-        if (codes.every(c => c === "auth")) {
+        if (codes.length > 0 && codes.every(c => c === "auth")) {
           return mk(500, "internal_error", "image provider auth misconfigured", "server_error");
         }
         return mk(503, "image_provider_unavailable", err.message, "api_error");
       }
+      case "rewrite_llm_failed":
+        return mk(502, "prompt_rewrite_failed", err.message, "api_error");
       case "moderation_rejected":
         return mk(422, "content_moderation_blocked", err.message, "invalid_request_error");
       case "aborted":

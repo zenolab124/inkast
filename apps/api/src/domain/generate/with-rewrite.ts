@@ -184,7 +184,7 @@ export async function driveWithRewriteFallback(
         : `rewrite r${round} LLM failed: ${msg}`;
       console.warn(`[generate]   ✗ rewrite r${round} step failed — ${composedMsg}`);
       throw new ImageGenError(
-        lastErr?.code ?? "all_providers_failed",
+        lastErr?.code ?? "rewrite_llm_failed",
         composedMsg,
         cumulativeAttempts,
         lastErr?.cause,

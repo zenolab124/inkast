@@ -131,6 +131,7 @@ export type ImageGenErrorCode =
   | "no_providers"             // pool is empty
   | "all_providers_failed"     // exhausted pool, none worked
   | "all_providers_failed_after_rewrite" // even after LLM-rewriting the prompt, no provider worked
+  | "rewrite_llm_failed"       // LLM rewrite step itself failed (not image provider)
   | "moderation_rejected"      // pool stopped on a moderation rejection
   | "aborted"
   | "unknown";
