@@ -26,6 +26,27 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const RETRY_DELAYS_MS = [500, 2_000, 8_000];
 
+/**
+ * AWS SDK errors keep their diagnosis in `name` / `code` / `$metadata`, and
+ * some carry an *empty* `message` — notably the `TimeoutError` raised when a
+ * connection attempt blows Node's Happy Eyeballs window. Logging `err.message`
+ * alone rendered those as a bare trailing colon, which is exactly how a
+ * cold-connection failure stayed undiagnosable in production logs.
+ */
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const e = err as Error & {
+    code?: string;
+    $metadata?: { httpStatusCode?: number; requestId?: string };
+  };
+  const parts = [e.name];
+  if (e.message) parts.push(e.message);
+  if (e.code) parts.push(`code=${e.code}`);
+  if (e.$metadata?.httpStatusCode) parts.push(`http=${e.$metadata.httpStatusCode}`);
+  if (e.$metadata?.requestId) parts.push(`reqId=${e.$metadata.requestId}`);
+  return parts.join(" ");
+}
+
 let _client: S3Client | null = null;
 
 function getClient(): S3Client {
@@ -92,13 +113,13 @@ export async function putImage(input: PutImageInput): Promise<PutImageOutput> {
       };
     } catch (err) {
       lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = describeError(err);
       console.warn(
         `[r2] ✗ put ${input.bucket}/${input.key} attempt ${attempt + 1} failed in ${Date.now() - started}ms: ${msg}`,
       );
     }
   }
-  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  const msg = describeError(lastErr);
   throw new R2UploadError(
     `R2 put failed after ${RETRY_DELAYS_MS.length + 1} attempts: ${msg}`,
     lastErr,
