@@ -49,6 +49,16 @@ export interface InkastPlugin {
     format?: ImageFormat;
   };
   /**
+   * Restrict every image-provider dispatch made for this plugin to these
+   * provider IDs. The restriction is enforced inside the image driver, so it
+   * survives prompt-rewrite retries and post-review edits.
+   *
+   * `undefined` preserves the legacy full-pool behavior for existing plugins.
+   * An explicit empty array is intentionally fail-closed and disables image
+   * dispatch for the plugin until at least one enabled provider ID is listed.
+   */
+  readonly imageProviderIds?: readonly string[];
+  /**
    * 出图后字节流的去向。不设时默认 `{kind:"b64"}` — 走 callback b64_json
    * 路径(v2 协议默认)。设 `{kind:"r2", ...}` 切到 R2 直传(v2.1 协议)。
    * 凭据(account_id / access_key / secret) 走 env,不进 plugin overlay。

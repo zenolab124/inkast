@@ -55,6 +55,17 @@ export interface RewritePolicy {
   maxRound?: 0 | 1 | 2 | 3;
 }
 
+/** Injectable only so policy behavior can be tested without real providers. */
+export interface RewriteDependencies {
+  generateImage: typeof generateImage;
+  rewriteBlockedPrompt: typeof rewriteBlockedPrompt;
+}
+
+const DEFAULT_REWRITE_DEPENDENCIES: RewriteDependencies = {
+  generateImage,
+  rewriteBlockedPrompt,
+};
+
 /** Live progress snapshot pushed once per provider attempt (all rounds). */
 export interface ProgressSnapshot {
   /** Round currently being attempted: 0 (original prompt) … maxRound. */
@@ -92,6 +103,7 @@ export async function driveWithRewriteFallback(
   input: ImageGenInput,
   policy: RewritePolicy = {},
   onProgress?: (snapshot: ProgressSnapshot) => void,
+  dependencies: RewriteDependencies = DEFAULT_REWRITE_DEPENDENCIES,
 ): Promise<DriveWithRewriteOutcome> {
   const skipOriginal = policy.skipOriginal === true;
   const maxRound: 0 | 1 | 2 | 3 = policy.maxRound ?? DEFAULT_MAX_ROUND;
@@ -128,7 +140,7 @@ export async function driveWithRewriteFallback(
   // ─── Round 0: caller's literal prompt, full pool ────────────────────────
   if (!skipOriginal) {
     try {
-      const outcome = await generateImage({ ...input, onAttempt: reportAttempt });
+      const outcome = await dependencies.generateImage({ ...input, onAttempt: reportAttempt });
       return {
         ...outcome,
         rewrittenPromptHistory: [],
@@ -165,7 +177,7 @@ export async function driveWithRewriteFallback(
 
     let rewrite;
     try {
-      rewrite = await rewriteBlockedPrompt({
+      rewrite = await dependencies.rewriteBlockedPrompt({
         originalPromptText: input.promptText,
         round: round as RewriteRound,
         previousRewrittens: rewritesHistory,
@@ -208,7 +220,7 @@ export async function driveWithRewriteFallback(
     const excludesForRetry = [...baseExcludes];
 
     try {
-      const retryOutcome = await generateImage({
+      const retryOutcome = await dependencies.generateImage({
         ...input,
         promptText: rewrite.rewrittenPromptText,
         excludeProviderIds: excludesForRetry,

@@ -212,6 +212,15 @@ export interface ListProvidersOptions {
   kind?: ProviderKind;
 }
 
+export interface ListEnabledCapabilitiesOptions {
+  /**
+   * Optional exact provider-ID scope. `undefined` reads the legacy full pool;
+   * an explicit empty list returns no rows. Filtering in SQL ensures keys for
+   * providers outside a caller's allowlist are not decrypted unnecessarily.
+   */
+  providerIds?: readonly string[];
+}
+
 /**
  * List providers. With no options, returns ALL providers with their full
  * capability set. With `kind`, returns only providers that have a capability
@@ -263,6 +272,7 @@ export function getProviderKey(id: string): { provider: Provider; apiKey: string
  */
 export function listEnabledCapabilities(
   kind: ProviderKind,
+  opts: ListEnabledCapabilitiesOptions = {},
 ): Array<{
   provider: Provider;
   capability: ProviderCapability;
@@ -271,6 +281,13 @@ export function listEnabledCapabilities(
   // Reclaim expired auto-disables before reading the pool, so a capability
   // that hit quota yesterday is back in rotation today without manual touch.
   reclaimExpiredAutoDisables();
+  if (opts.providerIds !== undefined && opts.providerIds.length === 0) return [];
+  const providerIds = opts.providerIds === undefined
+    ? undefined
+    : [...new Set(opts.providerIds)];
+  const providerScope = providerIds
+    ? `AND p.id IN (${providerIds.map(() => "?").join(",")})`
+    : "";
   const rows = db()
     .prepare(
       `SELECT p.id, p.name, p.base_url,
@@ -280,9 +297,12 @@ export function listEnabledCapabilities(
        FROM providers p
        JOIN provider_capabilities pc ON pc.provider_id = p.id
        WHERE pc.kind = ? AND pc.disabled = 0
+       ${providerScope}
        ORDER BY pc.priority ASC, p.created_at ASC`,
     )
-    .all(kind) as Array<ProviderRow & CapabilityRow & { provider_id?: string }>;
+    .all(kind, ...(providerIds ?? [])) as Array<
+      ProviderRow & CapabilityRow & { provider_id?: string }
+    >;
 
   return rows.map(row => {
     const capability = rowToCapability({

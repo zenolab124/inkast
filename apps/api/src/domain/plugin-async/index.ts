@@ -27,6 +27,7 @@ import {
   type PluginTaskRow,
 } from "../../storage/plugin-tasks.js";
 import { backfillPluginGalleryFromTasks } from "../../storage/plugin-gallery.js";
+import { redactUrl } from "./url-redaction.js";
 
 /**
  * v2 异步协议的核心。负责:
@@ -122,7 +123,7 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
     taskPolicies.set(task.id, input.pipelinePolicy);
   }
   console.log(
-    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}${input.sourceImageUrl ? ` source_image=${input.sourceImageUrl}` : ""}${input.pipelinePolicy ? ` policy=${JSON.stringify(input.pipelinePolicy)}` : ""}`,
+    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}${input.sourceImageUrl ? ` source_image=${redactUrl(input.sourceImageUrl)}` : ""}${input.pipelinePolicy ? ` policy=${JSON.stringify(input.pipelinePolicy)}` : ""}`,
   );
   enqueueTask(task.id);
   return task;
@@ -237,6 +238,7 @@ async function runTask(taskId: string): Promise<void> {
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
           referenceImages,
+          allowedProviderIds: plugin.imageProviderIds,
         },
         {
           skipOriginal: callerPolicy?.skipOriginal,
@@ -272,6 +274,7 @@ async function runTask(taskId: string): Promise<void> {
           size: plugin.imageDefaults.size,
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
+          allowedProviderIds: plugin.imageProviderIds,
         },
       });
       if (reviewOutcome.editApplied) {
@@ -509,6 +512,7 @@ class SourceImageFetchError extends Error {
 async function fetchSourceImage(
   url: string,
 ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+  const safeUrl = redactUrl(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SOURCE_IMAGE_FETCH_TIMEOUT_MS);
   const started = Date.now();
@@ -519,17 +523,16 @@ async function fetchSourceImage(
       // 跟随 3xx 会让 SSRF 防线静默失效(可被引到任意目标含内网)。R2 直出
       // 对象从不合法重定向,直接抛错落入下方 SourceImageFetchError 包装。
       res = await fetch(url, { signal: controller.signal, redirect: "error" });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch {
       throw new SourceImageFetchError(
         controller.signal.aborted
-          ? `source image fetch timed out after ${SOURCE_IMAGE_FETCH_TIMEOUT_MS}ms: ${url}`
-          : `source image fetch failed (${msg}): ${url}`,
+          ? `source image fetch timed out after ${SOURCE_IMAGE_FETCH_TIMEOUT_MS}ms: ${safeUrl}`
+          : `source image fetch failed: ${safeUrl}`,
       );
     }
     if (!res.ok) {
       throw new SourceImageFetchError(
-        `source image fetch returned HTTP ${res.status}: ${url}`,
+        `source image fetch returned HTTP ${res.status}: ${safeUrl}`,
       );
     }
     const contentType = (res.headers.get("content-type") ?? "")
@@ -538,29 +541,28 @@ async function fetchSourceImage(
       .toLowerCase();
     if (!SOURCE_IMAGE_ALLOWED_MIMES.has(contentType)) {
       throw new SourceImageFetchError(
-        `source image content-type not allowed (got "${contentType || "(none)"}", want image/png|jpeg|webp): ${url}`,
+        `source image content-type not allowed (got "${contentType || "(none)"}", want image/png|jpeg|webp): ${safeUrl}`,
       );
     }
     const declaredLen = Number(res.headers.get("content-length") ?? "0");
     if (declaredLen > SOURCE_IMAGE_MAX_BYTES) {
       throw new SourceImageFetchError(
-        `source image too large (Content-Length ${declaredLen} > ${SOURCE_IMAGE_MAX_BYTES}): ${url}`,
+        `source image too large (Content-Length ${declaredLen} > ${SOURCE_IMAGE_MAX_BYTES}): ${safeUrl}`,
       );
     }
     let buffer: Buffer;
     try {
       buffer = Buffer.from(await res.arrayBuffer());
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch {
       throw new SourceImageFetchError(
         controller.signal.aborted
-          ? `source image download timed out after ${SOURCE_IMAGE_FETCH_TIMEOUT_MS}ms: ${url}`
-          : `source image download failed (${msg}): ${url}`,
+          ? `source image download timed out after ${SOURCE_IMAGE_FETCH_TIMEOUT_MS}ms: ${safeUrl}`
+          : `source image download failed: ${safeUrl}`,
       );
     }
     if (buffer.length > SOURCE_IMAGE_MAX_BYTES) {
       throw new SourceImageFetchError(
-        `source image too large (${buffer.length} bytes > ${SOURCE_IMAGE_MAX_BYTES}): ${url}`,
+        `source image too large (${buffer.length} bytes > ${SOURCE_IMAGE_MAX_BYTES}): ${safeUrl}`,
       );
     }
     // Filename hint 走 mime 对应扩展名 — OpenAI SDK toFile 在 driver 里
@@ -874,13 +876,3 @@ function startGcLoop(): void {
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────
-
-/** Mask query string + token-shaped segments for log lines. */
-function redactUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return `${u.protocol}//${u.host}${u.pathname}`;
-  } catch {
-    return "<malformed>";
-  }
-}

@@ -111,22 +111,36 @@ function resolveProviderMinIntervalMs(capability: ProviderCapability): number {
  * Pool semantics match imagegen/scripts/generate.py — see types.ts header.
  */
 export async function generateImage(input: ImageGenInput): Promise<ImageGenOutcome> {
-  const fullPool = listEnabledCapabilities("image");
+  const allowedProviderIds = input.allowedProviderIds;
+  const fullPool = listEnabledCapabilities("image", {
+    providerIds: allowedProviderIds,
+  });
+  // The storage query is already scoped, but keep the in-memory policy filter
+  // as defense in depth so a future repository refactor cannot widen dispatch.
+  let pool = filterProviderPoolByAllowlist(fullPool, allowedProviderIds);
   const excludeSet = new Set(input.excludeProviderIds ?? []);
-  let pool = excludeSet.size > 0
-    ? fullPool.filter(p => !excludeSet.has(p.provider.id))
-    : fullPool;
+  if (excludeSet.size > 0) {
+    pool = pool.filter(p => !excludeSet.has(p.provider.id));
+  }
   if (input.requireMode) {
     pool = pool.filter(p => resolveMode(p.capability) === input.requireMode);
   }
   if (pool.length === 0) {
     throw new ImageGenError(
       "no_providers",
-      fullPool.length === 0
-        ? "no providers configured — add one in the provider config dialog"
-        : input.requireMode
-          ? `no provider matching mode=${input.requireMode} after excludes`
-          : `all ${fullPool.length} provider(s) are excluded from this run`,
+      allowedProviderIds !== undefined
+        ? allowedProviderIds.length === 0
+          ? "image provider allowlist is empty — dispatch is disabled for this caller"
+          : fullPool.length === 0
+            ? "no enabled image provider matches the configured allowlist"
+            : input.requireMode
+              ? `no allowlisted provider matching mode=${input.requireMode} after excludes`
+              : `all ${fullPool.length} allowlisted provider(s) are excluded from this run`
+        : fullPool.length === 0
+          ? "no providers configured — add one in the provider config dialog"
+          : input.requireMode
+            ? `no provider matching mode=${input.requireMode} after excludes`
+            : `all ${fullPool.length} provider(s) are excluded from this run`,
     );
   }
 
@@ -319,6 +333,22 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
     `exhausted all ${pool.length} providers — see attempts for details`,
     attempts,
   );
+}
+
+/**
+ * Apply an exact provider-ID allowlist without ever interpreting `[]` as an
+ * absent filter. `fullPool` already contains enabled image capabilities only,
+ * so missing and disabled IDs naturally produce no eligible entries.
+ *
+ * Exported for deterministic policy tests; production callers should use
+ * `generateImage`, which applies this before the first upstream request.
+ */
+export function filterProviderPoolByAllowlist<
+  T extends { provider: { id: string } },
+>(fullPool: readonly T[], allowedProviderIds: readonly string[] | undefined): T[] {
+  if (allowedProviderIds === undefined) return [...fullPool];
+  const allowed = new Set(allowedProviderIds);
+  return fullPool.filter(entry => allowed.has(entry.provider.id));
 }
 
 async function callProvider(

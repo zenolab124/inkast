@@ -69,6 +69,13 @@ const InkastPluginSchema = z.object({
     quality: ImageQualitySchema.optional(),
     format: ImageFormatSchema.optional(),
   }),
+  // `[]` is valid on purpose: it is a fail-closed kill switch. Omitting the
+  // field preserves the historical full-pool behavior for existing plugins.
+  imageProviderIds: z
+    .array(z.string().trim().min(1))
+    .max(32)
+    .refine(ids => new Set(ids).size === ids.length, "provider ids must be unique")
+    .optional(),
   imageStorage: ImageStorageSchema.optional(),
   llmBackend: LlmBackendDescriptorSchema.optional(),
   lang: z.enum(["zh", "en"]).optional(),
