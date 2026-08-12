@@ -15,16 +15,18 @@ test("text moderation accepts only internally consistent structured decisions", 
   assert.equal(validateTextModerationResult({ decision: "allow", category: "none" }), null);
   assert.equal(validateTextModerationResult({ decision: "block", category: "political_public_figure" }), null);
   assert.equal(validateTextModerationResult({ decision: "review", category: "political_sensitive" }), null);
-  assert.match(validateTextModerationResult({ decision: "allow", category: "political_sensitive" }) ?? "", /allow/);
-  assert.match(validateTextModerationResult({ decision: "block", category: "none" }) ?? "", /non-allow/);
-  assert.match(validateTextModerationResult({ decision: "maybe", category: "none" }) ?? "", /decision/);
+  assert.equal(validateTextModerationResult({ block: false, category: "none" }), null);
+  assert.equal(validateTextModerationResult({ blocked: true, category: "political_sensitive" }), null);
+  assert.match(validateTextModerationResult({ decision: "allow", category: "political_sensitive" }) ?? "", /invalid/);
+  assert.match(validateTextModerationResult({ decision: "block", category: "none" }) ?? "", /invalid/);
+  assert.match(validateTextModerationResult({ decision: "maybe", category: "none" }) ?? "", /invalid/);
 });
 
 test("text moderation forwards only the prompt and returns the classifier decision", async () => {
   let seen: CompleteJsonOptions | undefined;
   const fakeComplete = async <T>(opts: CompleteJsonOptions): Promise<CompleteJsonResult<T>> => {
     seen = opts;
-    return result({ decision: "block", category: "political_public_figure" } as T);
+    return result({ block: true, category: "political_public_figure" } as T);
   };
   const decision = await moderateText("测试输入", undefined, fakeComplete);
   assert.deepEqual(decision, { decision: "block", category: "political_public_figure" });
