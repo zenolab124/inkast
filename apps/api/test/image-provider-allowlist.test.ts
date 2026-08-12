@@ -77,6 +77,31 @@ test("provider allowlist is exact and empty/missing/disabled IDs fail closed", (
   );
 });
 
+test("private providers require an explicit caller allowlist", () => {
+  const pool = [
+    {
+      provider: { id: "shared-provider" },
+      capability: { extras: null },
+    },
+    {
+      provider: { id: "private-seedream" },
+      capability: { extras: { explicitAllowlistOnly: true } },
+    },
+  ];
+
+  assert.deepEqual(
+    filterProviderPoolByAllowlist(pool, undefined).map(x => x.provider.id),
+    ["shared-provider"],
+    "legacy callers must not discover private providers",
+  );
+  assert.deepEqual(
+    filterProviderPoolByAllowlist(pool, ["private-seedream"]).map(x => x.provider.id),
+    ["private-seedream"],
+    "an explicitly approved caller can use the private provider",
+  );
+  assert.deepEqual(filterProviderPoolByAllowlist(pool, []), []);
+});
+
 test("rewrite rounds retain the same provider allowlist and cannot escape", async () => {
   const allowlistsSeen: Array<readonly string[] | undefined> = [];
   const attemptedProviderIds: string[] = [];

@@ -339,19 +339,37 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
 }
 
 /**
- * Apply an exact provider-ID allowlist without ever interpreting `[]` as an
- * absent filter. `fullPool` already contains enabled image capabilities only,
- * so missing and disabled IDs naturally produce no eligible entries.
+ * Apply caller dispatch policy without ever interpreting `[]` as an absent
+ * filter. `fullPool` already contains enabled image capabilities only, so
+ * missing and disabled IDs naturally produce no eligible entries.
+ *
+ * A capability marked `explicitAllowlistOnly` is private to callers that name
+ * its provider ID explicitly. Legacy callers with no allowlist therefore keep
+ * the normal shared pool, but cannot accidentally discover a private channel.
  *
  * Exported for deterministic policy tests; production callers should use
  * `generateImage`, which applies this before the first upstream request.
  */
 export function filterProviderPoolByAllowlist<
-  T extends { provider: { id: string } },
+  T extends {
+    provider: { id: string };
+    capability?: { extras?: Record<string, unknown> | null };
+  },
 >(fullPool: readonly T[], allowedProviderIds: readonly string[] | undefined): T[] {
-  if (allowedProviderIds === undefined) return [...fullPool];
-  const allowed = new Set(allowedProviderIds);
-  return fullPool.filter(entry => allowed.has(entry.provider.id));
+  const allowed = allowedProviderIds === undefined
+    ? undefined
+    : new Set(allowedProviderIds);
+
+  return fullPool.filter(entry => {
+    const providerId = entry.provider.id;
+    if (allowed !== undefined && !allowed.has(providerId)) return false;
+
+    if (entry.capability?.extras?.explicitAllowlistOnly === true) {
+      return allowed?.has(providerId) === true;
+    }
+
+    return true;
+  });
 }
 
 async function callProvider(

@@ -60,7 +60,9 @@ export interface ImageGenInput {
    * Optional provider allowlist. `undefined` keeps the legacy full-pool
    * behavior; an explicit empty array matches no providers and must never be
    * treated as an absent restriction. Plugin callers use this to pin all
-   * original/rewrite/edit requests to approved image channels.
+   * original/rewrite/edit requests to approved image channels. Providers whose
+   * capability sets `extras.explicitAllowlistOnly=true` are invisible unless
+   * their ID appears in this explicit list.
    */
   allowedProviderIds?: readonly string[];
   /**

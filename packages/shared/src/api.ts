@@ -221,6 +221,8 @@ export interface ProviderCapability {
    * Reserved keys:
    *   - `mode` (image kind only): `ImageGenerationMode` — selects the upstream
    *     dispatch path. Absent = "images".
+   *   - `explicitAllowlistOnly` (image kind only): when true, this provider is
+   *     eligible only for callers whose explicit provider allowlist names it.
    */
   extras: Record<string, unknown> | null;
 }
