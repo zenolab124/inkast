@@ -184,10 +184,13 @@ export type ImageQuality = "low" | "medium" | "high";
  * - `"responses"` — POST /v1/responses with `tools: [{type:"image_generation"}]`.
  *   Lets a general chat model (gpt-5.3-codex etc.) call the image tool. Does
  *   NOT accept size/quality params — driver injects them into the prompt text.
+ * - `"seedream"` — POST /api/v3/images/generations using the Volcengine Ark
+ *   Seedream JSON contract. Text-to-image and reference-image generation share
+ *   the same endpoint; references travel in the `image` field.
  *
  * Persisted in `ProviderCapability.extras.mode` (image kind only).
  */
-export type ImageGenerationMode = "images" | "responses" | "c2i-tasks";
+export type ImageGenerationMode = "images" | "responses" | "c2i-tasks" | "seedream";
 
 export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
 

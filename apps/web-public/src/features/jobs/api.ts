@@ -149,6 +149,7 @@ async function runJob(jobId: string, job: JobRecord, req: SubmitJobRequest): Pro
       promptSnapshot: req.prompt,
       promptText,
       imagePath: `idb:${generationId}`, // 标记浏览器 IDB,实际 URL 在 gallery/api.ts 现场 createObjectURL
+      imageUrl: null,
       imageFormat: "png",
       size: req.size ?? "1024x1024",
       quality: req.quality ?? "high",

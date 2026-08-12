@@ -119,11 +119,12 @@ const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<ImageGenerationMode, string> = {
   images: "gpt-image-2",
   responses: "gpt-5.3-codex",
   "c2i-tasks": "gpt-image-2",
+  seedream: "doubao-seedream-4-5-251128",
 };
 
 function readImageMode(cap: ProviderCapability | undefined): ImageGenerationMode {
   const raw = cap?.extras?.mode;
-  return raw === "responses" || raw === "images" || raw === "c2i-tasks"
+  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream"
     ? raw
     : IMAGE_GENERATION_MODE_DEFAULT;
 }
@@ -811,6 +812,7 @@ function ImageModeRow({
     images: t.config.imageMode.hintImages,
     responses: t.config.imageMode.hintResponses,
     "c2i-tasks": t.config.imageMode.hintC2iTasks,
+    seedream: t.config.imageMode.hintSeedream,
   };
   return (
     <div className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
@@ -833,6 +835,9 @@ function ImageModeRow({
         </ToggleGroupItem>
         <ToggleGroupItem value="c2i-tasks" aria-label={t.config.imageMode.c2iTasks}>
           {t.config.imageMode.c2iTasks}
+        </ToggleGroupItem>
+        <ToggleGroupItem value="seedream" aria-label={t.config.imageMode.seedream}>
+          {t.config.imageMode.seedream}
         </ToggleGroupItem>
       </ToggleGroup>
     </div>

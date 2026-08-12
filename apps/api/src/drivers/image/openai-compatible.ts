@@ -20,6 +20,7 @@ import { acquireProviderSlot } from "../../lib/throttle.js";
 import { resolveExtraHeaders } from "../codex-header.js";
 import { callC2iTasksApi } from "./c2i-tasks.js";
 import { callImageGenerationTool } from "./openai-responses.js";
+import { callSeedreamApi } from "./seedream.js";
 import {
   ImageGenError,
   type AttemptErrorCode,
@@ -31,7 +32,7 @@ import {
 /** Read `extras.mode` off an image capability, with a safe default. */
 function resolveMode(capability: ProviderCapability): ImageGenerationMode {
   const raw = capability.extras?.mode;
-  return raw === "responses" || raw === "images" || raw === "c2i-tasks"
+  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream"
     ? raw
     : IMAGE_GENERATION_MODE_DEFAULT;
 }
@@ -206,6 +207,8 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           }
         } else if (mode === "responses") {
           b64 = await callImageGenerationTool(provider, capability, apiKey, input);
+        } else if (mode === "seedream") {
+          b64 = await callSeedreamApi(provider, capability, apiKey, input);
         } else {
           const result = await callProvider(provider, capability, apiKey, input);
           b64 = result.b64;

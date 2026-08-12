@@ -252,12 +252,15 @@ export const en: Translations = {
       images: "images",
       responses: "responses",
       c2iTasks: "c2i-tasks",
+      seedream: "Seedream",
       hintImages:
         "POST /v1/images/generations — for dedicated image models like gpt-image-2. Accepts size/quality params.",
       hintResponses:
         "POST /v1/responses with the image_generation tool — lets general chat models (gpt-5.3-codex etc.) emit images. Size/quality get appended to the prompt.",
       hintC2iTasks:
         "Async task API (chatgpt2api). Submits a task, polls for result. Supports multiple reference images natively.",
+      hintSeedream:
+        "Volcengine Ark Seedream. Text and reference-image generation both use /images/generations, with native multi-reference support. Use https://ark.cn-beijing.volces.com/api/v3 as Base URL.",
     },
     imageRetry: {
       label: "Retry attempts",

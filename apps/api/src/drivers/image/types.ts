@@ -17,6 +17,7 @@ import type {
   ImageSize as SharedImageSize,
   ImageQuality as SharedImageQuality,
   ImageFormat,
+  ImageGenerationMode,
 } from "@inkast/shared";
 
 export type ImageSize = SharedImageSize;
@@ -74,7 +75,7 @@ export interface ImageGenInput {
    * route — only available on images-mode providers (responses-mode
    * providers don't accept reference-based edits the same way).
    */
-  requireMode?: "images" | "responses" | "c2i-tasks";
+  requireMode?: ImageGenerationMode;
   /**
    * Progress hook: invoked once per provider attempt the moment the driver
    * records it (both successes and failures), BEFORE the overall call

@@ -112,11 +112,15 @@ const DEFAULT_MODEL: Record<ProviderKind, string> = {
 const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<ImageGenerationMode, string> = {
   images: "gpt-image-2",
   responses: "gpt-5.3-codex",
+  "c2i-tasks": "gpt-image-2",
+  seedream: "doubao-seedream-4-5-251128",
 };
 
 function readImageMode(cap: ProviderCapability | undefined): ImageGenerationMode {
   const raw = cap?.extras?.mode;
-  return raw === "responses" || raw === "images" ? raw : IMAGE_GENERATION_MODE_DEFAULT;
+  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream"
+    ? raw
+    : IMAGE_GENERATION_MODE_DEFAULT;
 }
 
 function readUseCodexHeader(cap: ProviderCapability | undefined): boolean {
@@ -769,13 +773,17 @@ function ImageModeRow({
   onChange: (next: ImageGenerationMode) => void;
 }) {
   const { t } = useLanguage();
-  const hint =
-    mode === "responses" ? t.config.imageMode.hintResponses : t.config.imageMode.hintImages;
+  const hintMap: Record<ImageGenerationMode, string> = {
+    images: t.config.imageMode.hintImages,
+    responses: t.config.imageMode.hintResponses,
+    "c2i-tasks": t.config.imageMode.hintC2iTasks,
+    seedream: t.config.imageMode.hintSeedream,
+  };
   return (
     <div className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
       <div className="flex flex-col gap-0.5">
         <span className="text-xs font-medium text-foreground">{t.config.imageMode.label}</span>
-        <span className="text-[11px] text-muted-foreground">{hint}</span>
+        <span className="text-[11px] text-muted-foreground">{hintMap[mode]}</span>
       </div>
       <ToggleGroup
         type="single"
@@ -789,6 +797,12 @@ function ImageModeRow({
         </ToggleGroupItem>
         <ToggleGroupItem value="responses" aria-label={t.config.imageMode.responses}>
           {t.config.imageMode.responses}
+        </ToggleGroupItem>
+        <ToggleGroupItem value="c2i-tasks" aria-label={t.config.imageMode.c2iTasks}>
+          {t.config.imageMode.c2iTasks}
+        </ToggleGroupItem>
+        <ToggleGroupItem value="seedream" aria-label={t.config.imageMode.seedream}>
+          {t.config.imageMode.seedream}
         </ToggleGroupItem>
       </ToggleGroup>
     </div>

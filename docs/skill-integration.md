@@ -133,7 +133,7 @@ curl http://localhost:21731/api/health
 
 **参考图对后端行为的影响**
 
-后端根据 provider 的 `mode`（`images` / `responses` / `c2i-tasks`）和参考图数量自动选择上游端点：
+后端根据 provider 的 `mode`（`images` / `responses` / `c2i-tasks` / `seedream`）和参考图数量自动选择上游端点：
 
 | 条件 | 上游端点 | 说明 |
 |---|---|---|
@@ -144,6 +144,8 @@ curl http://localhost:21731/api/health
 | 无参考图 + responses 模式 | `/v1/responses` | prompt 作为纯文本 input 传入 |
 | 有参考图 + c2i-tasks 模式 | `/api/image-tasks/edits` | 异步任务 API（chatgpt2api），原生多参考图 |
 | 无参考图 + c2i-tasks 模式 | `/api/image-tasks/generations` | 异步任务 API，纯文生图 |
+| 任意数量参考图 + seedream 模式 | `/api/v3/images/generations` | 火山方舟 Seedream JSON API；参考图放在 `image[]`，原生支持多参考图 |
+| 无参考图 + seedream 模式 | `/api/v3/images/generations` | 火山方舟 Seedream 文生图；默认请求 2K、单图、base64 返回且关闭上游可见水印 |
 
 Skill 侧不需要关心这些细节——只管传 `referenceImages` 数组，后端自动路由。
 
@@ -173,6 +175,10 @@ c2i-tasks 是针对 chatgpt2api 自定义异步任务 API 的专用模式。与 
 ```
 
 c2i-tasks 模式下参考图无数量限制（images 模式限 1 张，responses 模式上限 16 张）。后端会将每张参考图编码为 `data:<mime>;base64,...` 格式放入 JSON body 的 `images` 数组，由 chatgpt2api 负责上传到 ChatGPT 后端。
+
+**Seedream 模式说明**
+
+Seedream provider 的 Base URL 使用 `https://ark.cn-beijing.volces.com/api/v3`，模型由 provider 配置决定（当前推荐 `doubao-seedream-4-5-251128`）。它不使用 OpenAI 的 `/images/edits`：文生图、单参考图和多参考图都走 `/images/generations`，参考图以 data URL 放进 `image` 数组。`ratio:*` 会转成提示词中的目标比例并请求 2K，显式 `WxH` 则原样传给上游。
 
 **响应 200**
 
