@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { submitForPlugin } from "../../domain/plugin-async/index.js";
 import type { PipelinePolicy } from "../../domain/plugin-async/index.js";
+import {
+  moderateText,
+  TEXT_MODERATION_TIMEOUT_MS,
+} from "../../domain/text-moderation/index.js";
 import { getPluginTask } from "../../storage/plugin-tasks.js";
 import { pluginAuth } from "../middleware/plugin-auth.js";
 
@@ -14,6 +18,51 @@ const CALLBACK_TOKEN_MIN_LEN = 16;
 const CALLBACK_URL_MAX_LEN = 2048;
 const SOURCE_IMAGE_URL_MAX_LEN = 2048;
 const ALLOWED_RATIOS = new Set(["1:1", "3:4", "4:3", "9:16", "16:9"]);
+
+/**
+ * POST /plugins/v1/moderation/text
+ *
+ * 同步语义审核。只返回结构化结论，不持久化/回显/记录原文；模型池不可用时 503，
+ * 由调用方 fail-closed，但不得把技术故障记成用户违规。
+ */
+pluginRoutes.post("/v1/moderation/text", async c => {
+  let body: { text?: unknown };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json(
+      errBody("invalid_request", "invalid JSON body", "invalid_request_error"),
+      400,
+    );
+  }
+  if (typeof body.text !== "string") {
+    return c.json(
+      errBody("invalid_request", "'text' must be a string", "invalid_request_error"),
+      400,
+    );
+  }
+  const text = body.text.trim();
+  if (text.length < 1 || [...text].length > 500) {
+    return c.json(
+      errBody("invalid_request", "'text' must be 1..500 characters", "invalid_request_error"),
+      400,
+    );
+  }
+
+  const timeout = AbortSignal.timeout(TEXT_MODERATION_TIMEOUT_MS);
+  const signal = AbortSignal.any([c.req.raw.signal, timeout]);
+  try {
+    const result = await moderateText(text, signal);
+    return c.json(result);
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "unknown";
+    console.warn(`[moderation] semantic check unavailable (${name})`);
+    return c.json(
+      errBody("moderation_unavailable", "text moderation unavailable", "api_error"),
+      503,
+    );
+  }
+});
 
 /**
  * POST /plugins/v1/images/submit

@@ -155,7 +155,7 @@ ssh <server> 'journalctl -u inkast-api -n 20 --no-pager | grep -E "plugins|liste
 |---|---|
 | **Base URL**(公网入口) | `https://<your-domain>/inkast`(走 nginx /inkast/ 反代) |
 | **Base URL**(loopback) | `http://127.0.0.1:8787/plugins/v1`(同机 + ssh tunnel) |
-| **Endpoints** | `POST {BASE}/images/submit`,`GET {BASE}/images/status/{task_id}` |
+| **Endpoints** | `POST {BASE}/images/submit`,`GET {BASE}/images/status/{task_id}`；同步文本审核可选 `POST {BASE}/moderation/text` |
 | **Token** | 通过线下安全渠道交付(IM 端到端 / 1Password) |
 | **协议契约** | 参见 inkast 主线 [v2 协议规范](./plugin-overlay.md)(暂未拆出,sn-ap-ub 的 [inkast-integration.md](https://github.com/<your-org>/snap-ub) 是一份完整 worked example) |
 
