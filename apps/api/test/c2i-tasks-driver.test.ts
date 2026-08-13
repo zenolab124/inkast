@@ -5,7 +5,7 @@ import test from "node:test";
 import { callC2iTasksApi } from "../src/drivers/image/c2i-tasks.js";
 import type { Provider, ProviderCapability } from "../src/storage/providers.js";
 
-test("c2i-tasks forwards the requested output format", async () => {
+test("c2i-tasks explicitly opts into upstream output optimization", async () => {
   let generationBody: Record<string, unknown> | undefined;
   const server = createServer((req, res) => {
     if (req.url?.startsWith("/api/image-tasks?")) {
@@ -52,6 +52,7 @@ test("c2i-tasks forwards the requested output format", async () => {
 
     assert.equal(result.b64, "d2VicA==");
     assert.equal(generationBody?.output_format, "webp");
+    assert.equal(generationBody?.optimize_output, true);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

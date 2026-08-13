@@ -78,6 +78,9 @@ async function submitTask(
     model: capability.model,
     quality: input.quality ?? "high",
     output_format: input.format ?? "png",
+    // chatgpt2api keeps resize/compression disabled for all callers unless
+    // Inkast explicitly opts in on its dedicated async-task integration.
+    optimize_output: true,
   };
 
   const useRatio = isRatioSize(input.size);
