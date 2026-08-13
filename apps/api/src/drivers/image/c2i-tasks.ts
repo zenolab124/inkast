@@ -77,6 +77,7 @@ async function submitTask(
     prompt: promptText,
     model: capability.model,
     quality: input.quality ?? "high",
+    output_format: input.format ?? "png",
   };
 
   const useRatio = isRatioSize(input.size);
