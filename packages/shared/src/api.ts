@@ -190,10 +190,21 @@ export type ImageQuality = "low" | "medium" | "high";
  * - `"sensenova"` — POST /v1/images/generations using SenseNova U1 Fast's
  *   text-only contract. Aspect ratios are mapped to its fixed 2K dimensions;
  *   providers in this mode are excluded when reference images are present.
+ * - `"zhipu"` — POST /api/paas/v4/images/generations using CogView's
+ *   text-only contract and documented quality/size fields.
+ * - `"siliconflow"` — POST /v1/images/generations using SiliconFlow's
+ *   `image_size`/`batch_size` contract (for example Kwai-Kolors/Kolors).
  *
  * Persisted in `ProviderCapability.extras.mode` (image kind only).
  */
-export type ImageGenerationMode = "images" | "responses" | "c2i-tasks" | "seedream" | "sensenova";
+export type ImageGenerationMode =
+  | "images"
+  | "responses"
+  | "c2i-tasks"
+  | "seedream"
+  | "sensenova"
+  | "zhipu"
+  | "siliconflow";
 
 export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
 

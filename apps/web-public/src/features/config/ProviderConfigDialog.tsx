@@ -115,11 +115,13 @@ const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<ImageGenerationMode, string> = {
   "c2i-tasks": "gpt-image-2",
   seedream: "doubao-seedream-4-5-251128",
   sensenova: "sensenova-u1-fast",
+  zhipu: "cogview-4-250304",
+  siliconflow: "Kwai-Kolors/Kolors",
 };
 
 function readImageMode(cap: ProviderCapability | undefined): ImageGenerationMode {
   const raw = cap?.extras?.mode;
-  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova"
+  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova" || raw === "zhipu" || raw === "siliconflow"
     ? raw
     : IMAGE_GENERATION_MODE_DEFAULT;
 }
@@ -780,6 +782,8 @@ function ImageModeRow({
     "c2i-tasks": t.config.imageMode.hintC2iTasks,
     seedream: t.config.imageMode.hintSeedream,
     sensenova: t.config.imageMode.hintSenseNova,
+    zhipu: t.config.imageMode.hintZhipu,
+    siliconflow: t.config.imageMode.hintSiliconFlow,
   };
   return (
     <div className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
@@ -808,6 +812,12 @@ function ImageModeRow({
         </ToggleGroupItem>
         <ToggleGroupItem value="sensenova" aria-label={t.config.imageMode.sensenova}>
           {t.config.imageMode.sensenova}
+        </ToggleGroupItem>
+        <ToggleGroupItem value="zhipu" aria-label={t.config.imageMode.zhipu}>
+          {t.config.imageMode.zhipu}
+        </ToggleGroupItem>
+        <ToggleGroupItem value="siliconflow" aria-label={t.config.imageMode.siliconflow}>
+          {t.config.imageMode.siliconflow}
         </ToggleGroupItem>
       </ToggleGroup>
     </div>

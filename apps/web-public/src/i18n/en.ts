@@ -254,6 +254,8 @@ export const en: Translations = {
       c2iTasks: "c2i-tasks",
       seedream: "Seedream",
       sensenova: "SenseNova",
+      zhipu: "Zhipu",
+      siliconflow: "SiliconFlow",
       hintImages:
         "POST /v1/images/generations — for dedicated image models like gpt-image-2. Accepts size/quality params.",
       hintResponses:
@@ -264,6 +266,10 @@ export const en: Translations = {
         "Volcengine Ark Seedream. Text and reference-image generation both use /images/generations, with native multi-reference support. Use https://ark.cn-beijing.volces.com/api/v3 as Base URL.",
       hintSenseNova:
         "SenseNova U1 Fast text-to-image API. Ratios map to its fixed 2K sizes; requests with reference images skip this provider.",
+      hintZhipu:
+        "Zhipu CogView text-to-image API. Use https://open.bigmodel.cn/api/paas/v4 as Base URL. Reference images are not supported.",
+      hintSiliconFlow:
+        "SiliconFlow image API for models such as Kwai-Kolors/Kolors. Uses image_size; reference images are not supported.",
     },
     imageRetry: {
       label: "Retry attempts",

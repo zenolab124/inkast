@@ -245,11 +245,15 @@ export interface Translations {
       c2iTasks: string;
       seedream: string;
       sensenova: string;
+      zhipu: string;
+      siliconflow: string;
       hintImages: string;
       hintResponses: string;
       hintC2iTasks: string;
       hintSeedream: string;
       hintSenseNova: string;
+      hintZhipu: string;
+      hintSiliconFlow: string;
     };
     imageRetry: {
       label: string;
