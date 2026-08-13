@@ -244,10 +244,12 @@ export interface Translations {
       responses: string;
       c2iTasks: string;
       seedream: string;
+      sensenova: string;
       hintImages: string;
       hintResponses: string;
       hintC2iTasks: string;
       hintSeedream: string;
+      hintSenseNova: string;
     };
     imageRetry: {
       label: string;

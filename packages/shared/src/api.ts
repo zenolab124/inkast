@@ -187,10 +187,13 @@ export type ImageQuality = "low" | "medium" | "high";
  * - `"seedream"` — POST /api/v3/images/generations using the Volcengine Ark
  *   Seedream JSON contract. Text-to-image and reference-image generation share
  *   the same endpoint; references travel in the `image` field.
+ * - `"sensenova"` — POST /v1/images/generations using SenseNova U1 Fast's
+ *   text-only contract. Aspect ratios are mapped to its fixed 2K dimensions;
+ *   providers in this mode are excluded when reference images are present.
  *
  * Persisted in `ProviderCapability.extras.mode` (image kind only).
  */
-export type ImageGenerationMode = "images" | "responses" | "c2i-tasks" | "seedream";
+export type ImageGenerationMode = "images" | "responses" | "c2i-tasks" | "seedream" | "sensenova";
 
 export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
 

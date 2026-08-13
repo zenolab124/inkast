@@ -253,6 +253,7 @@ export const en: Translations = {
       responses: "responses",
       c2iTasks: "c2i-tasks",
       seedream: "Seedream",
+      sensenova: "SenseNova",
       hintImages:
         "POST /v1/images/generations — for dedicated image models like gpt-image-2. Accepts size/quality params.",
       hintResponses:
@@ -261,6 +262,8 @@ export const en: Translations = {
         "Async task API (chatgpt2api). Submits a task, polls for result. Supports multiple reference images natively.",
       hintSeedream:
         "Volcengine Ark Seedream. Text and reference-image generation both use /images/generations, with native multi-reference support. Use https://ark.cn-beijing.volces.com/api/v3 as Base URL.",
+      hintSenseNova:
+        "SenseNova U1 Fast text-to-image API. Ratios map to its fixed 2K sizes; requests with reference images skip this provider.",
     },
     imageRetry: {
       label: "Retry attempts",
