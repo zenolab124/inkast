@@ -7,6 +7,7 @@ import { driveWithRewriteFallback } from "../generate/with-rewrite.js";
 import { reviewAndMaybeEdit } from "../post-review-edit/index.js";
 import { ImageGenError, type ImageGenInput } from "../../drivers/image/types.js";
 import { putImage, R2UploadError } from "../../drivers/storage/r2.js";
+import { isAllowedUpstreamImageUrl } from "./upstream-url.js";
 import {
   listRegisteredPlugins,
   resolveLlmBackend,
@@ -298,15 +299,20 @@ async function runTask(taskId: string): Promise<void> {
     // 4. 出图持久化:按 plugin.imageStorage 分两条路
     //    - "b64"(默认):JPEG transcode(payload 缩 5x)+ DB b64_json 字段
     //    - "r2":可选 resize 后保留 PNG → R2 PUT → DB image_url 字段
-    //    - "r2" + driver 已返 imageUrl 且落在 publicBase 下 → 跳过上传直接用
+    //    - "r2" + overlay 显式授权 driver 的持久 URL origin → 跳过上传直接用
     const storage: PluginImageStorage = plugin.imageStorage ?? { kind: "b64" };
 
     if (storage.kind === "r2") {
-      // 快速路径：driver 已经把图存到 R2/CDN 并返回了 URL（如 chatgpt2api
-      // 直接出 img.124213.xyz URL）。只要不需要 resize 就直接用——driver 来自
-      // 我们自己配置的可信 provider 池，URL 无需二次校验。
+      // 快速路径：driver 已经把图存到 R2/CDN 并返回了持久 URL。必须由
+      // plugin overlay 显式授权 exact HTTPS origin，避免把其它 provider 的
+      // 临时 URL 当作长期成品链接回调出去。
       const upstreamUrl = imageOutcome.imageUrl;
-      const canSkipUpload = !!upstreamUrl && !plugin.outputDimensions;
+      const canSkipUpload =
+        !plugin.outputDimensions &&
+        isAllowedUpstreamImageUrl(
+          upstreamUrl,
+          plugin.upstreamImageUrlPassthrough?.allowedOrigins,
+        );
 
       if (canSkipUpload) {
         markTaskSucceeded(taskId, {

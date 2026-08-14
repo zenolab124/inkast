@@ -236,12 +236,14 @@ pluginRoutes.post("/v1/images/submit", async c => {
         400,
       );
     }
-    // 允许域 = 自家图床 publicBase + 可选的 sourceImageHosts 扩展白名单(如调用方
-    // 另有官方素材图床)。全部按"URL 前缀"匹配(归一化尾斜杠 + 强制 `${base}/`
-    // 边界,防 https://host.evil.com 这类前缀伪装)。
-    const allowedBases = [storage.publicBase, ...(plugin.sourceImageHosts ?? [])].map((b) =>
-      b.replace(/\/+$/, ""),
-    );
+    // 允许域 = 自家图床 publicBase + provider 持久直链 origin + 可选的
+    // sourceImageHosts。直链成品必须能继续作为 editSubmit 的源图，否则第一张
+    // 成功、下一轮编辑会被 SSRF 门禁拒绝。全部按 URL 前缀 + `/` 边界匹配。
+    const allowedBases = [
+      storage.publicBase,
+      ...(plugin.upstreamImageUrlPassthrough?.allowedOrigins ?? []),
+      ...(plugin.sourceImageHosts ?? []),
+    ].map((b) => b.replace(/\/+$/, ""));
     if (!allowedBases.some((base) => imageUrl.startsWith(`${base}/`))) {
       return c.json(
         errBody(

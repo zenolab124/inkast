@@ -57,6 +57,10 @@ token → plugin id 映射就绪
 
   outputDimensions?: { width: number; height: number };  // sharp cover-fit resize 兜底
 
+  upstreamImageUrlPassthrough?: {     // 显式允许 provider 持久 URL 直通 callback
+    allowedOrigins: string[];         // exact HTTPS origins，如 https://img.example.com
+  };                                  // 与 outputDimensions 互斥；未配置默认禁用
+
   llmBackend?:                       // 单 plugin 想指定专属 LLM provider 时用
     | "claude-code"
     | { kind: "openai-compatible"; providerId: string };

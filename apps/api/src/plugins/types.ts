@@ -65,6 +65,16 @@ export interface InkastPlugin {
    */
   readonly imageStorage?: PluginImageStorage;
   /**
+   * Explicit allowlist for provider-owned persistent image URLs that may be
+   * returned directly instead of downloading and uploading to `imageStorage`.
+   * Omitted by default: every upstream URL follows the normal persistence path.
+   * Exact HTTPS origin matching prevents temporary fallback-provider URLs from
+   * entering a plugin's long-lived callback contract.
+   */
+  readonly upstreamImageUrlPassthrough?: {
+    readonly allowedOrigins: readonly string[];
+  };
+  /**
    * LLM 通道描述符。未指定时回落到 `INKAST_DEFAULT_LLM_PROVIDER_ID` env
    * 指向的 openai-compatible provider;再没有则用 "claude-code"。jdc 部署
    * 必须配 env(本机无 ClaudeCode 凭据)。

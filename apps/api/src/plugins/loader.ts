@@ -24,6 +24,13 @@ import type { InkastPlugin } from "./types.js";
 const ImageSizeSchema = z.string().min(1);
 const ImageQualitySchema = z.string().min(1);
 const ImageFormatSchema = z.enum(["png", "jpeg", "webp"]);
+const HttpsOriginSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && parsed.origin === value;
+  }, "allowed origin must be an exact HTTPS origin without path, query, or credentials");
 
 /**
  * Where the generated image bytes land + how the callback addresses them.
@@ -77,6 +84,18 @@ const InkastPluginSchema = z.object({
     .refine(ids => new Set(ids).size === ids.length, "provider ids must be unique")
     .optional(),
   imageStorage: ImageStorageSchema.optional(),
+  upstreamImageUrlPassthrough: z
+    .object({
+      allowedOrigins: z
+        .array(HttpsOriginSchema)
+        .min(1)
+        .max(8)
+        .refine(
+          origins => new Set(origins).size === origins.length,
+          "allowedOrigins must be unique",
+        ),
+    })
+    .optional(),
   llmBackend: LlmBackendDescriptorSchema.optional(),
   lang: z.enum(["zh", "en"]).optional(),
   skipLlmExpansion: z.boolean().optional(),
@@ -89,6 +108,14 @@ const InkastPluginSchema = z.object({
     .optional(),
   // source_image 额外允许域：必须是 https origin 前缀（SSRF 白名单，防裸 host / http 降级混入）
   sourceImageHosts: z.array(z.string().regex(/^https:\/\/[^/]+$/)).optional(),
+}).superRefine((plugin, ctx) => {
+  if (plugin.upstreamImageUrlPassthrough && plugin.outputDimensions) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["outputDimensions"],
+      message: "outputDimensions cannot be combined with upstreamImageUrlPassthrough",
+    });
+  }
 });
 
 export function loadPluginConfigsFromDir(dir: string): InkastPlugin[] {
