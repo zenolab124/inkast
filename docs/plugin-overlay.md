@@ -62,7 +62,7 @@ token → plugin id 映射就绪
 
   upstreamImageUrlPassthrough?: {     // 显式允许 provider 持久 URL 直通 callback
     allowedOrigins: string[];         // exact HTTPS origins，如 https://img.example.com
-  };                                  // 命中直回；未命中的 fallback 仍可走 outputDimensions
+  };                                  // c2i 按请求选 R2；命中直回，fallback 仍可走 outputDimensions
 
   llmBackend?:                       // 单 plugin 想指定专属 LLM provider 时用
     | "claude-code"

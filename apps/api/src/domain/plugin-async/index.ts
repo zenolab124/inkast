@@ -238,6 +238,11 @@ async function runTask(taskId: string): Promise<void> {
           size: effectiveSize,
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
+          deliveryIntent:
+            plugin.imageStorage?.kind === "r2" &&
+            (plugin.upstreamImageUrlPassthrough?.allowedOrigins.length ?? 0) > 0
+              ? "persistent-url"
+              : "bytes",
           referenceImages,
           allowedProviderIds: plugin.imageProviderIds,
           providerOrder: plugin.imageProviderOrder,
@@ -285,6 +290,10 @@ async function runTask(taskId: string): Promise<void> {
         imageOutcome = {
           ...imageOutcome,
           imageB64: reviewOutcome.imageB64,
+          // The edit bytes supersede the pre-review provider artifact. Keeping
+          // its URL would incorrectly bypass persistence and return the
+          // unedited image to the caller.
+          imageUrl: undefined,
           attempts: [
             ...imageOutcome.attempts,
             ...(reviewOutcome.editDriverOutcome?.attempts ?? []),

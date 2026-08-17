@@ -12,7 +12,8 @@ const RESUME_POLL_THRESHOLD_MS = 300_000;
 /**
  * c2i-tasks driver — calls chatgpt2api's custom async task API.
  *
- * Flow: submit task → poll until done → return base64.
+ * Flow: submit task → poll until done → return bytes or an explicitly
+ * requested provider-owned persistent URL.
  * Supports multi-reference images natively via the /api/image-tasks/edits
  * endpoint (multiple entries in the JSON `images` array).
  */
@@ -78,6 +79,8 @@ async function submitTask(
     model: capability.model,
     quality: input.quality ?? "high",
     output_format: input.format ?? "png",
+    response_format: input.deliveryIntent === "persistent-url" ? "url" : "b64_json",
+    ...(input.deliveryIntent === "persistent-url" ? { url_source: "r2" } : {}),
     // chatgpt2api keeps resize/compression disabled for all callers unless
     // Inkast explicitly opts in on its dedicated async-task integration.
     optimize_output: true,

@@ -160,6 +160,7 @@ test("private providers require an explicit caller allowlist", () => {
 test("rewrite rounds retain the same provider allowlist and cannot escape", async () => {
   const allowlistsSeen: Array<readonly string[] | undefined> = [];
   const providerOrdersSeen: Array<"allowlist" | undefined> = [];
+  const deliveryIntentsSeen: Array<ImageGenInput["deliveryIntent"]> = [];
   const attemptedProviderIds: string[] = [];
   let driverCall = 0;
 
@@ -167,6 +168,7 @@ test("rewrite rounds retain the same provider allowlist and cannot escape", asyn
     generateImage: async (input: ImageGenInput): Promise<ImageGenOutcome> => {
       allowlistsSeen.push(input.allowedProviderIds);
       providerOrdersSeen.push(input.providerOrder);
+      deliveryIntentsSeen.push(input.deliveryIntent);
       const eligible = filterProviderPoolByAllowlist(
         enabledPool,
         input.allowedProviderIds,
@@ -225,6 +227,7 @@ test("rewrite rounds retain the same provider allowlist and cannot escape", asyn
       promptText: "original",
       allowedProviderIds: ["approved-a"],
       providerOrder: "allowlist",
+      deliveryIntent: "persistent-url",
     },
     { maxRound: 2 },
     undefined,
@@ -239,4 +242,5 @@ test("rewrite rounds retain the same provider allowlist and cannot escape", asyn
     ["approved-a"],
   ]);
   assert.deepEqual(providerOrdersSeen, ["allowlist", "allowlist", "allowlist"]);
+  assert.deepEqual(deliveryIntentsSeen, ["persistent-url", "persistent-url", "persistent-url"]);
 });

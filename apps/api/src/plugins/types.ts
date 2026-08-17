@@ -73,6 +73,9 @@ export interface InkastPlugin {
    * Explicit allowlist for provider-owned persistent image URLs that may be
    * returned directly instead of downloading and uploading to `imageStorage`.
    * Omitted by default: every upstream URL follows the normal persistence path.
+   * For c2i-tasks providers, an R2-backed plugin with this allowlist requests
+   * persistent URL delivery for that generation (`response_format=url`,
+   * `url_source=r2`) instead of relying on provider-global output settings.
    * Exact HTTPS origin matching prevents temporary fallback-provider URLs from
    * entering a plugin's long-lived callback contract. When `outputDimensions`
    * is also configured, only an allowlisted upstream URL bypasses resize; all

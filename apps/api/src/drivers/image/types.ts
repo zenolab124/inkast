@@ -23,6 +23,16 @@ import type {
 export type ImageSize = SharedImageSize;
 export type ImageQuality = SharedImageQuality;
 
+/**
+ * Request-level artifact delivery semantics.
+ *
+ * Most callers need bytes so Inkast can apply its own persistence policy.
+ * A plugin that explicitly trusts a provider-owned persistent URL may request
+ * `persistent-url`; provider drivers that support this opt-in can then avoid a
+ * download + re-upload round trip. Drivers without such a contract ignore it.
+ */
+export type ImageDeliveryIntent = "bytes" | "persistent-url";
+
 export interface ImageGenInput {
   /** Prompt text the provider sees. We typically pass JSON.stringify(prompt). */
   promptText: string;
@@ -35,6 +45,8 @@ export interface ImageGenInput {
    * domain layer re-sniffs before persisting.
    */
   format?: ImageFormat;
+  /** Defaults to `bytes`; never infer persistence from provider-global config. */
+  deliveryIntent?: ImageDeliveryIntent;
   n?: number;
   bypassModeration?: boolean;
   signal?: AbortSignal;

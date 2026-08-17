@@ -203,14 +203,14 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       try {
         let b64: string;
         let imageUrl: string | undefined;
-        // extras.imageOutput: "url" = provider 返回的 URL 是持久的（如自建
-        // chatgpt2api 直传 R2），可直接透传给下游，省掉下载+重传。
-        // 默认 "b64" = URL 是临时的（如 OpenAI 官方），必须下载转 b64。
-        const urlPassthrough = capability.extras?.imageOutput === "url";
         if (mode === "c2i-tasks") {
           const result = await callC2iTasksApi(provider, capability, apiKey, input);
           b64 = result.b64;
-          if (urlPassthrough) imageUrl = result.url;
+          // c2i V2 persistence is request-scoped. Provider-global
+          // extras.imageOutput is intentionally ignored for this mode so Web
+          // UI byte requests and plugin persistent-URL requests can safely
+          // share the same provider/key.
+          if (input.deliveryIntent === "persistent-url") imageUrl = result.url;
           else if (!b64 && result.url) {
             const dl = await fetch(result.url, { signal: input.signal });
             if (!dl.ok) throw new Error(`download c2i-tasks image failed: HTTP ${dl.status}`);

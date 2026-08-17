@@ -207,7 +207,10 @@ function formToCapabilities(form: FormState): CapabilityInput[] {
     if (form.imageUseCodexHeader) {
       extras.useCodexHeader = true;
     }
-    if (form.imageOutput === "url") {
+    // c2i V2 delivery is selected per request by the caller/plugin. Persisting
+    // a provider-global URL assumption here would make Web UI and plugin calls
+    // disagree about whether the same result URL is durable.
+    if (form.imageMode !== "c2i-tasks" && form.imageOutput === "url") {
       extras.imageOutput = "url";
     }
     caps.push({
@@ -574,10 +577,12 @@ export function ProviderConfigDialog({ open, onClose, onChange }: Props) {
                           value={form.imageUseCodexHeader}
                           onChange={v => setForm(prev => (prev ? { ...prev, imageUseCodexHeader: v } : prev))}
                         />
-                        <ImageOutputRow
-                          value={form.imageOutput}
-                          onChange={v => setForm(prev => (prev ? { ...prev, imageOutput: v } : prev))}
-                        />
+                        {form.imageMode !== "c2i-tasks" && (
+                          <ImageOutputRow
+                            value={form.imageOutput}
+                            onChange={v => setForm(prev => (prev ? { ...prev, imageOutput: v } : prev))}
+                          />
+                        )}
                       </>
                     )}
                   </div>

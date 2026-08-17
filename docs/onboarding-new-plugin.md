@@ -102,6 +102,7 @@ README.md                   ← 该 overlay 的部署 + 配置说明
 
 - **不设** → 上游 URL 仍按 `imageStorage` 下载并持久化，避免临时链接进入 callback
 - **设置** `allowedOrigins` → 仅 exact HTTPS origin 命中的持久 URL 可直接回调
+- 对 `c2i-tasks` 渠道，该配置同时会让本次请求显式发送 `response_format=url` + `url_source=r2`；不再依赖 provider 全局 `imageOutput`
 - 与 `outputDimensions` 并用时，仅白名单直链跳过 resize；其他结果继续 resize + 上传
 
 snap-ub 只允许 `https://img.124213.xyz` 直回，provider 白名单为
