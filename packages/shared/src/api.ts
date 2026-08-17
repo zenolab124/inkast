@@ -194,6 +194,8 @@ export type ImageQuality = "low" | "medium" | "high";
  *   text-only contract and documented quality/size fields.
  * - `"siliconflow"` — POST /v1/images/generations using SiliconFlow's
  *   `image_size`/`batch_size` contract (for example Kwai-Kolors/Kolors).
+ * - `"cloudbase"` — POST an HMAC-authenticated CloudBase HTTP Function that
+ *   invokes the Mini Program Growth Plan image model with `wx-server-sdk`.
  *
  * Persisted in `ProviderCapability.extras.mode` (image kind only).
  */
@@ -204,7 +206,8 @@ export type ImageGenerationMode =
   | "seedream"
   | "sensenova"
   | "zhipu"
-  | "siliconflow";
+  | "siliconflow"
+  | "cloudbase";
 
 export const IMAGE_GENERATION_MODE_DEFAULT: ImageGenerationMode = "images";
 

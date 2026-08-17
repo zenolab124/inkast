@@ -28,7 +28,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_ID,
-  IMAGE_GENERATION_MODE_DEFAULT,
   type CapabilityInput,
   type ImageGenerationMode,
   type ProviderCapability,
@@ -62,6 +61,9 @@ import {
   updateProvider,
 } from "./api.js";
 
+type PublicImageGenerationMode = Exclude<ImageGenerationMode, "cloudbase">;
+const PUBLIC_IMAGE_GENERATION_MODE_DEFAULT: PublicImageGenerationMode = "images";
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -75,7 +77,7 @@ interface FormState {
   apiKey: string;
   // Per-kind model fields. Empty string means the kind is not selected.
   imageModel: string;
-  imageMode: ImageGenerationMode;
+  imageMode: PublicImageGenerationMode;
   /**
    * 0-5,或 "" 表示"用全局默认"。控件用 string 存方便区分"空"和"0"
    * (number 类型下 0 和 NaN 都掉成 undefined,会丢"用户显式选 0"的信号)。
@@ -109,7 +111,7 @@ const DEFAULT_MODEL: Record<ProviderKind, string> = {
  * models that happen to support the image_generation tool. Only applied when
  * the user hasn't typed a model yet, so we don't trample manual choices.
  */
-const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<ImageGenerationMode, string> = {
+const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<PublicImageGenerationMode, string> = {
   images: "gpt-image-2",
   responses: "gpt-5.3-codex",
   "c2i-tasks": "gpt-image-2",
@@ -119,11 +121,11 @@ const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<ImageGenerationMode, string> = {
   siliconflow: "Kwai-Kolors/Kolors",
 };
 
-function readImageMode(cap: ProviderCapability | undefined): ImageGenerationMode {
+function readImageMode(cap: ProviderCapability | undefined): PublicImageGenerationMode {
   const raw = cap?.extras?.mode;
   return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova" || raw === "zhipu" || raw === "siliconflow"
     ? raw
-    : IMAGE_GENERATION_MODE_DEFAULT;
+    : PUBLIC_IMAGE_GENERATION_MODE_DEFAULT;
 }
 
 function readUseCodexHeader(cap: ProviderCapability | undefined): boolean {
@@ -137,7 +139,7 @@ function emptyForm(): FormState {
     baseUrl: "https://api.openai.com/v1",
     apiKey: "",
     imageModel: DEFAULT_MODEL.image,
-    imageMode: IMAGE_GENERATION_MODE_DEFAULT,
+    imageMode: PUBLIC_IMAGE_GENERATION_MODE_DEFAULT,
     imageRetryLimit: "",
     imageUseCodexHeader: false,
     llmModel: "",
@@ -166,7 +168,7 @@ function formToCapabilities(form: FormState): CapabilityInput[] {
   const caps: CapabilityInput[] = [];
   if (form.imageModel.trim()) {
     const extras: Record<string, unknown> = {};
-    if (form.imageMode !== IMAGE_GENERATION_MODE_DEFAULT) {
+    if (form.imageMode !== PUBLIC_IMAGE_GENERATION_MODE_DEFAULT) {
       extras.mode = form.imageMode;
     }
     if (form.imageRetryLimit !== "") {
@@ -772,11 +774,11 @@ function ImageModeRow({
   mode,
   onChange,
 }: {
-  mode: ImageGenerationMode;
-  onChange: (next: ImageGenerationMode) => void;
+  mode: PublicImageGenerationMode;
+  onChange: (next: PublicImageGenerationMode) => void;
 }) {
   const { t } = useLanguage();
-  const hintMap: Record<ImageGenerationMode, string> = {
+  const hintMap: Record<PublicImageGenerationMode, string> = {
     images: t.config.imageMode.hintImages,
     responses: t.config.imageMode.hintResponses,
     "c2i-tasks": t.config.imageMode.hintC2iTasks,
@@ -795,7 +797,7 @@ function ImageModeRow({
         type="single"
         size="sm"
         value={mode}
-        onValueChange={v => v && onChange(v as ImageGenerationMode)}
+        onValueChange={v => v && onChange(v as PublicImageGenerationMode)}
         aria-label={t.config.imageMode.label}
       >
         <ToggleGroupItem value="images" aria-label={t.config.imageMode.images}>

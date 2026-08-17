@@ -19,6 +19,7 @@ import {
 import { acquireProviderSlot } from "../../lib/throttle.js";
 import { resolveExtraHeaders } from "../codex-header.js";
 import { callC2iTasksApi } from "./c2i-tasks.js";
+import { callCloudBaseApi, CloudBaseImageError } from "./cloudbase.js";
 import { callImageGenerationTool } from "./openai-responses.js";
 import { callSeedreamApi } from "./seedream.js";
 import { callSenseNovaApi } from "./sensenova.js";
@@ -35,7 +36,7 @@ import {
 /** Read `extras.mode` off an image capability, with a safe default. */
 function resolveMode(capability: ProviderCapability): ImageGenerationMode {
   const raw = capability.extras?.mode;
-  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova" || raw === "zhipu" || raw === "siliconflow"
+  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova" || raw === "zhipu" || raw === "siliconflow" || raw === "cloudbase"
     ? raw
     : IMAGE_GENERATION_MODE_DEFAULT;
 }
@@ -121,7 +122,11 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
   });
   // The storage query is already scoped, but keep the in-memory policy filter
   // as defense in depth so a future repository refactor cannot widen dispatch.
-  let pool = filterProviderPoolByAllowlist(fullPool, allowedProviderIds);
+  let pool = filterProviderPoolByAllowlist(
+    fullPool,
+    allowedProviderIds,
+    input.providerOrder === "allowlist",
+  );
   const excludeSet = new Set(input.excludeProviderIds ?? []);
   if (excludeSet.size > 0) {
     pool = pool.filter(p => !excludeSet.has(p.provider.id));
@@ -221,6 +226,8 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           b64 = await callZhipuApi(provider, capability, apiKey, input);
         } else if (mode === "siliconflow") {
           b64 = await callSiliconFlowApi(provider, capability, apiKey, input);
+        } else if (mode === "cloudbase") {
+          b64 = await callCloudBaseApi(provider, capability, apiKey, input);
         } else {
           const result = await callProvider(provider, capability, apiKey, input);
           b64 = result.b64;
@@ -357,7 +364,8 @@ function supportsReferenceImages(mode: ImageGenerationMode): boolean {
 /**
  * Apply caller dispatch policy without ever interpreting `[]` as an absent
  * filter. `fullPool` already contains enabled image capabilities only, so
- * missing and disabled IDs naturally produce no eligible entries.
+ * missing and disabled IDs naturally produce no eligible entries. Callers may
+ * explicitly opt into using allowlist order instead of the global DB priority.
  *
  * A capability marked `explicitAllowlistOnly` is private to callers that name
  * its provider ID explicitly. Legacy callers with no allowlist therefore keep
@@ -371,12 +379,16 @@ export function filterProviderPoolByAllowlist<
     provider: { id: string };
     capability?: { extras?: Record<string, unknown> | null };
   },
->(fullPool: readonly T[], allowedProviderIds: readonly string[] | undefined): T[] {
+>(
+  fullPool: readonly T[],
+  allowedProviderIds: readonly string[] | undefined,
+  useAllowlistOrder = false,
+): T[] {
   const allowed = allowedProviderIds === undefined
     ? undefined
     : new Set(allowedProviderIds);
 
-  return fullPool.filter(entry => {
+  const eligible = fullPool.filter(entry => {
     const providerId = entry.provider.id;
     if (allowed !== undefined && !allowed.has(providerId)) return false;
 
@@ -386,6 +398,13 @@ export function filterProviderPoolByAllowlist<
 
     return true;
   });
+
+  if (allowedProviderIds === undefined || !useAllowlistOrder) return eligible;
+
+  const order = new Map(allowedProviderIds.map((providerId, index) => [providerId, index]));
+  return eligible.sort(
+    (left, right) => order.get(left.provider.id)! - order.get(right.provider.id)!,
+  );
 }
 
 async function callProvider(
@@ -620,6 +639,23 @@ function isQuotaExhausted(
 function classifyError(err: unknown): ClassifiedError {
   if (err instanceof Error && err.name === "AbortError") {
     return { code: "aborted", message: err.message };
+  }
+
+  if (err instanceof CloudBaseImageError) {
+    const message = `${err.code}: ${err.message}`;
+    if (err.code === "CONTENT_MODERATION_BLOCKED") {
+      return { code: "moderation", message, httpStatus: err.httpStatus, body: err.body };
+    }
+    if (err.code === "EXCEED_CONCURRENT_REQUEST_LIMIT") {
+      return { code: "rate_limit", message, httpStatus: err.httpStatus, body: err.body };
+    }
+    if (err.code === "UNAUTHORIZED") {
+      return { code: "auth", message, httpStatus: err.httpStatus, body: err.body };
+    }
+    if (err.httpStatus && err.httpStatus >= 500) {
+      return { code: "server", message, httpStatus: err.httpStatus, body: err.body };
+    }
+    return { code: "unknown", message, httpStatus: err.httpStatus, body: err.body };
   }
 
   if (err instanceof APIError) {

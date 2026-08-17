@@ -83,6 +83,7 @@ const InkastPluginSchema = z.object({
     .max(32)
     .refine(ids => new Set(ids).size === ids.length, "provider ids must be unique")
     .optional(),
+  imageProviderOrder: z.literal("allowlist").optional(),
   imageStorage: ImageStorageSchema.optional(),
   upstreamImageUrlPassthrough: z
     .object({
@@ -109,11 +110,11 @@ const InkastPluginSchema = z.object({
   // source_image 额外允许域：必须是 https origin 前缀（SSRF 白名单，防裸 host / http 降级混入）
   sourceImageHosts: z.array(z.string().regex(/^https:\/\/[^/]+$/)).optional(),
 }).superRefine((plugin, ctx) => {
-  if (plugin.upstreamImageUrlPassthrough && plugin.outputDimensions) {
+  if (plugin.imageProviderOrder && plugin.imageProviderIds === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["outputDimensions"],
-      message: "outputDimensions cannot be combined with upstreamImageUrlPassthrough",
+      path: ["imageProviderOrder"],
+      message: "imageProviderOrder requires imageProviderIds",
     });
   }
 });

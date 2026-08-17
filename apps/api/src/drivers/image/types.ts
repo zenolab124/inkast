@@ -55,6 +55,12 @@ export interface ImageGenInput {
     mimeType: string;
     /** Filename hint passed to OpenAI SDK toFile (extension matters). */
     filename: string;
+    /**
+     * Original validated HTTPS URL when the reference came from a plugin
+     * `source_image`. URL-only upstreams (CloudBase image-to-image) may reuse
+     * it after Inkast has already fetched and validated the bytes.
+     */
+    sourceUrl?: string;
   }>;
   /**
    * Optional provider allowlist. `undefined` keeps the legacy full-pool
@@ -65,6 +71,8 @@ export interface ImageGenInput {
    * their ID appears in this explicit list.
    */
   allowedProviderIds?: readonly string[];
+  /** Use `allowedProviderIds` order instead of global DB priority. */
+  providerOrder?: "allowlist";
   /**
    * Provider IDs to skip on this run. Used by the rewrite-on-block retry path
    * to avoid burning more time on a provider that already rejected the prompt

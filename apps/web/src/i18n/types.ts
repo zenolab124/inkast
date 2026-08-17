@@ -247,6 +247,7 @@ export interface Translations {
       sensenova: string;
       zhipu: string;
       siliconflow: string;
+      cloudbase: string;
       hintImages: string;
       hintResponses: string;
       hintC2iTasks: string;
@@ -254,6 +255,7 @@ export interface Translations {
       hintSenseNova: string;
       hintZhipu: string;
       hintSiliconFlow: string;
+      hintCloudBase: string;
     };
     imageRetry: {
       label: string;

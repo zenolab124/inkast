@@ -123,11 +123,12 @@ const DEFAULT_IMAGE_MODEL_FOR_MODE: Record<ImageGenerationMode, string> = {
   sensenova: "sensenova-u1-fast",
   zhipu: "cogview-4-250304",
   siliconflow: "Kwai-Kolors/Kolors",
+  cloudbase: "hunyuan-image",
 };
 
 function readImageMode(cap: ProviderCapability | undefined): ImageGenerationMode {
   const raw = cap?.extras?.mode;
-  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova" || raw === "zhipu" || raw === "siliconflow"
+  return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova" || raw === "zhipu" || raw === "siliconflow" || raw === "cloudbase"
     ? raw
     : IMAGE_GENERATION_MODE_DEFAULT;
 }
@@ -819,6 +820,7 @@ function ImageModeRow({
     sensenova: t.config.imageMode.hintSenseNova,
     zhipu: t.config.imageMode.hintZhipu,
     siliconflow: t.config.imageMode.hintSiliconFlow,
+    cloudbase: t.config.imageMode.hintCloudBase,
   };
   return (
     <div className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/60 px-3 py-2 pl-9">
@@ -853,6 +855,9 @@ function ImageModeRow({
         </ToggleGroupItem>
         <ToggleGroupItem value="siliconflow" aria-label={t.config.imageMode.siliconflow}>
           {t.config.imageMode.siliconflow}
+        </ToggleGroupItem>
+        <ToggleGroupItem value="cloudbase" aria-label={t.config.imageMode.cloudbase}>
+          {t.config.imageMode.cloudbase}
         </ToggleGroupItem>
       </ToggleGroup>
     </div>

@@ -240,6 +240,7 @@ async function runTask(taskId: string): Promise<void> {
           format: plugin.imageDefaults.format,
           referenceImages,
           allowedProviderIds: plugin.imageProviderIds,
+          providerOrder: plugin.imageProviderOrder,
         },
         {
           skipOriginal: callerPolicy?.skipOriginal,
@@ -276,6 +277,7 @@ async function runTask(taskId: string): Promise<void> {
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
           allowedProviderIds: plugin.imageProviderIds,
+          providerOrder: plugin.imageProviderOrder,
         },
       });
       if (reviewOutcome.editApplied) {
@@ -307,12 +309,10 @@ async function runTask(taskId: string): Promise<void> {
       // plugin overlay 显式授权 exact HTTPS origin，避免把其它 provider 的
       // 临时 URL 当作长期成品链接回调出去。
       const upstreamUrl = imageOutcome.imageUrl;
-      const canSkipUpload =
-        !plugin.outputDimensions &&
-        isAllowedUpstreamImageUrl(
-          upstreamUrl,
-          plugin.upstreamImageUrlPassthrough?.allowedOrigins,
-        );
+      const canSkipUpload = isAllowedUpstreamImageUrl(
+        upstreamUrl,
+        plugin.upstreamImageUrlPassthrough?.allowedOrigins,
+      );
 
       if (canSkipUpload) {
         markTaskSucceeded(taskId, {
@@ -517,7 +517,7 @@ class SourceImageFetchError extends Error {
  */
 async function fetchSourceImage(
   url: string,
-): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+): Promise<{ buffer: Buffer; mimeType: string; filename: string; sourceUrl: string }> {
   const safeUrl = redactUrl(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SOURCE_IMAGE_FETCH_TIMEOUT_MS);
@@ -582,7 +582,7 @@ async function fetchSourceImage(
     console.log(
       `[plugin-async]   source image fetched: ${buffer.length} bytes (${contentType}) in ${Date.now() - started}ms`,
     );
-    return { buffer, mimeType: contentType, filename };
+    return { buffer, mimeType: contentType, filename, sourceUrl: url };
   } finally {
     clearTimeout(timer);
   }

@@ -59,6 +59,11 @@ export interface InkastPlugin {
    */
   readonly imageProviderIds?: readonly string[];
   /**
+   * Optional plugin-local provider ordering. Omit to retain global DB priority;
+   * `"allowlist"` makes `imageProviderIds` order the fallback sequence.
+   */
+  readonly imageProviderOrder?: "allowlist";
+  /**
    * 出图后字节流的去向。不设时默认 `{kind:"b64"}` — 走 callback b64_json
    * 路径(v2 协议默认)。设 `{kind:"r2", ...}` 切到 R2 直传(v2.1 协议)。
    * 凭据(account_id / access_key / secret) 走 env,不进 plugin overlay。
@@ -69,7 +74,9 @@ export interface InkastPlugin {
    * returned directly instead of downloading and uploading to `imageStorage`.
    * Omitted by default: every upstream URL follows the normal persistence path.
    * Exact HTTPS origin matching prevents temporary fallback-provider URLs from
-   * entering a plugin's long-lived callback contract.
+   * entering a plugin's long-lived callback contract. When `outputDimensions`
+   * is also configured, only an allowlisted upstream URL bypasses resize; all
+   * other provider results still run through the normal resize + upload path.
    */
   readonly upstreamImageUrlPassthrough?: {
     readonly allowedOrigins: readonly string[];

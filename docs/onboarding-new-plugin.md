@@ -87,22 +87,27 @@ README.md                   ← 该 overlay 的部署 + 配置说明
 | `quality` | `"high"` / `"medium"` / `"low"` / `"standard"` / `"hd"`(看 image provider 支持哪些) |
 | `format` | `"png"` / `"jpeg"` / `"webp"` |
 
-**snap-ub 用 `size: "622x866"`**，由固定 GPT 渠道在上传自身 R2 前生成最终尺寸 WebP。
+**snap-ub 用 `size: "622x866"`**。GPT 主渠道在上传自身 R2 前生成最终尺寸 WebP；
+八方 fallback 的结果由 Inkast 下载并写 snap-ub R2。
 
 #### 3c. `outputDimensions`(可选)
 
 - **不设** → inkast 不 resize,把图模输出原样返
 - **设** `{ width, height }` → inkast 用 sharp `cover-fit` 裁切到精确像素(主体居中)
 
-如果上游已经按精确尺寸生成最终成品链接，就不要再设置该字段。
+可以与 `upstreamImageUrlPassthrough` 同时设置：命中受信任持久 URL 的主渠道直接
+回调，未命中的备用渠道仍按这里的尺寸处理后再上传。
 
 #### 3d. `upstreamImageUrlPassthrough`(可选)
 
 - **不设** → 上游 URL 仍按 `imageStorage` 下载并持久化，避免临时链接进入 callback
 - **设置** `allowedOrigins` → 仅 exact HTTPS origin 命中的持久 URL 可直接回调
-- 与 `outputDimensions` 互斥；需要本地 resize 时不能走直链
+- 与 `outputDimensions` 并用时，仅白名单直链跳过 resize；其他结果继续 resize + 上传
 
-snap-ub 只允许 `https://img.124213.xyz`，同时将 provider allowlist 固定到能返回该持久链接的 GPT 渠道。备用渠道的临时 URL 不会被误直通。
+snap-ub 只允许 `https://img.124213.xyz` 直回，provider 白名单为
+`GPT → 八方`，并配置 `imageProviderOrder: "allowlist"` 让该数组成为
+插件内 fallback 顺序。备用渠道的临时 URL 不会被误直通，而是继续走 Inkast 下载
+并写 snap-ub R2 的 fallback。
 
 #### 3e. 业务约束语言(`systemPromptPatch` / `skipLlmConstraintsText`)
 

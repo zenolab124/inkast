@@ -47,6 +47,9 @@ token → plugin id 映射就绪
     format?: "png" | "jpeg" | "webp";
   };
 
+  imageProviderIds?: string[];       // provider 白名单；[] 为关闭
+  imageProviderOrder?: "allowlist"; // 可选：按上面数组顺序 fallback；省略走全局 priority
+
   // 可选
   systemPromptPatch?: string;        // LLM 模式: 追加到 system prompt 末尾
   enforceFields?: Record<string, unknown>;  // LLM 输出后强制覆盖
@@ -59,7 +62,7 @@ token → plugin id 映射就绪
 
   upstreamImageUrlPassthrough?: {     // 显式允许 provider 持久 URL 直通 callback
     allowedOrigins: string[];         // exact HTTPS origins，如 https://img.example.com
-  };                                  // 与 outputDimensions 互斥；未配置默认禁用
+  };                                  // 命中直回；未命中的 fallback 仍可走 outputDimensions
 
   llmBackend?:                       // 单 plugin 想指定专属 LLM provider 时用
     | "claude-code"

@@ -248,6 +248,7 @@ export const zh: Translations = {
       sensenova: "SenseNova",
       zhipu: "智谱",
       siliconflow: "硅基流动",
+      cloudbase: "CloudBase",
       hintImages: "POST /v1/images/generations,适用于 gpt-image-2 等专用生图模型,支持 size/quality 参数。",
       hintResponses: "POST /v1/responses + image_generation 工具,让通用模型(如 gpt-5.3-codex)调工具出图;size/quality 会自动拼到提示词。",
       hintC2iTasks: "异步任务 API (chatgpt2api)。提交任务后轮询结果,原生支持多参考图。",
@@ -255,6 +256,7 @@ export const zh: Translations = {
       hintSenseNova: "SenseNova U1 Fast 专用文生图接口。比例自动映射为官方 2K 尺寸；不支持参考图，带图任务会跳过该渠道。",
       hintZhipu: "智谱 CogView 文生图接口。Base URL 填 https://open.bigmodel.cn/api/paas/v4；不支持参考图。",
       hintSiliconFlow: "硅基流动图像接口，适用于 Kwai-Kolors/Kolors。使用 image_size 参数；不支持参考图。",
+      hintCloudBase: "HMAC 鉴权的腾讯云开发 HTTP 云函数，由云函数内 wx-server-sdk 调用成长计划生图额度。API key 填代理共享密钥。",
     },
     imageRetry: {
       label: "重试次数",

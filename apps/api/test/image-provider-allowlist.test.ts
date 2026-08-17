@@ -44,12 +44,34 @@ test("plugin overlay distinguishes omitted allowlist from explicit empty kill sw
         imageProviderIds: [],
       }),
     );
+    writeFileSync(
+      join(dir, "hybrid-output.json"),
+      JSON.stringify({
+        id: "hybrid-output",
+        name: "Trusted direct URL with resized fallbacks",
+        imageDefaults: {},
+        imageProviderIds: ["gpt", "cloudbase", "bafang"],
+        imageProviderOrder: "allowlist",
+        outputDimensions: { width: 622, height: 866 },
+        upstreamImageUrlPassthrough: {
+          allowedOrigins: ["https://img.example.com"],
+        },
+      }),
+    );
 
     const plugins = loadPluginConfigsFromDir(dir);
     const legacy = plugins.find(plugin => plugin.id === "legacy");
     const closed = plugins.find(plugin => plugin.id === "closed");
     assert.equal(legacy?.imageProviderIds, undefined);
     assert.deepEqual(closed?.imageProviderIds, []);
+    assert.deepEqual(
+      plugins.find(plugin => plugin.id === "hybrid-output")?.outputDimensions,
+      { width: 622, height: 866 },
+    );
+    assert.equal(
+      plugins.find(plugin => plugin.id === "hybrid-output")?.imageProviderOrder,
+      "allowlist",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -74,6 +96,39 @@ test("provider allowlist is exact and empty/missing/disabled IDs fail closed", (
     ),
     [],
     "disabled capabilities are absent from the enabled pool and cannot be selected",
+  );
+});
+
+test("explicit provider allowlist order overrides global pool priority", () => {
+  const globallyOrderedPool = [
+    { provider: { id: "cloudbase" } },
+    { provider: { id: "gpt" } },
+    { provider: { id: "bafang" } },
+  ];
+
+  assert.deepEqual(
+    filterProviderPoolByAllowlist(
+      globallyOrderedPool,
+      ["gpt", "cloudbase", "bafang"],
+      true,
+    ).map(x => x.provider.id),
+    ["gpt", "cloudbase", "bafang"],
+  );
+});
+
+test("allowlist keeps global priority unless caller opts into local order", () => {
+  const globallyOrderedPool = [
+    { provider: { id: "cloudbase" } },
+    { provider: { id: "gpt" } },
+    { provider: { id: "bafang" } },
+  ];
+
+  assert.deepEqual(
+    filterProviderPoolByAllowlist(
+      globallyOrderedPool,
+      ["gpt", "cloudbase", "bafang"],
+    ).map(x => x.provider.id),
+    ["cloudbase", "gpt", "bafang"],
   );
 });
 
@@ -104,13 +159,19 @@ test("private providers require an explicit caller allowlist", () => {
 
 test("rewrite rounds retain the same provider allowlist and cannot escape", async () => {
   const allowlistsSeen: Array<readonly string[] | undefined> = [];
+  const providerOrdersSeen: Array<"allowlist" | undefined> = [];
   const attemptedProviderIds: string[] = [];
   let driverCall = 0;
 
   const dependencies: RewriteDependencies = {
     generateImage: async (input: ImageGenInput): Promise<ImageGenOutcome> => {
       allowlistsSeen.push(input.allowedProviderIds);
-      const eligible = filterProviderPoolByAllowlist(enabledPool, input.allowedProviderIds);
+      providerOrdersSeen.push(input.providerOrder);
+      const eligible = filterProviderPoolByAllowlist(
+        enabledPool,
+        input.allowedProviderIds,
+        input.providerOrder === "allowlist",
+      );
       assert.equal(eligible.length, 1);
       const providerId = eligible[0]!.provider.id;
       attemptedProviderIds.push(providerId);
@@ -160,7 +221,11 @@ test("rewrite rounds retain the same provider allowlist and cannot escape", asyn
   };
 
   const outcome = await driveWithRewriteFallback(
-    { promptText: "original", allowedProviderIds: ["approved-a"] },
+    {
+      promptText: "original",
+      allowedProviderIds: ["approved-a"],
+      providerOrder: "allowlist",
+    },
     { maxRound: 2 },
     undefined,
     dependencies,
@@ -173,4 +238,5 @@ test("rewrite rounds retain the same provider allowlist and cannot escape", asyn
     ["approved-a"],
     ["approved-a"],
   ]);
+  assert.deepEqual(providerOrdersSeen, ["allowlist", "allowlist", "allowlist"]);
 });

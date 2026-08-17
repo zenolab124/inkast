@@ -256,6 +256,7 @@ export const en: Translations = {
       sensenova: "SenseNova",
       zhipu: "Zhipu",
       siliconflow: "SiliconFlow",
+      cloudbase: "CloudBase",
       hintImages:
         "POST /v1/images/generations — for dedicated image models like gpt-image-2. Accepts size/quality params.",
       hintResponses:
@@ -270,6 +271,8 @@ export const en: Translations = {
         "Zhipu CogView text-to-image API. Use https://open.bigmodel.cn/api/paas/v4 as Base URL. Reference images are not supported.",
       hintSiliconFlow:
         "SiliconFlow image API for models such as Kwai-Kolors/Kolors. Uses image_size; reference images are not supported.",
+      hintCloudBase:
+        "HMAC-authenticated Tencent CloudBase HTTP Function. The function invokes the Mini Program Growth Plan image model via wx-server-sdk; enter the proxy shared secret as the API key.",
     },
     imageRetry: {
       label: "Retry attempts",
