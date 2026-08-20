@@ -26,6 +26,19 @@ export type PluginImageStorage =
       keyPrefix: string;           // e.g. "aiVariants/", "" for bucket root
       contentType: "image/png" | "image/jpeg" | "image/webp";
     };
+
+export interface PluginOutputDimensions {
+  readonly width: number;
+  readonly height: number;
+  /** Existing plugins default to top-anchored cover. Transparent assets opt in here. */
+  readonly fit?: "cover" | "contain-alpha";
+  /** Transparent safe margin on each canvas edge. Used only by contain-alpha. */
+  readonly paddingPercent?: number;
+  /** Alpha values at or below this threshold are treated as invisible. */
+  readonly alphaThreshold?: number;
+  /** Maximum visible ratio accepted in any outer 10% corner sample. */
+  readonly maxCornerAlphaRatio?: number;
+}
 export interface InkastPlugin {
   readonly id: string;
   readonly name: string;
@@ -123,7 +136,7 @@ export interface InkastPlugin {
    *
    * 不设则原样输出 driver 给的尺寸。
    */
-  readonly outputDimensions?: { width: number; height: number };
+  readonly outputDimensions?: PluginOutputDimensions;
   /**
    * source_image 的额外允许域(完整 origin 前缀,如 "https://msnap.124213.xyz")。
    * SSRF 白名单默认只放行 imageStorage.publicBase(自家图床);调用方另有

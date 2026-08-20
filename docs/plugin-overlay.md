@@ -58,7 +58,14 @@ token → plugin id 映射就绪
   skipLlmExpansion?: boolean;        // true = 跳过 LLM 拆解,直接散文 prompt
   skipLlmConstraintsText?: string;   // skipLlmExpansion=true 时拼到 user prompt 后面
 
-  outputDimensions?: { width: number; height: number };  // sharp cover-fit resize 兜底
+  outputDimensions?: {
+    width: number;
+    height: number;
+    fit?: "cover" | "contain-alpha"; // 省略时沿用 top-cover；透明资产可选 alpha-aware contain
+    paddingPercent?: number;           // contain-alpha 每边安全边距，默认 4
+    alphaThreshold?: number;           // 可见 Alpha 阈值，默认 12
+    maxCornerAlphaRatio?: number;      // 任一 10% 角区最大污染率，默认 0.02
+  };
 
   upstreamImageUrlPassthrough?: {     // 显式允许 provider 持久 URL 直通 callback
     allowedOrigins: string[];         // exact HTTPS origins，如 https://img.example.com

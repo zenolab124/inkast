@@ -12,7 +12,11 @@ import {
   listRegisteredPlugins,
   resolveLlmBackend,
 } from "../../plugins/registry.js";
-import type { InkastPlugin, PluginImageStorage } from "../../plugins/types.js";
+import type {
+  InkastPlugin,
+  PluginImageStorage,
+  PluginOutputDimensions,
+} from "../../plugins/types.js";
 import { toOpenAiError } from "../../plugins/errors.js";
 import {
   createPluginTask,
@@ -615,7 +619,7 @@ async function fetchSourceImage(
  */
 async function transcodeToJpeg(
   srcB64: string,
-  outputDims?: { width: number; height: number },
+  outputDims?: PluginOutputDimensions,
 ): Promise<{ b64Json: string; mime: string }> {
   const srcBytes = Buffer.from(srcB64, "base64");
 
@@ -629,6 +633,10 @@ async function transcodeToJpeg(
     ) {
       return { b64Json: srcB64, mime: "image/jpeg" };
     }
+  }
+
+  if (outputDims?.fit === "contain-alpha") {
+    throw new Error("contain-alpha output requires PNG R2 storage");
   }
 
   let pipeline = sharp(srcBytes);
@@ -658,14 +666,20 @@ async function transcodeToJpeg(
  * 用 sharp 处理(resize cover-fit / format re-encode)。image driver 当前
  * 总是返 PNG,所以 (contentType=png && !resize) 走 passthrough。
  */
-async function prepareImageForR2(
+export async function prepareImageForR2(
   srcB64: string,
-  outputDims: { width: number; height: number } | undefined,
+  outputDims: PluginOutputDimensions | undefined,
   contentType: "image/png" | "image/jpeg" | "image/webp",
 ): Promise<Buffer> {
   const srcBytes = Buffer.from(srcB64, "base64");
   if (!outputDims && contentType === "image/png") {
     return srcBytes;
+  }
+  if (outputDims?.fit === "contain-alpha") {
+    if (contentType !== "image/png") {
+      throw new Error("contain-alpha output must remain image/png");
+    }
+    return normalizeTransparentAsset(srcBytes, outputDims);
   }
   let pipeline = sharp(srcBytes);
   if (outputDims) {
@@ -680,6 +694,75 @@ async function prepareImageForR2(
   // image/webp — lossy q=85 hits ~5-10x compression vs PNG with no
   // perceivable quality drop for character art / illustrations.
   return pipeline.webp({ quality: 85 }).toBuffer();
+}
+
+async function normalizeTransparentAsset(
+  srcBytes: Buffer,
+  output: PluginOutputDimensions,
+): Promise<Buffer> {
+  const metadata = await sharp(srcBytes).metadata();
+  if (!metadata.hasAlpha) {
+    throw new Error("output_validation_failed: true transparent alpha is required");
+  }
+
+  const alphaThreshold = output.alphaThreshold ?? 12;
+  const maxCornerAlphaRatio = output.maxCornerAlphaRatio ?? 0.02;
+  const { data: raw, info } = await sharp(srcBytes)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const sampleWidth = Math.max(1, Math.round(info.width * 0.1));
+  const sampleHeight = Math.max(1, Math.round(info.height * 0.1));
+  const corners = [
+    [0, 0],
+    [info.width - sampleWidth, 0],
+    [0, info.height - sampleHeight],
+    [info.width - sampleWidth, info.height - sampleHeight],
+  ] as const;
+  let worstCornerRatio = 0;
+  for (const [startX, startY] of corners) {
+    let visible = 0;
+    for (let y = startY; y < startY + sampleHeight; y += 1) {
+      for (let x = startX; x < startX + sampleWidth; x += 1) {
+        const alpha = raw[(y * info.width + x) * info.channels + 3] ?? 0;
+        if (alpha > alphaThreshold) visible += 1;
+      }
+    }
+    worstCornerRatio = Math.max(worstCornerRatio, visible / (sampleWidth * sampleHeight));
+  }
+  if (worstCornerRatio > maxCornerAlphaRatio) {
+    throw new Error(
+      `output_validation_failed: corner alpha occupancy ${(worstCornerRatio * 100).toFixed(1)}% exceeds ${(maxCornerAlphaRatio * 100).toFixed(1)}%`,
+    );
+  }
+
+  const paddingPercent = output.paddingPercent ?? 4;
+  const insetX = Math.round(output.width * paddingPercent / 100);
+  const insetY = Math.round(output.height * paddingPercent / 100);
+  const innerWidth = Math.max(1, output.width - insetX * 2);
+  const innerHeight = Math.max(1, output.height - insetY * 2);
+  const { data: resized, info: resizedInfo } = await sharp(srcBytes)
+    .trim({
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      threshold: alphaThreshold,
+    })
+    .resize(innerWidth, innerHeight, { fit: "inside", withoutEnlargement: false })
+    .png()
+    .toBuffer({ resolveWithObject: true });
+  const left = Math.floor((output.width - resizedInfo.width) / 2);
+  const right = output.width - resizedInfo.width - left;
+  const top = Math.floor((output.height - resizedInfo.height) / 2);
+  const bottom = output.height - resizedInfo.height - top;
+  return sharp(resized)
+    .extend({
+      top,
+      bottom,
+      left,
+      right,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png()
+    .toBuffer();
 }
 
 // ─────────────────────────────────────────────────────────────────────────

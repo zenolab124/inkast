@@ -105,6 +105,10 @@ const InkastPluginSchema = z.object({
     .object({
       width: z.number().int().positive(),
       height: z.number().int().positive(),
+      fit: z.enum(["cover", "contain-alpha"]).optional(),
+      paddingPercent: z.number().min(0).max(25).optional(),
+      alphaThreshold: z.number().int().min(0).max(254).optional(),
+      maxCornerAlphaRatio: z.number().min(0).max(1).optional(),
     })
     .optional(),
   // source_image 额外允许域：必须是 https origin 前缀（SSRF 白名单，防裸 host / http 降级混入）
@@ -116,6 +120,15 @@ const InkastPluginSchema = z.object({
       path: ["imageProviderOrder"],
       message: "imageProviderOrder requires imageProviderIds",
     });
+  }
+  if (plugin.outputDimensions?.fit === "contain-alpha") {
+    if (plugin.imageStorage?.kind !== "r2" || plugin.imageStorage.contentType !== "image/png") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outputDimensions", "fit"],
+        message: "contain-alpha requires R2 image/png storage",
+      });
+    }
   }
 });
 
