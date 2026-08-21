@@ -6,6 +6,12 @@ import type { ImageGenInput } from "./types.js";
 const DEFAULT_MAX_CONCURRENCY = 5;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_RATIOS = new Set(["1:1", "3:4", "9:16", "16:9"]);
+const SUPPORTED_RATIO_VALUES = [
+  ["1:1", 1],
+  ["3:4", 3 / 4],
+  ["9:16", 9 / 16],
+  ["16:9", 16 / 9],
+] as const;
 
 interface CloudBaseResponse {
   ok?: boolean;
@@ -32,11 +38,14 @@ function gcd(a: number, b: number): number {
 }
 
 export function resolveCloudBaseRatio(size: ImageGenInput["size"]): string {
+  let requestedValue: number | null = null;
   if (isRatioSize(size)) {
     const ratio = extractRatio(size);
-    return ratio && SUPPORTED_RATIOS.has(ratio) ? ratio : "1:1";
+    if (ratio && SUPPORTED_RATIOS.has(ratio)) return ratio;
+    const match = ratio?.match(/^(\d+):(\d+)$/);
+    if (match) requestedValue = Number(match[1]) / Number(match[2]);
   }
-  if (typeof size === "string") {
+  if (requestedValue === null && typeof size === "string") {
     const match = size.match(/^(\d+)x(\d+)$/);
     if (match) {
       const width = Number(match[1]);
@@ -44,9 +53,17 @@ export function resolveCloudBaseRatio(size: ImageGenInput["size"]): string {
       const divisor = gcd(width, height);
       const ratio = `${width / divisor}:${height / divisor}`;
       if (SUPPORTED_RATIOS.has(ratio)) return ratio;
+      requestedValue = width / height;
     }
   }
-  return "1:1";
+  if (!requestedValue || !Number.isFinite(requestedValue)) return "1:1";
+  let nearest: readonly [string, number] = SUPPORTED_RATIO_VALUES[0];
+  for (const candidate of SUPPORTED_RATIO_VALUES) {
+    if (Math.abs(candidate[1] - requestedValue) < Math.abs(nearest[1] - requestedValue)) {
+      nearest = candidate;
+    }
+  }
+  return nearest[0];
 }
 
 export function buildCloudBaseRequestBody(input: ImageGenInput): string {

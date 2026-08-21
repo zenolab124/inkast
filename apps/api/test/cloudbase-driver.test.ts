@@ -32,6 +32,8 @@ async function close(server: Server): Promise<void> {
 test("CloudBase maps supported ratios and requires an original URL for image-to-image", () => {
   assert.equal(resolveCloudBaseRatio("ratio:9:16"), "9:16");
   assert.equal(resolveCloudBaseRatio("1024x576"), "16:9");
+  assert.equal(resolveCloudBaseRatio("ratio:2:1"), "16:9");
+  assert.equal(resolveCloudBaseRatio("ratio:5:4"), "1:1");
   assert.equal(resolveCloudBaseRatio("auto"), "1:1");
   assert.throws(
     () => buildCloudBaseRequestBody({

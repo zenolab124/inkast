@@ -17,6 +17,7 @@ import {
   driveWithRewriteFallback,
   type RewriteDependencies,
 } from "../src/domain/generate/with-rewrite.js";
+import { resolvePluginProviderPolicy } from "../src/domain/plugin-async/index.js";
 import { loadPluginConfigsFromDir } from "../src/plugins/loader.js";
 
 const enabledPool = [
@@ -52,6 +53,11 @@ test("plugin overlay distinguishes omitted allowlist from explicit empty kill sw
         imageDefaults: {},
         imageProviderIds: ["gpt", "cloudbase", "bafang"],
         imageProviderOrder: "allowlist",
+        imageProviderProfiles: {
+          fast: { imageProviderIds: ["cloudbase"], imageProviderOrder: "allowlist" },
+          quality: { imageProviderIds: ["gpt"], imageProviderOrder: "allowlist" },
+        },
+        enforceRequestedRatio: true,
         outputDimensions: { width: 622, height: 866 },
         upstreamImageUrlPassthrough: {
           allowedOrigins: ["https://img.example.com"],
@@ -71,6 +77,14 @@ test("plugin overlay distinguishes omitted allowlist from explicit empty kill sw
     assert.equal(
       plugins.find(plugin => plugin.id === "hybrid-output")?.imageProviderOrder,
       "allowlist",
+    );
+    assert.deepEqual(
+      plugins.find(plugin => plugin.id === "hybrid-output")?.imageProviderProfiles?.quality,
+      { imageProviderIds: ["gpt"], imageProviderOrder: "allowlist" },
+    );
+    assert.equal(
+      plugins.find(plugin => plugin.id === "hybrid-output")?.enforceRequestedRatio,
+      true,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -97,6 +111,28 @@ test("provider allowlist is exact and empty/missing/disabled IDs fail closed", (
     [],
     "disabled capabilities are absent from the enabled pool and cannot be selected",
   );
+});
+
+test("named profiles resolve fast to CloudBase and quality to GPT without fallback leakage", () => {
+  const plugin = {
+    id: "mpinkast",
+    name: "MP Inkast",
+    imageDefaults: {},
+    imageProviderIds: ["cloudbase", "gpt", "fallback"],
+    imageProviderProfiles: {
+      fast: { imageProviderIds: ["cloudbase"], imageProviderOrder: "allowlist" as const },
+      quality: { imageProviderIds: ["gpt"], imageProviderOrder: "allowlist" as const },
+    },
+  };
+  assert.deepEqual(resolvePluginProviderPolicy(plugin, "fast"), {
+    imageProviderIds: ["cloudbase"],
+    imageProviderOrder: "allowlist",
+  });
+  assert.deepEqual(resolvePluginProviderPolicy(plugin, "quality"), {
+    imageProviderIds: ["gpt"],
+    imageProviderOrder: "allowlist",
+  });
+  assert.throws(() => resolvePluginProviderPolicy(plugin, "unknown"), /no longer configured/);
 });
 
 test("explicit provider allowlist order overrides global pool priority", () => {

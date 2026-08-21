@@ -24,6 +24,8 @@ export interface PluginTaskRow {
    * unrelated generation — a wrong image, not just wrong policy.
    */
   sourceImageUrl: string | null;
+  /** Named overlay provider profile selected by the caller. */
+  providerProfile: string | null;
   /** Caller-supplied aspect ratio override (e.g. "1:1", "3:4"). Null = use plugin.imageDefaults.size. */
   ratio: string | null;
   callbackUrl: string;
@@ -95,6 +97,7 @@ interface DbRow {
   plugin_id: string;
   prompt: string;
   source_image_url: string | null;
+  provider_profile: string | null;
   ratio: string | null;
   callback_url: string;
   callback_token: string;
@@ -126,6 +129,7 @@ function rowToTask(row: DbRow): PluginTaskRow {
     pluginId: row.plugin_id,
     prompt: row.prompt,
     sourceImageUrl: row.source_image_url,
+    providerProfile: row.provider_profile,
     ratio: row.ratio,
     callbackUrl: row.callback_url,
     callbackToken: row.callback_token,
@@ -189,6 +193,8 @@ export interface CreatePluginTaskInput {
   prompt: string;
   /** See PluginTaskRow.sourceImageUrl. Route handler validates before passing. */
   sourceImageUrl?: string;
+  /** Named overlay provider profile selected by the caller. */
+  providerProfile?: string;
   /** Caller-supplied aspect ratio (e.g. "1:1", "3:4", "9:16"). Overrides plugin.imageDefaults.size via makeRatioSize(). */
   ratio?: string;
   callbackUrl: string;
@@ -201,14 +207,15 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
   db()
     .prepare(
       `INSERT INTO plugin_tasks
-        (id, plugin_id, prompt, source_image_url, ratio, callback_url, callback_token, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        (id, plugin_id, prompt, source_image_url, provider_profile, ratio, callback_url, callback_token, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
     )
     .run(
       id,
       input.pluginId,
       input.prompt,
       input.sourceImageUrl ?? null,
+      input.providerProfile ?? null,
       input.ratio ?? null,
       input.callbackUrl,
       input.callbackToken,
@@ -219,6 +226,7 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
     pluginId: input.pluginId,
     prompt: input.prompt,
     sourceImageUrl: input.sourceImageUrl ?? null,
+    providerProfile: input.providerProfile ?? null,
     ratio: input.ratio ?? null,
     callbackUrl: input.callbackUrl,
     callbackToken: input.callbackToken,

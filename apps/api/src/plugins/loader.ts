@@ -84,6 +84,19 @@ const InkastPluginSchema = z.object({
     .refine(ids => new Set(ids).size === ids.length, "provider ids must be unique")
     .optional(),
   imageProviderOrder: z.literal("allowlist").optional(),
+  imageProviderProfiles: z
+    .record(
+      z.string().regex(/^[a-z][a-z0-9_-]*$/, "profile name must be lowercase + digits + _-"),
+      z.object({
+        imageProviderIds: z
+          .array(z.string().trim().min(1))
+          .min(1)
+          .max(32)
+          .refine(ids => new Set(ids).size === ids.length, "provider ids must be unique"),
+        imageProviderOrder: z.literal("allowlist").optional(),
+      }),
+    )
+    .optional(),
   imageStorage: ImageStorageSchema.optional(),
   upstreamImageUrlPassthrough: z
     .object({
@@ -111,6 +124,7 @@ const InkastPluginSchema = z.object({
       maxCornerAlphaRatio: z.number().min(0).max(1).optional(),
     })
     .optional(),
+  enforceRequestedRatio: z.boolean().optional(),
   // source_image 额外允许域：必须是 https origin 前缀（SSRF 白名单，防裸 host / http 降级混入）
   sourceImageHosts: z.array(z.string().regex(/^https:\/\/[^/]+$/)).optional(),
 }).superRefine((plugin, ctx) => {

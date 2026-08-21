@@ -18,6 +18,34 @@ const CALLBACK_TOKEN_MIN_LEN = 16;
 const CALLBACK_URL_MAX_LEN = 2048;
 const SOURCE_IMAGE_URL_MAX_LEN = 2048;
 const ALLOWED_RATIOS = new Set(["1:1", "3:4", "4:3", "9:16", "16:9"]);
+const CUSTOM_RATIO_COMPONENT_MAX = 32;
+const CUSTOM_RATIO_MIN_VALUE = 1 / 3;
+const CUSTOM_RATIO_MAX_VALUE = 3;
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+/** Validate and normalize W:H. Custom ratios are opt-in per plugin. */
+export function parseRequestedRatio(
+  value: unknown,
+  allowCustom: boolean,
+): string | undefined | "invalid" {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") return "invalid";
+  const trimmed = value.trim();
+  if (ALLOWED_RATIOS.has(trimmed)) return trimmed;
+  if (!allowCustom) return "invalid";
+  const match = trimmed.match(/^([1-9]\d?):([1-9]\d?)$/);
+  if (!match) return "invalid";
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (width > CUSTOM_RATIO_COMPONENT_MAX || height > CUSTOM_RATIO_COMPONENT_MAX) return "invalid";
+  const valueRatio = width / height;
+  if (valueRatio < CUSTOM_RATIO_MIN_VALUE || valueRatio > CUSTOM_RATIO_MAX_VALUE) return "invalid";
+  const divisor = gcd(width, height);
+  return `${width / divisor}:${height / divisor}`;
+}
 
 /**
  * POST /plugins/v1/moderation/text
@@ -174,23 +202,45 @@ pluginRoutes.post("/v1/images/submit", async c => {
     );
   }
 
-  // ratio — 可选逐请求比例覆盖（如 "1:1"、"3:4"、"9:16"）。
-  // 白名单校验；不传时使用 plugin.imageDefaults.size。
-  const ratioInput = (body as { ratio?: unknown }).ratio;
-  let ratio: string | undefined;
-  if (ratioInput !== undefined && ratioInput !== null) {
-    if (typeof ratioInput !== "string" || !ALLOWED_RATIOS.has(ratioInput)) {
+  // provider_profile — caller selects only a named server-side policy. Raw
+  // provider IDs are never accepted on the wire.
+  const providerProfileInput = (body as { provider_profile?: unknown }).provider_profile;
+  let providerProfile: string | undefined;
+  if (providerProfileInput !== undefined && providerProfileInput !== null) {
+    if (
+      typeof providerProfileInput !== "string" ||
+      !plugin.imageProviderProfiles?.[providerProfileInput]
+    ) {
       return c.json(
         errBody(
           "invalid_request",
-          `'ratio' must be one of: ${[...ALLOWED_RATIOS].join(", ")}`,
+          "'provider_profile' is not available for this plugin",
           "invalid_request_error",
         ),
         400,
       );
     }
-    ratio = ratioInput;
+    providerProfile = providerProfileInput;
   }
+
+  // ratio — 可选逐请求比例覆盖（如 "1:1"、"3:4"、"9:16"）。
+  // enforceRequestedRatio plugin 额外接受 1:3..3:1 的自定义 W:H，并约分。
+  // 不传时使用 plugin.imageDefaults.size。
+  const ratioInput = (body as { ratio?: unknown }).ratio;
+  const parsedRatio = parseRequestedRatio(ratioInput, plugin.enforceRequestedRatio === true);
+  if (parsedRatio === "invalid") {
+    return c.json(
+      errBody(
+        "invalid_request",
+        plugin.enforceRequestedRatio
+          ? "'ratio' must be W:H with integers 1..32 and a value between 1:3 and 3:1"
+          : `'ratio' must be one of: ${[...ALLOWED_RATIOS].join(", ")}`,
+        "invalid_request_error",
+      ),
+      400,
+    );
+  }
+  const ratio = parsedRatio;
 
   // source_image — v2.3 可选源图(编辑任务)。传了就把任务从"文生图"切成
   // "改已有图":worker 会 fetch image_url 的字节作参考图直传 image driver。
@@ -261,6 +311,7 @@ pluginRoutes.post("/v1/images/submit", async c => {
     plugin,
     prompt,
     sourceImageUrl,
+    providerProfile,
     ratio,
     callbackUrl: body.callback_url,
     callbackToken: body.callback_token,

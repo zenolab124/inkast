@@ -65,6 +65,22 @@ function getPluginById(id: string): InkastPlugin | undefined {
   return listRegisteredPlugins().find(p => p.id === id);
 }
 
+export function resolvePluginProviderPolicy(
+  plugin: InkastPlugin,
+  providerProfile: string | null | undefined,
+): { imageProviderIds: readonly string[] | undefined; imageProviderOrder: "allowlist" | undefined } {
+  const profile = providerProfile
+    ? plugin.imageProviderProfiles?.[providerProfile]
+    : undefined;
+  if (providerProfile && !profile) {
+    throw new Error(`provider profile is no longer configured: ${providerProfile}`);
+  }
+  return {
+    imageProviderIds: profile?.imageProviderIds ?? plugin.imageProviderIds,
+    imageProviderOrder: profile?.imageProviderOrder ?? plugin.imageProviderOrder,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Public entry: submit
 // ─────────────────────────────────────────────────────────────────────────
@@ -93,6 +109,8 @@ export interface SubmitInput {
    * semantics; see PluginTaskRow.sourceImageUrl for the rationale.
    */
   sourceImageUrl?: string;
+  /** Named server-side provider profile; raw provider IDs never cross the wire. */
+  providerProfile?: string;
   /** Caller-supplied aspect ratio (e.g. "1:1", "3:4", "9:16"). Overrides plugin.imageDefaults.size. */
   ratio?: string;
   callbackUrl: string;
@@ -120,6 +138,7 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
     pluginId: input.plugin.id,
     prompt: input.prompt,
     sourceImageUrl: input.sourceImageUrl,
+    providerProfile: input.providerProfile,
     ratio: input.ratio,
     callbackUrl: input.callbackUrl,
     callbackToken: input.callbackToken,
@@ -128,7 +147,7 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
     taskPolicies.set(task.id, input.pipelinePolicy);
   }
   console.log(
-    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}${input.sourceImageUrl ? ` source_image=${redactUrl(input.sourceImageUrl)}` : ""}${input.pipelinePolicy ? ` policy=${JSON.stringify(input.pipelinePolicy)}` : ""}`,
+    `[plugin-async] ▶ submit task=${task.id} plugin=${input.plugin.id} prompt-bytes=${input.prompt.length} callback=${redactUrl(input.callbackUrl)}${input.sourceImageUrl ? ` source_image=${redactUrl(input.sourceImageUrl)}` : ""}${input.providerProfile ? ` provider_profile=${input.providerProfile}` : ""}${input.pipelinePolicy ? ` policy=${JSON.stringify(input.pipelinePolicy)}` : ""}`,
   );
   enqueueTask(task.id);
   return task;
@@ -178,6 +197,11 @@ async function runTask(taskId: string): Promise<void> {
   let imageDurationMs = 0;
 
   try {
+    const {
+      imageProviderIds: allowedProviderIds,
+      imageProviderOrder: providerOrder,
+    } = resolvePluginProviderPolicy(plugin, task.providerProfile);
+
     let promptText: string;
     let promptJsonStr: string;
 
@@ -248,8 +272,8 @@ async function runTask(taskId: string): Promise<void> {
               ? "persistent-url"
               : "bytes",
           referenceImages,
-          allowedProviderIds: plugin.imageProviderIds,
-          providerOrder: plugin.imageProviderOrder,
+          allowedProviderIds,
+          providerOrder,
         },
         {
           skipOriginal: callerPolicy?.skipOriginal,
@@ -285,8 +309,8 @@ async function runTask(taskId: string): Promise<void> {
           size: plugin.imageDefaults.size,
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
-          allowedProviderIds: plugin.imageProviderIds,
-          providerOrder: plugin.imageProviderOrder,
+          allowedProviderIds,
+          providerOrder,
         },
       });
       if (reviewOutcome.editApplied) {
@@ -322,10 +346,11 @@ async function runTask(taskId: string): Promise<void> {
       // plugin overlay 显式授权 exact HTTPS origin，避免把其它 provider 的
       // 临时 URL 当作长期成品链接回调出去。
       const upstreamUrl = imageOutcome.imageUrl;
+      const enforceRequestedRatio = plugin.enforceRequestedRatio === true && Boolean(task.ratio);
       const canSkipUpload = isAllowedUpstreamImageUrl(
         upstreamUrl,
         plugin.upstreamImageUrlPassthrough?.allowedOrigins,
-      );
+      ) && !enforceRequestedRatio;
 
       if (canSkipUpload) {
         markTaskSucceeded(taskId, {
@@ -356,6 +381,7 @@ async function runTask(taskId: string): Promise<void> {
           srcB64,
           plugin.outputDimensions,
           storage.contentType,
+          enforceRequestedRatio ? task.ratio ?? undefined : undefined,
         );
         const ext =
           storage.contentType === "image/png"
@@ -670,10 +696,22 @@ export async function prepareImageForR2(
   srcB64: string,
   outputDims: PluginOutputDimensions | undefined,
   contentType: "image/png" | "image/jpeg" | "image/webp",
+  targetAspectRatio?: string,
 ): Promise<Buffer> {
   const srcBytes = Buffer.from(srcB64, "base64");
-  if (!outputDims && contentType === "image/png") {
+  if (!outputDims && !targetAspectRatio && contentType === "image/png") {
     return srcBytes;
+  }
+  if (outputDims && targetAspectRatio) {
+    const [ratioWidthRaw, ratioHeightRaw] = targetAspectRatio.split(":");
+    const ratioWidth = Number(ratioWidthRaw);
+    const ratioHeight = Number(ratioHeightRaw);
+    if (!(ratioWidth > 0) || !(ratioHeight > 0)) {
+      throw new Error("requested ratio is invalid");
+    }
+    if (outputDims.width * ratioHeight !== outputDims.height * ratioWidth) {
+      throw new Error("requested ratio conflicts with plugin outputDimensions");
+    }
   }
   if (outputDims?.fit === "contain-alpha") {
     if (contentType !== "image/png") {
@@ -687,6 +725,28 @@ export async function prepareImageForR2(
     pipeline = pipeline.resize(outputDims.width, outputDims.height, {
       fit: "cover",
       position: "top",
+    });
+  } else if (targetAspectRatio) {
+    const [ratioWidthRaw, ratioHeightRaw] = targetAspectRatio.split(":");
+    const ratioWidth = Number(ratioWidthRaw);
+    const ratioHeight = Number(ratioHeightRaw);
+    const metadata = await sharp(srcBytes).metadata();
+    if (!metadata.width || !metadata.height || !ratioWidth || !ratioHeight) {
+      throw new Error("cannot enforce requested ratio without valid image dimensions");
+    }
+    // Use an integer multiple of the normalized W:H pair. Rounding one side
+    // independently can produce 1024x683 for 3:2, which is only approximate.
+    const scale = Math.floor(Math.min(
+      metadata.width / ratioWidth,
+      metadata.height / ratioHeight,
+    ));
+    if (scale < 1) throw new Error("requested ratio is too large for source image dimensions");
+    const width = ratioWidth * scale;
+    const height = ratioHeight * scale;
+    pipeline = pipeline.resize(width, height, {
+      fit: "cover",
+      position: "attention",
+      withoutEnlargement: true,
     });
   }
   if (contentType === "image/png") return pipeline.png().toBuffer();

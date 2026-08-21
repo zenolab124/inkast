@@ -97,3 +97,42 @@ test("contain-alpha rejects broad corner alpha contamination", async () => {
     /corner alpha occupancy/,
   );
 });
+
+test("requested aspect ratio is enforced on persisted output bytes", async () => {
+  const source = await sharp({
+    create: {
+      width: 1200,
+      height: 1200,
+      channels: 3,
+      background: { r: 80, g: 120, b: 90 },
+    },
+  }).png().toBuffer();
+  const output = await prepareImageForR2(
+    await toB64(source),
+    undefined,
+    "image/png",
+    "16:9",
+  );
+  const metadata = await sharp(output).metadata();
+  assert.equal(metadata.width, 1200);
+  assert.equal(metadata.height, 675);
+
+  const indivisibleSource = await sharp({
+    create: {
+      width: 1024,
+      height: 1024,
+      channels: 3,
+      background: { r: 80, g: 120, b: 90 },
+    },
+  }).png().toBuffer();
+  const customOutput = await prepareImageForR2(
+    await toB64(indivisibleSource),
+    undefined,
+    "image/png",
+    "3:2",
+  );
+  const customMetadata = await sharp(customOutput).metadata();
+  assert.equal(customMetadata.width, 1023);
+  assert.equal(customMetadata.height, 682);
+  assert.equal(customMetadata.width! * 2, customMetadata.height! * 3);
+});

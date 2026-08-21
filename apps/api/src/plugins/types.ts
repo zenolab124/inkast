@@ -77,6 +77,16 @@ export interface InkastPlugin {
    */
   readonly imageProviderOrder?: "allowlist";
   /**
+   * Named request-level provider policies. Callers submit only the profile
+   * name; provider IDs stay server-side in the overlay. This lets one plugin
+   * expose product modes such as `fast` / `quality` without allowing callers
+   * to inject arbitrary provider IDs.
+   */
+  readonly imageProviderProfiles?: Readonly<Record<string, {
+    readonly imageProviderIds: readonly string[];
+    readonly imageProviderOrder?: "allowlist";
+  }>>;
+  /**
    * 出图后字节流的去向。不设时默认 `{kind:"b64"}` — 走 callback b64_json
    * 路径(v2 协议默认)。设 `{kind:"r2", ...}` 切到 R2 直传(v2.1 协议)。
    * 凭据(account_id / access_key / secret) 走 env,不进 plugin overlay。
@@ -137,6 +147,12 @@ export interface InkastPlugin {
    * 不设则原样输出 driver 给的尺寸。
    */
   readonly outputDimensions?: PluginOutputDimensions;
+  /**
+   * When true, a caller-supplied ratio is enforced on the final persisted
+   * image with a sharp cover crop. This disables upstream URL passthrough for
+   * that request so the callback never claims a ratio the bytes do not have.
+   */
+  readonly enforceRequestedRatio?: boolean;
   /**
    * source_image 的额外允许域(完整 origin 前缀,如 "https://msnap.124213.xyz")。
    * SSRF 白名单默认只放行 imageStorage.publicBase(自家图床);调用方另有
