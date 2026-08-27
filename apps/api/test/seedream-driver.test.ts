@@ -39,14 +39,23 @@ test("Seedream body keeps all reference images on the generations endpoint contr
   assert.equal(body.watermark, false);
 });
 
-test("Seedream preserves an explicit pixel size", () => {
+test("Seedream preserves an explicit pixel size accepted by Ark", () => {
   const body = buildSeedreamRequestBody(capability, {
     promptText: "一只橘猫",
-    size: "1536x2048",
+    size: "1664x2304",
   });
-  assert.equal(body.size, "1536x2048");
+  assert.equal(body.size, "1664x2304");
   assert.equal(body.image, undefined);
   assert.equal(body.prompt, "一只橘猫");
+});
+
+test("Seedream converts a small final-output size to 2K plus an aspect-ratio hint", () => {
+  const body = buildSeedreamRequestBody(capability, {
+    promptText: "一只橘猫",
+    size: "622x866",
+  });
+  assert.equal(body.size, "2K");
+  assert.match(body.prompt, /Target aspect ratio: 311:433\./);
 });
 
 test("Seedream driver posts JSON to /images/generations and returns b64", async () => {

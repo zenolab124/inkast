@@ -119,16 +119,19 @@ export async function driveWithRewriteFallback(
   }
 
   const cumulativeAttempts: ImageGenAttempt[] = [];
-  // Live progress mirror: the driver's onAttempt fires once per provider
-  // attempt; we append here and ping onProgress so the plugin channel can
-  // persist in-flight progress (current round + channels walked so far). Kept
-  // separate from cumulativeAttempts — which the round-boundary logic below
-  // owns for the trigger-gate / return paths — so this stays non-invasive.
+  // Live progress mirror: publish once when a round starts, then again after
+  // every provider attempt. This keeps current_round aligned with the round
+  // actually executing even while its rewrite/provider request is in flight.
+  // Kept separate from cumulativeAttempts — which the round-boundary logic
+  // below owns for the trigger-gate / return paths — so this stays non-invasive.
   const liveAttempts: ImageGenAttempt[] = [];
   let currentRound = skipOriginal ? 1 : 0;
+  const reportProgress = (): void => {
+    onProgress?.({ round: currentRound, attempts: liveAttempts });
+  };
   const reportAttempt = (attempt: ImageGenAttempt): void => {
     liveAttempts.push(attempt);
-    onProgress?.({ round: currentRound, attempts: liveAttempts });
+    reportProgress();
   };
   const rewritesHistory: string[] = [];
   let lastErr: ImageGenError | undefined;
@@ -139,6 +142,7 @@ export async function driveWithRewriteFallback(
 
   // ─── Round 0: caller's literal prompt, full pool ────────────────────────
   if (!skipOriginal) {
+    reportProgress();
     try {
       const outcome = await dependencies.generateImage({ ...input, onAttempt: reportAttempt });
       return {
@@ -171,6 +175,7 @@ export async function driveWithRewriteFallback(
   const baseExcludes = new Set(input.excludeProviderIds ?? []);
   for (let round = 1; round <= maxRound; round++) {
     currentRound = round;
+    reportProgress();
     console.log(
       `[generate] ▶ rewrite round ${round}/${maxRound} starting — ${collectTriggerProviders(cumulativeAttempts).length} trigger-coded provider(s) so far, ${rewritesHistory.length} rewrite(s) so far`,
     );

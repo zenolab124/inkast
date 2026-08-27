@@ -7,6 +7,11 @@ import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_SEEDREAM_SIZE = "2K";
+const MIN_SEEDREAM_PIXELS = 3_686_400;
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
+}
 
 interface SeedreamRequestBody {
   model: string;
@@ -32,14 +37,24 @@ export function buildSeedreamRequestBody(
 ): SeedreamRequestBody {
   const refs = input.referenceImages ?? [];
   const useRatio = isRatioSize(input.size);
-  const ratioHint = useRatio ? extractRatio(input.size) : null;
+  const exactMatch = typeof input.size === "string"
+    ? input.size.match(/^(\d+)x(\d+)$/)
+    : null;
+  const exactWidth = exactMatch ? Number(exactMatch[1]) : 0;
+  const exactHeight = exactMatch ? Number(exactMatch[2]) : 0;
+  const exactSizeAllowed = exactWidth * exactHeight >= MIN_SEEDREAM_PIXELS;
+  const ratioDivisor = exactMatch && !exactSizeAllowed ? gcd(exactWidth, exactHeight) : 0;
+  const ratioHint = useRatio
+    ? extractRatio(input.size)
+    : ratioDivisor > 0
+      ? `${exactWidth / ratioDivisor}:${exactHeight / ratioDivisor}`
+      : null;
   const prompt = ratioHint
     ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
     : input.promptText;
-  const exactSize =
-    typeof input.size === "string" && /^\d+x\d+$/.test(input.size)
-      ? input.size
-      : DEFAULT_SEEDREAM_SIZE;
+  const upstreamSize = exactMatch && exactSizeAllowed
+    ? input.size as string
+    : DEFAULT_SEEDREAM_SIZE;
 
   return {
     model: capability.model,
@@ -51,7 +66,7 @@ export function buildSeedreamRequestBody(
           ),
         }
       : {}),
-    size: exactSize,
+    size: upstreamSize,
     sequential_image_generation: "disabled",
     stream: false,
     response_format: "b64_json",

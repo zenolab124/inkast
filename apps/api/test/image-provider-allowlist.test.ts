@@ -280,3 +280,75 @@ test("rewrite rounds retain the same provider allowlist and cannot escape", asyn
   assert.deepEqual(providerOrdersSeen, ["allowlist", "allowlist", "allowlist"]);
   assert.deepEqual(deliveryIntentsSeen, ["persistent-url", "persistent-url", "persistent-url"]);
 });
+
+test("rewrite progress advances when each round starts, before its work completes", async () => {
+  const progress: Array<{ round: number; attemptCount: number }> = [];
+  let driverCall = 0;
+
+  const dependencies: RewriteDependencies = {
+    generateImage: async (input: ImageGenInput): Promise<ImageGenOutcome> => {
+      const round = driverCall++;
+      assert.equal(progress.at(-1)?.round, round);
+
+      const attempt: ImageGenAttempt = {
+        providerId: "provider-a",
+        providerName: "Provider A",
+        ok: round === 2,
+        ...(round === 2
+          ? {}
+          : { errorCode: "provider_blocked_content" as const, errorMessage: "blocked" }),
+        durationMs: 1,
+      };
+      input.onAttempt?.(attempt);
+
+      if (round < 2) {
+        throw new ImageGenError(
+          "all_providers_failed",
+          `round ${round} rejected`,
+          [attempt],
+        );
+      }
+      return {
+        imageB64: "aW1hZ2U=",
+        format: "png",
+        providerId: attempt.providerId,
+        providerName: attempt.providerName,
+        attempts: [attempt],
+        totalDurationMs: 1,
+      };
+    },
+    rewriteBlockedPrompt: async input => {
+      assert.deepEqual(progress.at(-1), {
+        round: input.round,
+        attemptCount: input.round,
+      });
+      return {
+        rewrittenPromptText: `rewrite-${input.round}`,
+        characterKey: null,
+        usedImageUrls: [],
+        llmDurationMs: 1,
+        analysis: null,
+      };
+    },
+  };
+
+  const outcome = await driveWithRewriteFallback(
+    { promptText: "original" },
+    { maxRound: 2 },
+    snapshot => progress.push({
+      round: snapshot.round,
+      attemptCount: snapshot.attempts.length,
+    }),
+    dependencies,
+  );
+
+  assert.equal(outcome.successRound, 2);
+  assert.deepEqual(progress, [
+    { round: 0, attemptCount: 0 },
+    { round: 0, attemptCount: 1 },
+    { round: 1, attemptCount: 1 },
+    { round: 1, attemptCount: 2 },
+    { round: 2, attemptCount: 2 },
+    { round: 2, attemptCount: 3 },
+  ]);
+});
