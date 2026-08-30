@@ -84,6 +84,10 @@ export function getPluginByToken(token: string): InkastPlugin | undefined {
   return id ? plugins.get(id) : undefined;
 }
 
+export function getPluginById(id: string): InkastPlugin | undefined {
+  return plugins.get(id);
+}
+
 export function listRegisteredPlugins(): InkastPlugin[] {
   return Array.from(plugins.values());
 }

@@ -69,12 +69,23 @@ const InkastPluginSchema = z.object({
     .string()
     .regex(/^[a-z][a-z0-9_-]*$/, "plugin id must be lowercase + digits + _-"),
   name: z.string().min(1),
+  scenePlugins: z
+    .record(
+      z.string().regex(/^[a-z][a-z0-9_-]*$/, "scene name must be lowercase + digits + _-"),
+      z.string().regex(/^[a-z][a-z0-9_-]*$/, "target plugin id must be lowercase + digits + _-"),
+    )
+    .refine(
+      routes => new Set(Object.values(routes)).size === Object.values(routes).length,
+      "scene target plugin ids must be unique",
+    )
+    .optional(),
   systemPromptPatch: z.string().optional(),
   enforceFields: z.record(z.string(), z.unknown()).optional(),
   imageDefaults: z.object({
     size: ImageSizeSchema.optional(),
     quality: ImageQualitySchema.optional(),
     format: ImageFormatSchema.optional(),
+    background: z.enum(["transparent", "opaque", "auto"]).optional(),
   }),
   // `[]` is valid on purpose: it is a fail-closed kill switch. Omitting the
   // field preserves the historical full-pool behavior for existing plugins.
@@ -120,7 +131,6 @@ const InkastPluginSchema = z.object({
       height: z.number().int().positive(),
       fit: z.enum(["cover", "contain-alpha"]).optional(),
       paddingPercent: z.number().min(0).max(25).optional(),
-      alphaThreshold: z.number().int().min(0).max(254).optional(),
       maxCornerAlphaRatio: z.number().min(0).max(1).optional(),
     })
     .optional(),
@@ -128,6 +138,16 @@ const InkastPluginSchema = z.object({
   // source_image 额外允许域：必须是 https origin 前缀（SSRF 白名单，防裸 host / http 降级混入）
   sourceImageHosts: z.array(z.string().regex(/^https:\/\/[^/]+$/)).optional(),
 }).superRefine((plugin, ctx) => {
+  if (
+    plugin.imageDefaults.background === "transparent" &&
+    plugin.imageDefaults.format === "jpeg"
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["imageDefaults", "format"],
+      message: "transparent background requires png or webp output",
+    });
+  }
   if (plugin.imageProviderOrder && plugin.imageProviderIds === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -136,11 +156,14 @@ const InkastPluginSchema = z.object({
     });
   }
   if (plugin.outputDimensions?.fit === "contain-alpha") {
-    if (plugin.imageStorage?.kind !== "r2" || plugin.imageStorage.contentType !== "image/png") {
+    if (
+      plugin.imageStorage?.kind !== "r2" ||
+      plugin.imageStorage.contentType === "image/jpeg"
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["outputDimensions", "fit"],
-        message: "contain-alpha requires R2 image/png storage",
+        message: "contain-alpha requires R2 image/png or image/webp storage",
       });
     }
   }

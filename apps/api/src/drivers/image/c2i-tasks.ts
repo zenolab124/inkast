@@ -79,6 +79,7 @@ async function submitTask(
     model: capability.model,
     quality: input.quality ?? "high",
     output_format: input.format ?? "png",
+    ...(input.background ? { background: input.background } : {}),
     response_format: input.deliveryIntent === "persistent-url" ? "url" : "b64_json",
     ...(input.deliveryIntent === "persistent-url" ? { url_source: "r2" } : {}),
     // chatgpt2api keeps resize/compression disabled for all callers unless

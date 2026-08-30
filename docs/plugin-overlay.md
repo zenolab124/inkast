@@ -41,10 +41,12 @@ token → plugin id 映射就绪
   // 必填
   id: string;                        // 小写 + 数字 + - _,如 "snapub"
   name: string;                      // 人类可读名
+  scenePlugins?: Record<string, string>; // 同一 token 下按 scene 委派到另一 overlay 输出配置
   imageDefaults: {
     size?: string;                   // "auto" | "1024x1024" | "1024x1536" | ...
     quality?: string;                // "high" | "medium" | "low" | "standard" | "hd"
     format?: "png" | "jpeg" | "webp";
+    background?: "transparent" | "opaque" | "auto";
   };
 
   imageProviderIds?: string[];       // provider 白名单；[] 为关闭
@@ -61,9 +63,8 @@ token → plugin id 映射就绪
   outputDimensions?: {
     width: number;
     height: number;
-    fit?: "cover" | "contain-alpha"; // 省略时沿用 top-cover；透明资产可选 alpha-aware contain
+    fit?: "cover" | "contain-alpha"; // 省略时沿用 top-cover；透明 PNG/WebP 可选 alpha-aware contain
     paddingPercent?: number;           // contain-alpha 每边安全边距，默认 4
-    alphaThreshold?: number;           // 可见 Alpha 阈值，默认 12
     maxCornerAlphaRatio?: number;      // 任一 10% 角区最大污染率，默认 0.02
   };
 
@@ -103,6 +104,11 @@ Token **不进 JSON**,**不进 git**。生命周期:
 - 持久化:**envfile only**(`/root/inkast/inkast-api.env`,chmod 600,owner root)
 - 轮换:改 env file → `systemctl restart inkast-api`
 - 撤销:删 env 那一行 → `systemctl restart inkast-api`
+
+同一产品需要多种输出规格时，不必为每个规格发 token。基础 plugin 可配置
+`scenePlugins`，例如 `{ "diy_logo": "snapub_logo" }`；调用方继续使用基础 plugin
+的 Bearer Token，只在 submit body 传受控的 `scene`。服务端只接受 overlay 明确列出的
+映射，不接受调用方直接传 plugin id；任务轮询也沿用同一 token。
 
 ## 限制
 

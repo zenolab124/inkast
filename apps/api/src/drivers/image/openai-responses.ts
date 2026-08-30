@@ -73,7 +73,11 @@ export async function callImageGenerationTool(
   const body = {
     model: capability.model,
     input: requestInput,
-    tools: [{ type: "image_generation", output_format: requestedFormat }],
+    tools: [{
+      type: "image_generation",
+      output_format: requestedFormat,
+      ...(input.background ? { background: input.background } : {}),
+    }],
     // Force the tool call. General chat models tend to respond with text
     // when the input looks like a JSON spec.
     tool_choice: { type: "image_generation" },

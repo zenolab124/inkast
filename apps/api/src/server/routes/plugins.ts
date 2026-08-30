@@ -6,6 +6,8 @@ import {
   TEXT_MODERATION_TIMEOUT_MS,
 } from "../../domain/text-moderation/index.js";
 import { getPluginTask } from "../../storage/plugin-tasks.js";
+import { getPluginById } from "../../plugins/registry.js";
+import type { InkastPlugin } from "../../plugins/types.js";
 import { pluginAuth } from "../middleware/plugin-auth.js";
 
 export const pluginRoutes = new Hono();
@@ -21,6 +23,50 @@ const ALLOWED_RATIOS = new Set(["1:1", "3:4", "4:3", "9:16", "16:9"]);
 const CUSTOM_RATIO_COMPONENT_MAX = 32;
 const CUSTOM_RATIO_MIN_VALUE = 1 / 3;
 const CUSTOM_RATIO_MAX_VALUE = 3;
+
+type SceneResolution =
+  | { ok: true; plugin: InkastPlugin }
+  | { ok: false; status: 400 | 503; code: string; message: string };
+
+/** Resolve only overlay-authorized scene aliases; callers can never submit a raw plugin id. */
+export function resolvePluginScene(
+  authenticatedPlugin: InkastPlugin,
+  sceneInput: unknown,
+  findPlugin: (id: string) => InkastPlugin | undefined = getPluginById,
+): SceneResolution {
+  if (sceneInput === undefined || sceneInput === null || sceneInput === "") {
+    return { ok: true, plugin: authenticatedPlugin };
+  }
+  if (typeof sceneInput !== "string" || !/^[a-z][a-z0-9_-]{0,31}$/.test(sceneInput)) {
+    return { ok: false, status: 400, code: "invalid_scene", message: "'scene' is invalid" };
+  }
+  const targetId = authenticatedPlugin.scenePlugins?.[sceneInput];
+  if (!targetId) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_scene",
+      message: "'scene' is not available for this plugin",
+    };
+  }
+  const target = findPlugin(targetId);
+  if (!target) {
+    return {
+      ok: false,
+      status: 503,
+      code: "plugin_misconfigured",
+      message: "configured scene plugin is unavailable",
+    };
+  }
+  return { ok: true, plugin: target };
+}
+
+export function canAccessPluginTask(authenticatedPlugin: InkastPlugin, taskPluginId: string): boolean {
+  return (
+    taskPluginId === authenticatedPlugin.id ||
+    Object.values(authenticatedPlugin.scenePlugins ?? {}).includes(taskPluginId)
+  );
+}
 
 function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b);
@@ -99,9 +145,14 @@ pluginRoutes.post("/v1/moderation/text", async c => {
  * 详见 inkast-integration.md v2。
  */
 pluginRoutes.post("/v1/images/submit", async c => {
-  const plugin = c.get("plugin");
+  const authenticatedPlugin = c.get("plugin");
 
-  let body: { prompt?: unknown; callback_url?: unknown; callback_token?: unknown };
+  let body: {
+    scene?: unknown;
+    prompt?: unknown;
+    callback_url?: unknown;
+    callback_token?: unknown;
+  };
   try {
     body = (await c.req.json()) as typeof body;
   } catch {
@@ -110,6 +161,19 @@ pluginRoutes.post("/v1/images/submit", async c => {
       400,
     );
   }
+
+  const sceneResolution = resolvePluginScene(authenticatedPlugin, body.scene);
+  if (!sceneResolution.ok) {
+    return c.json(
+      errBody(
+        sceneResolution.code,
+        sceneResolution.message,
+        sceneResolution.status === 503 ? "api_error" : "invalid_request_error",
+      ),
+      sceneResolution.status,
+    );
+  }
+  const plugin = sceneResolution.plugin;
 
   // prompt
   if (typeof body.prompt !== "string") {
@@ -340,7 +404,7 @@ pluginRoutes.get("/v1/images/status/:id", c => {
   const plugin = c.get("plugin");
   const id = c.req.param("id");
   const task = getPluginTask(id);
-  if (!task || task.pluginId !== plugin.id) {
+  if (!task || !canAccessPluginTask(plugin, task.pluginId)) {
     return c.json(
       errBody(
         "not_found",

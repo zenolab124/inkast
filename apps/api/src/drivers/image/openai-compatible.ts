@@ -452,6 +452,7 @@ async function callProvider(
     ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
     quality: input.quality ?? "high",
     output_format: requestedFormat,
+    ...(input.background ? { background: input.background } : {}),
     response_format: wantUrl ? "url" : "b64_json",
     n: input.n ?? 1,
     // 放宽 OpenAI 自家 moderation 层(对直连 OpenAI 的渠道有效;对二道贩子代理
@@ -540,6 +541,7 @@ async function buildEditBody(
     image: file,
     prompt: promptForUpstream,
     ...(useRatio ? {} : { size: input.size ?? "1024x1024" }),
+    ...(input.background ? { background: input.background } : {}),
     response_format: wantUrl ? "url" : "b64_json",
     n: input.n ?? 1,
   } as unknown as ImageEditParams;

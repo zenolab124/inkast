@@ -49,10 +49,12 @@ test("c2i-tasks explicitly opts into upstream output optimization", async () => 
     const result = await callC2iTasksApi(provider, capability, "test-key", {
       promptText: "test",
       format: "webp",
+      background: "transparent",
     });
 
     assert.equal(result.b64, "d2VicA==");
     assert.equal(generationBody?.output_format, "webp");
+    assert.equal(generationBody?.background, "transparent");
     assert.equal(generationBody?.optimize_output, true);
     assert.equal(generationBody?.response_format, "b64_json");
     assert.equal(generationBody?.url_source, undefined);

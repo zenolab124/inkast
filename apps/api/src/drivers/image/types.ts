@@ -22,6 +22,7 @@ import type {
 
 export type ImageSize = SharedImageSize;
 export type ImageQuality = SharedImageQuality;
+export type ImageBackground = "transparent" | "opaque" | "auto";
 
 /**
  * Request-level artifact delivery semantics.
@@ -45,6 +46,11 @@ export interface ImageGenInput {
    * domain layer re-sniffs before persisting.
    */
   format?: ImageFormat;
+  /**
+   * Requested background mode for GPT Image. `transparent` requires PNG or
+   * WebP; callers that need real alpha must still validate the returned bytes.
+   */
+  background?: ImageBackground;
   /** Defaults to `bytes`; never infer persistence from provider-global config. */
   deliveryIntent?: ImageDeliveryIntent;
   n?: number;

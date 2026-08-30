@@ -34,14 +34,18 @@ export interface PluginOutputDimensions {
   readonly fit?: "cover" | "contain-alpha";
   /** Transparent safe margin on each canvas edge. Used only by contain-alpha. */
   readonly paddingPercent?: number;
-  /** Alpha values at or below this threshold are treated as invisible. */
-  readonly alphaThreshold?: number;
   /** Maximum visible ratio accepted in any outer 10% corner sample. */
   readonly maxCornerAlphaRatio?: number;
 }
 export interface InkastPlugin {
   readonly id: string;
   readonly name: string;
+  /**
+   * Optional request-scene delegation under the authenticated plugin token.
+   * The caller may submit only a configured scene name; the mapped plugin id
+   * supplies output constraints/storage but does not need its own bearer token.
+   */
+  readonly scenePlugins?: Readonly<Record<string, string>>;
   /**
    * 追加到 prompt-engine 默认 system prompt 末尾的业务约束文本。引导 LLM
    * 在散文→JSON 拆解时主动产出符合业务要求的字段。
@@ -60,6 +64,7 @@ export interface InkastPlugin {
     size?: ImageSize;
     quality?: ImageQuality;
     format?: ImageFormat;
+    background?: "transparent" | "opaque" | "auto";
   };
   /**
    * Restrict every image-provider dispatch made for this plugin to these

@@ -9,7 +9,6 @@ const OUTPUT = {
   height: 512,
   fit: "contain-alpha" as const,
   paddingPercent: 4,
-  alphaThreshold: 12,
   maxCornerAlphaRatio: 0.02,
 };
 
@@ -17,7 +16,7 @@ async function toB64(buffer: Buffer): Promise<string> {
   return buffer.toString("base64");
 }
 
-test("contain-alpha trims, contains and centers a transparent logo", async () => {
+test("contain-alpha preserves, contains and centers a transparent logo", async () => {
   const source = await sharp({
     create: {
       width: 400,
@@ -52,6 +51,27 @@ test("contain-alpha trims, contains and centers a transparent logo", async () =>
     .raw()
     .toBuffer();
   for (let index = 3; index < corner.length; index += 4) assert.equal(corner[index], 0);
+});
+
+test("contain-alpha preserves faint alpha at the source boundary", async () => {
+  const source = await sharp({
+    create: {
+      width: 200,
+      height: 100,
+      channels: 4,
+      background: { r: 80, g: 180, b: 120, alpha: 0.02 },
+    },
+  }).png().toBuffer();
+
+  const output = await prepareImageForR2(await toB64(source), {
+    ...OUTPUT,
+    paddingPercent: 0,
+    maxCornerAlphaRatio: 1,
+  }, "image/png");
+  const { data, info } = await sharp(output).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.equal(info.width, 1024);
+  assert.equal(info.height, 512);
+  assert.ok((data[3] ?? 0) > 0, "faint boundary alpha must not be trimmed away");
 });
 
 test("contain-alpha rejects an opaque image", async () => {
@@ -96,6 +116,38 @@ test("contain-alpha rejects broad corner alpha contamination", async () => {
     prepareImageForR2(await toB64(source), OUTPUT, "image/png"),
     /corner alpha occupancy/,
   );
+});
+
+test("contain-alpha can encode a transparent WebP output", async () => {
+  const source = await sharp({
+    create: {
+      width: 400,
+      height: 200,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite([{
+      input: {
+        create: {
+          width: 280,
+          height: 80,
+          channels: 4,
+          background: { r: 220, g: 120, b: 40, alpha: 1 },
+        },
+      },
+      left: 60,
+      top: 60,
+    }])
+    .png()
+    .toBuffer();
+
+  const output = await prepareImageForR2(await toB64(source), OUTPUT, "image/webp");
+  const metadata = await sharp(output).metadata();
+  assert.equal(metadata.format, "webp");
+  assert.equal(metadata.width, 1024);
+  assert.equal(metadata.height, 512);
+  assert.equal(metadata.hasAlpha, true);
 });
 
 test("requested aspect ratio is enforced on persisted output bytes", async () => {

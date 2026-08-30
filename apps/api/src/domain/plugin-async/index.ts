@@ -9,7 +9,7 @@ import { ImageGenError, type ImageGenInput } from "../../drivers/image/types.js"
 import { putImage, R2UploadError } from "../../drivers/storage/r2.js";
 import { isAllowedUpstreamImageUrl } from "./upstream-url.js";
 import {
-  listRegisteredPlugins,
+  getPluginById,
   resolveLlmBackend,
 } from "../../plugins/registry.js";
 import type {
@@ -60,10 +60,6 @@ const TASK_RETENTION_MS = 24 * 60 * 60 * 1000;            // 24h
 // In-memory FIFO queue. We don't poll the DB; submit + recovery push here.
 const queuedTaskIds: string[] = [];
 let activeCount = 0;
-
-function getPluginById(id: string): InkastPlugin | undefined {
-  return listRegisteredPlugins().find(p => p.id === id);
-}
 
 export function resolvePluginProviderPolicy(
   plugin: InkastPlugin,
@@ -266,6 +262,7 @@ async function runTask(taskId: string): Promise<void> {
           size: effectiveSize,
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
+          background: plugin.imageDefaults.background,
           deliveryIntent:
             plugin.imageStorage?.kind === "r2" &&
             (plugin.upstreamImageUrlPassthrough?.allowedOrigins.length ?? 0) > 0
@@ -309,6 +306,7 @@ async function runTask(taskId: string): Promise<void> {
           size: plugin.imageDefaults.size,
           quality: plugin.imageDefaults.quality,
           format: plugin.imageDefaults.format,
+          background: plugin.imageDefaults.background,
           allowedProviderIds,
           providerOrder,
         },
@@ -337,7 +335,7 @@ async function runTask(taskId: string): Promise<void> {
 
     // 4. 出图持久化:按 plugin.imageStorage 分两条路
     //    - "b64"(默认):JPEG transcode(payload 缩 5x)+ DB b64_json 字段
-    //    - "r2":可选 resize 后保留 PNG → R2 PUT → DB image_url 字段
+    //    - "r2":可选 resize / 转码后写入 PNG、JPEG 或 WebP → R2 PUT → DB image_url 字段
     //    - "r2" + overlay 显式授权 driver 的持久 URL origin → 跳过上传直接用
     const storage: PluginImageStorage = plugin.imageStorage ?? { kind: "b64" };
 
@@ -662,7 +660,7 @@ async function transcodeToJpeg(
   }
 
   if (outputDims?.fit === "contain-alpha") {
-    throw new Error("contain-alpha output requires PNG R2 storage");
+    throw new Error("contain-alpha output requires PNG/WebP R2 storage");
   }
 
   let pipeline = sharp(srcBytes);
@@ -687,10 +685,9 @@ async function transcodeToJpeg(
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * 为 R2 上传准备字节流:保留 PNG 原图(callback 不再需要 b64 缩 payload),
- * 仅在 plugin 配了 outputDimensions 或目标 contentType ≠ image/png 时
- * 用 sharp 处理(resize cover-fit / format re-encode)。image driver 当前
- * 总是返 PNG,所以 (contentType=png && !resize) 走 passthrough。
+ * 为 R2 上传准备字节流：按 overlay 的尺寸和内容类型用 sharp 归一化；
+ * 透明资产可走 contain-alpha 并编码为 PNG 或带 Alpha 的 WebP。
+ * 无尺寸约束且目标仍为 PNG 时保留原字节直传。
  */
 export async function prepareImageForR2(
   srcB64: string,
@@ -714,10 +711,10 @@ export async function prepareImageForR2(
     }
   }
   if (outputDims?.fit === "contain-alpha") {
-    if (contentType !== "image/png") {
-      throw new Error("contain-alpha output must remain image/png");
+    if (contentType === "image/jpeg") {
+      throw new Error("contain-alpha output must remain image/png or image/webp");
     }
-    return normalizeTransparentAsset(srcBytes, outputDims);
+    return normalizeTransparentAsset(srcBytes, outputDims, contentType);
   }
   let pipeline = sharp(srcBytes);
   if (outputDims) {
@@ -759,13 +756,13 @@ export async function prepareImageForR2(
 async function normalizeTransparentAsset(
   srcBytes: Buffer,
   output: PluginOutputDimensions,
+  contentType: "image/png" | "image/webp",
 ): Promise<Buffer> {
   const metadata = await sharp(srcBytes).metadata();
   if (!metadata.hasAlpha) {
     throw new Error("output_validation_failed: true transparent alpha is required");
   }
 
-  const alphaThreshold = output.alphaThreshold ?? 12;
   const maxCornerAlphaRatio = output.maxCornerAlphaRatio ?? 0.02;
   const { data: raw, info } = await sharp(srcBytes)
     .ensureAlpha()
@@ -785,7 +782,7 @@ async function normalizeTransparentAsset(
     for (let y = startY; y < startY + sampleHeight; y += 1) {
       for (let x = startX; x < startX + sampleWidth; x += 1) {
         const alpha = raw[(y * info.width + x) * info.channels + 3] ?? 0;
-        if (alpha > alphaThreshold) visible += 1;
+        if (alpha > 0) visible += 1;
       }
     }
     worstCornerRatio = Math.max(worstCornerRatio, visible / (sampleWidth * sampleHeight));
@@ -802,10 +799,9 @@ async function normalizeTransparentAsset(
   const innerWidth = Math.max(1, output.width - insetX * 2);
   const innerHeight = Math.max(1, output.height - insetY * 2);
   const { data: resized, info: resizedInfo } = await sharp(srcBytes)
-    .trim({
-      background: { r: 0, g: 0, b: 0, alpha: 0 },
-      threshold: alphaThreshold,
-    })
+    // Preserve the model's alpha exactly. In particular, do not trim with an
+    // opacity threshold: faint glows, antialiasing and hairline strokes are
+    // valid logo pixels and must survive normalization.
     .resize(innerWidth, innerHeight, { fit: "inside", withoutEnlargement: false })
     .png()
     .toBuffer({ resolveWithObject: true });
@@ -813,7 +809,7 @@ async function normalizeTransparentAsset(
   const right = output.width - resizedInfo.width - left;
   const top = Math.floor((output.height - resizedInfo.height) / 2);
   const bottom = output.height - resizedInfo.height - top;
-  return sharp(resized)
+  const normalized = sharp(resized)
     .extend({
       top,
       bottom,
@@ -821,8 +817,10 @@ async function normalizeTransparentAsset(
       right,
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
-    .png()
-    .toBuffer();
+  if (contentType === "image/webp") {
+    return normalized.webp({ quality: 90, alphaQuality: 100, effort: 6 }).toBuffer();
+  }
+  return normalized.png().toBuffer();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
