@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS plugin_tasks (
   image_url            TEXT,                  -- succeeded only, mutually exclusive with b64_json (set by imageStorage.kind='r2' plugins)
   mime                 TEXT,                  -- 'image/jpeg' or 'image/png'
   prompt_json          TEXT,                  -- succeeded only: JSON.stringify of merged ImagePrompt
+  final_prompt_text    TEXT,                  -- exact prompt sent to the successful provider; null for historical rows
   rewritten_prompt     TEXT,                  -- JSON array string[]; one entry per LLM rewrite round actually performed; empty/null when no rewrite happened
   success_round        INTEGER,               -- succeeded only: 0=round 0 (original prompt) | 1=round 1 LLM vision rewrite | 2=fingerprint-degrade | 3=color-only anchor
   current_round        INTEGER,               -- running only: 实时进度,当前进行到第几轮(0..3);driver 每走一个渠道增量更新,终态后不再维护(看 success_round)
@@ -156,6 +157,7 @@ CREATE TABLE IF NOT EXISTS plugin_gallery_items (
   mime                 TEXT,
   prompt               TEXT NOT NULL,           -- caller's raw prompt, never truncated
   prompt_json          TEXT,                    -- JSON.stringify of merged ImagePrompt
+  final_prompt_text    TEXT,                    -- exact successful provider prompt; null for historical rows
   rewritten_prompts    TEXT,                    -- JSON array string[]; null/[] when no rewrite
   success_round        INTEGER NOT NULL,        -- 0..3, copied from plugin_tasks.success_round
   post_review_edited   INTEGER NOT NULL DEFAULT 0,

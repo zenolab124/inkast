@@ -131,6 +131,7 @@ adminRoutes.get("/plugin-gallery.json", c => {
     imageUrl: r.imageUrl,
     mime: r.mime,
     prompt: r.prompt,
+    finalPromptText: r.finalPromptText,
     promptJson: r.promptJson ? safeParseJson(r.promptJson) : null,
     rewrittenPrompts: r.rewrittenPrompts,
     successRound: r.successRound,

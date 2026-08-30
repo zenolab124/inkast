@@ -320,6 +320,8 @@ async function runTask(taskId: string): Promise<void> {
           // its URL would incorrectly bypass persistence and return the
           // unedited image to the caller.
           imageUrl: undefined,
+          finalPromptText:
+            reviewOutcome.editDriverOutcome?.finalPromptText ?? imageOutcome.finalPromptText,
           attempts: [
             ...imageOutcome.attempts,
             ...(reviewOutcome.editDriverOutcome?.attempts ?? []),
@@ -356,6 +358,7 @@ async function runTask(taskId: string): Promise<void> {
           imageUrl: upstreamUrl,
           mime: storage.contentType,
           promptJson: promptJsonStr,
+          finalPromptText: imageOutcome.finalPromptText,
           llmDurationMs,
           imageDurationMs,
           providerId: imageOutcome.providerId,
@@ -401,6 +404,7 @@ async function runTask(taskId: string): Promise<void> {
             imageUrl,
             mime: storage.contentType,
             promptJson: promptJsonStr,
+            finalPromptText: imageOutcome.finalPromptText,
             llmDurationMs,
             imageDurationMs,
             providerId: imageOutcome.providerId,
@@ -443,6 +447,7 @@ async function runTask(taskId: string): Promise<void> {
         b64Json,
         mime,
         promptJson: promptJsonStr,
+        finalPromptText: imageOutcome.finalPromptText,
         llmDurationMs,
         imageDurationMs,
         providerId: imageOutcome.providerId,

@@ -486,6 +486,8 @@ export interface PluginGalleryItem {
   mime: string | null;
   /** Original caller prompt (free-form prose; never truncated). */
   prompt: string;
+  /** Exact text sent to the successful provider. Null for historical rows. */
+  finalPromptText: string | null;
   /** LLM-expanded prompt JSON when available; null for skip-LLM plugins. */
   promptJson: unknown | null;
   /**

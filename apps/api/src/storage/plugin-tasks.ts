@@ -47,6 +47,7 @@ export interface PluginTaskRow {
   imageUrl: string | null;
   mime: string | null;
   promptJson: string | null;
+  finalPromptText: string | null;
   /**
    * One entry per LLM rewrite round actually performed. Empty array when no
    * rewrite happened (original prompt succeeded). Persisted regardless of
@@ -106,6 +107,7 @@ interface DbRow {
   image_url: string | null;
   mime: string | null;
   prompt_json: string | null;
+  final_prompt_text: string | null;
   rewritten_prompt: string | null;
   success_round: number | null;
   post_review_edited: number | null;
@@ -138,6 +140,7 @@ function rowToTask(row: DbRow): PluginTaskRow {
     imageUrl: row.image_url,
     mime: row.mime,
     promptJson: row.prompt_json,
+    finalPromptText: row.final_prompt_text,
     rewrittenPrompts: parseRewrittenPrompts(row.rewritten_prompt),
     successRound:
       row.success_round === 0 ||
@@ -235,6 +238,7 @@ export function createPluginTask(input: CreatePluginTaskInput): PluginTaskRow {
     imageUrl: null,
     mime: null,
     promptJson: null,
+    finalPromptText: null,
     rewrittenPrompts: [],
     successRound: null,
     postReviewEdited: null,
@@ -286,6 +290,8 @@ export function updateTaskProgress(
 interface SucceededBase {
   mime: string;
   promptJson: string;
+  /** Exact prompt text sent to the provider that produced the final image. */
+  finalPromptText: string;
   llmDurationMs: number;
   imageDurationMs: number;
   providerId: string;
@@ -334,7 +340,7 @@ export function markTaskSucceeded(id: string, input: MarkSucceededInput): void {
       .prepare(
         `UPDATE plugin_tasks
          SET status = 'succeeded', b64_json = ?, image_url = ?, mime = ?, prompt_json = ?,
-             rewritten_prompt = ?, success_round = ?, post_review_edited = ?,
+             final_prompt_text = ?, rewritten_prompt = ?, success_round = ?, post_review_edited = ?,
              llm_duration_ms = ?, image_duration_ms = ?,
              provider_id = ?, provider_name = ?, attempts = ?,
              completed_at = ?
@@ -345,6 +351,7 @@ export function markTaskSucceeded(id: string, input: MarkSucceededInput): void {
         imageUrl,
         input.mime,
         input.promptJson,
+        input.finalPromptText,
         rewrittenPromptsJson,
         input.successRound,
         input.postReviewEdited ? 1 : 0,
@@ -377,6 +384,7 @@ export function markTaskSucceeded(id: string, input: MarkSucceededInput): void {
           imageUrl: input.imageUrl,
           mime: input.mime,
           prompt: row.prompt,
+          finalPromptText: input.finalPromptText,
           promptJson: input.promptJson,
           rewrittenPrompts: input.rewrittenPrompts ?? [],
           successRound: input.successRound,

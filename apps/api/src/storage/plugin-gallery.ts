@@ -18,6 +18,7 @@ export interface PluginGalleryRecord {
   imageUrl: string;
   mime: string | null;
   prompt: string;
+  finalPromptText: string | null;
   promptJson: string | null;
   rewrittenPrompts: string[];
   successRound: 0 | 1 | 2 | 3;
@@ -35,6 +36,7 @@ export interface InsertPluginGalleryItemInput {
   imageUrl: string;
   mime: string | null;
   prompt: string;
+  finalPromptText: string | null;
   promptJson: string | null;
   rewrittenPrompts: string[];
   successRound: 0 | 1 | 2 | 3;
@@ -54,9 +56,9 @@ export function insertPluginGalleryItem(input: InsertPluginGalleryItemInput): bo
     .prepare(
       `INSERT OR IGNORE INTO plugin_gallery_items
         (id, plugin_id, provider_id, provider_name, image_url, mime,
-         prompt, prompt_json, rewritten_prompts, success_round,
+         prompt, final_prompt_text, prompt_json, rewritten_prompts, success_round,
          post_review_edited, llm_duration_ms, image_duration_ms, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
@@ -66,6 +68,7 @@ export function insertPluginGalleryItem(input: InsertPluginGalleryItemInput): bo
       input.imageUrl,
       input.mime,
       input.prompt,
+      input.finalPromptText,
       input.promptJson,
       input.rewrittenPrompts.length > 0 ? JSON.stringify(input.rewrittenPrompts) : null,
       input.successRound,
@@ -85,6 +88,7 @@ interface DbRow {
   image_url: string;
   mime: string | null;
   prompt: string;
+  final_prompt_text: string | null;
   prompt_json: string | null;
   rewritten_prompts: string | null;
   success_round: number;
@@ -103,6 +107,7 @@ function rowToRecord(row: DbRow): PluginGalleryRecord {
     imageUrl: row.image_url,
     mime: row.mime,
     prompt: row.prompt,
+    finalPromptText: row.final_prompt_text,
     promptJson: row.prompt_json,
     rewrittenPrompts: parseRewritten(row.rewritten_prompts),
     successRound: (row.success_round as 0 | 1 | 2 | 3),
@@ -164,7 +169,7 @@ export function listPluginGallery(query: ListPluginGalleryQuery): ListPluginGall
   const rows = db()
     .prepare(
       `SELECT id, plugin_id, provider_id, provider_name, image_url, mime,
-              prompt, prompt_json, rewritten_prompts, success_round,
+              prompt, final_prompt_text, prompt_json, rewritten_prompts, success_round,
               post_review_edited, llm_duration_ms, image_duration_ms, created_at
        FROM plugin_gallery_items
        ${whereClause}
@@ -227,7 +232,7 @@ export function backfillPluginGalleryFromTasks(): { scanned: number; inserted: n
   const rows = db()
     .prepare(
       `SELECT id, plugin_id, provider_id, provider_name, image_url, mime,
-              prompt, prompt_json, rewritten_prompt, success_round,
+              prompt, final_prompt_text, prompt_json, rewritten_prompt, success_round,
               post_review_edited, llm_duration_ms, image_duration_ms, created_at
        FROM plugin_tasks
        WHERE image_url IS NOT NULL
@@ -242,6 +247,7 @@ export function backfillPluginGalleryFromTasks(): { scanned: number; inserted: n
       image_url: string;
       mime: string | null;
       prompt: string;
+      final_prompt_text: string | null;
       prompt_json: string | null;
       rewritten_prompt: string | null;
       success_round: number;
@@ -262,6 +268,7 @@ export function backfillPluginGalleryFromTasks(): { scanned: number; inserted: n
         imageUrl: r.image_url,
         mime: r.mime,
         prompt: r.prompt,
+        finalPromptText: r.final_prompt_text,
         promptJson: r.prompt_json,
         rewrittenPrompts: parseRewritten(r.rewritten_prompt),
         successRound: (r.success_round as 0 | 1 | 2 | 3),

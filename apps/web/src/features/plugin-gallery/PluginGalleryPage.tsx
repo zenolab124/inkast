@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ImageIcon, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
+import { Check, Copy, ImageIcon, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import Masonry from "react-masonry-css";
 import type {
   PluginGalleryItem,
@@ -404,6 +404,13 @@ function PluginGalleryDetailDialog({
   const createdAt = new Date(item.createdAt).toLocaleString("zh-CN", {
     hour12: false,
   });
+  const historicalEffectivePrompt = item.successRound > 0
+    ? item.rewrittenPrompts[item.successRound - 1]
+      ?? item.rewrittenPrompts[item.rewrittenPrompts.length - 1]
+      ?? item.prompt
+    : item.prompt;
+  const hasExactFinalPrompt = !!item.finalPromptText?.trim();
+  const displayedFinalPrompt = item.finalPromptText?.trim() || historicalEffectivePrompt;
 
   return (
     <Dialog open={!!item} onOpenChange={onOpenChange}>
@@ -458,7 +465,26 @@ function PluginGalleryDetailDialog({
               </span>
             </div>
 
-            <DetailSection title="调用方 prompt(原始,未截断)">
+            <DetailSection
+              title={hasExactFinalPrompt
+                ? "最终生图 Prompt(成功引擎实际收到)"
+                : "最终使用的基础 Prompt(历史记录)"}
+              copyText={displayedFinalPrompt}
+            >
+              {!hasExactFinalPrompt && (
+                <p className="m-0 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                  此历史作品未保存引擎包装与统一尾词，下面展示当时可恢复的最终基础 Prompt。
+                </p>
+              )}
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-border bg-card p-3 text-[12px] leading-relaxed text-foreground">
+                {displayedFinalPrompt}
+              </pre>
+            </DetailSection>
+
+            <DetailSection
+              title="调用方 Prompt(原始,未截断)"
+              copyText={item.prompt}
+            >
               <pre className="whitespace-pre-wrap break-words rounded-md border border-border bg-card p-3 text-[12px] leading-relaxed text-foreground">
                 {item.prompt}
               </pre>
@@ -470,24 +496,17 @@ function PluginGalleryDetailDialog({
               >
                 <ol className="m-0 flex list-none flex-col gap-2 p-0">
                   {item.rewrittenPrompts.map((rw, idx) => (
-                    <li
-                      key={idx}
-                      className="rounded-md border border-border bg-card p-3"
-                    >
-                      <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-                        R{idx + 1}
-                      </div>
-                      <pre className="m-0 whitespace-pre-wrap break-words text-[12px] leading-relaxed">
-                        {rw}
-                      </pre>
-                    </li>
+                    <PromptCard key={idx} label={`R${idx + 1}`} text={rw} />
                   ))}
                 </ol>
               </DetailSection>
             )}
 
             {item.promptJson !== null && item.promptJson !== undefined && (
-              <DetailSection title="prompt JSON(merged)">
+              <DetailSection
+                title="Prompt JSON(merged)"
+                copyText={JSON.stringify(item.promptJson, null, 2)}
+              >
                 <pre className="overflow-x-auto rounded-md border border-border bg-card p-3 text-[11px] leading-relaxed">
                   {JSON.stringify(item.promptJson, null, 2)}
                 </pre>
@@ -502,17 +521,75 @@ function PluginGalleryDetailDialog({
 
 function DetailSection({
   title,
+  copyText,
   children,
 }: {
   title: string;
+  copyText?: string;
   children: React.ReactNode;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    if (!copyText) return;
+    await navigator.clipboard.writeText(copyText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
   return (
     <section className="flex flex-col gap-1.5">
-      <h3 className="m-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h3>
+      <header className="flex min-h-7 items-center justify-between gap-2">
+        <h3 className="m-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {title}
+        </h3>
+        {copyText && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={copy}
+            className="h-7 shrink-0 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            {copied ? <Check className="size-3" strokeWidth={2.5} /> : <Copy className="size-3" strokeWidth={1.75} />}
+            {copied ? "已复制" : "复制"}
+          </Button>
+        )}
+      </header>
       {children}
     </section>
+  );
+}
+
+function PromptCard({ label, text }: { label: string; text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <li className="rounded-md border border-border bg-card p-3">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={copy}
+          className="h-7 shrink-0 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          {copied ? <Check className="size-3" strokeWidth={2.5} /> : <Copy className="size-3" strokeWidth={1.75} />}
+          {copied ? "已复制" : "复制"}
+        </Button>
+      </div>
+      <pre className="m-0 whitespace-pre-wrap break-words text-[12px] leading-relaxed">
+        {text}
+      </pre>
+    </li>
   );
 }
