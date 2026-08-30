@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS generations (
   id                 TEXT PRIMARY KEY,
   prompt_snapshot    TEXT NOT NULL,
   prompt_text        TEXT NOT NULL,
+  final_prompt_text  TEXT,           -- exact prompt sent to the successful provider; null for historical rows
   image_path         TEXT NOT NULL,  -- R2 key (webui/<uuid>.png) when R2 enabled, else local relative path (YYYY/MM/<uuid>.png)
   image_url          TEXT,           -- R2 public URL; null = local-only (dev) or pre-R2 historical row
   image_format       TEXT NOT NULL DEFAULT 'png',

@@ -46,10 +46,7 @@ export function buildSenseNovaRequestBody(
     : input.size && SUPPORTED_SIZES.has(input.size)
       ? input.size
       : DEFAULT_SIZE;
-  const prompt = appendImageCleanlinessInstruction(
-    input.promptText,
-    ratio ? [`Target aspect ratio: ${ratio}.`] : [],
-  );
+  const prompt = buildSenseNovaPrompt(input);
 
   return {
     model: capability.model,
@@ -57,6 +54,14 @@ export function buildSenseNovaRequestBody(
     size,
     n: input.n ?? 1,
   };
+}
+
+export function buildSenseNovaPrompt(input: ImageGenInput): string {
+  const ratio = isRatioSize(input.size) ? extractRatio(input.size) : null;
+  return appendImageCleanlinessInstruction(
+    input.promptText,
+    ratio ? [`Target aspect ratio: ${ratio}.`] : [],
+  );
 }
 
 export async function callSenseNovaApi(

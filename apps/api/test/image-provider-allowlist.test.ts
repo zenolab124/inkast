@@ -240,6 +240,7 @@ test("rewrite rounds retain the same provider allowlist and cannot escape", asyn
         providerName: providerId,
         attempts: [attempt],
         totalDurationMs: 1,
+        finalPromptText: input.promptText,
       };
     },
     rewriteBlockedPrompt: async input => ({
@@ -315,6 +316,7 @@ test("rewrite progress advances when each round starts, before its work complete
         providerName: attempt.providerName,
         attempts: [attempt],
         totalDurationMs: 1,
+        finalPromptText: input.promptText,
       };
     },
     rewriteBlockedPrompt: async input => {

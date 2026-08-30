@@ -18,13 +18,20 @@ import {
 } from "../../storage/providers.js";
 import { acquireProviderSlot } from "../../lib/throttle.js";
 import { resolveExtraHeaders } from "../codex-header.js";
-import { callC2iTasksApi } from "./c2i-tasks.js";
-import { callCloudBaseApi, CloudBaseImageError } from "./cloudbase.js";
-import { callImageGenerationTool } from "./openai-responses.js";
-import { callSeedreamApi } from "./seedream.js";
-import { callSenseNovaApi } from "./sensenova.js";
-import { callSiliconFlowApi } from "./siliconflow.js";
-import { callZhipuApi } from "./zhipu.js";
+import { buildC2iPromptText, callC2iTasksApi } from "./c2i-tasks.js";
+import {
+  buildCloudBasePrompt,
+  callCloudBaseApi,
+  CloudBaseImageError,
+} from "./cloudbase.js";
+import {
+  callImageGenerationTool,
+  wrapPromptForImageGen,
+} from "./openai-responses.js";
+import { buildSeedreamPrompt, callSeedreamApi } from "./seedream.js";
+import { buildSenseNovaPrompt, callSenseNovaApi } from "./sensenova.js";
+import { buildSiliconFlowPrompt, callSiliconFlowApi } from "./siliconflow.js";
+import { buildZhipuPrompt, callZhipuApi } from "./zhipu.js";
 import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import {
   ImageGenError,
@@ -40,6 +47,31 @@ function resolveMode(capability: ProviderCapability): ImageGenerationMode {
   return raw === "responses" || raw === "images" || raw === "c2i-tasks" || raw === "seedream" || raw === "sensenova" || raw === "zhipu" || raw === "siliconflow" || raw === "cloudbase"
     ? raw
     : IMAGE_GENERATION_MODE_DEFAULT;
+}
+
+function buildFinalPromptText(
+  mode: ImageGenerationMode,
+  input: ImageGenInput,
+): string {
+  switch (mode) {
+    case "responses":
+      return wrapPromptForImageGen(input);
+    case "c2i-tasks":
+      return buildC2iPromptText(input);
+    case "seedream":
+      return buildSeedreamPrompt(input);
+    case "sensenova":
+      return buildSenseNovaPrompt(input);
+    case "zhipu":
+      return buildZhipuPrompt(input);
+    case "siliconflow":
+      return buildSiliconFlowPrompt(input);
+    case "cloudbase":
+      return buildCloudBasePrompt(input);
+    case "images":
+    default:
+      return buildOpenAIImagePrompt(input);
+  }
 }
 
 // gpt-image-2 high-quality jobs commonly take 1-5 minutes via third-party
@@ -204,6 +236,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
       try {
         let b64: string;
         let imageUrl: string | undefined;
+        const finalPromptText = buildFinalPromptText(mode, input);
         if (mode === "c2i-tasks") {
           const result = await callC2iTasksApi(provider, capability, apiKey, input);
           b64 = result.b64;
@@ -254,6 +287,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           providerName: provider.name,
           attempts,
           totalDurationMs: Date.now() - overallStart,
+          finalPromptText,
         };
       } catch (err) {
         clearInterval(heartbeat);

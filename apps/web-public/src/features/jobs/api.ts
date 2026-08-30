@@ -112,6 +112,7 @@ async function runJob(jobId: string, job: JobRecord, req: SubmitJobRequest): Pro
           task_id?: string;
           images?: { url: string | null; b64: string | null }[];
           duration_ms?: number;
+          prompt_text?: string;
           error?: string;
           message?: string;
         }
@@ -148,6 +149,7 @@ async function runJob(jobId: string, job: JobRecord, req: SubmitJobRequest): Pro
       id: generationId,
       promptSnapshot: req.prompt,
       promptText,
+      finalPromptText: j.prompt_text ?? null,
       imagePath: `idb:${generationId}`, // 标记浏览器 IDB,实际 URL 在 gallery/api.ts 现场 createObjectURL
       imageUrl: null,
       imageFormat: "png",

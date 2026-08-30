@@ -41,6 +41,8 @@ export interface PassthroughOutput {
   model: string;
   /** Upstream response 整体耗时(ms) */
   durationMs: number;
+  /** 实际发送给生图引擎的完整提示词。 */
+  finalPromptText: string;
 }
 
 export class PassthroughError extends Error {
@@ -64,11 +66,12 @@ export async function passthroughGenerate(input: PassthroughInput): Promise<Pass
   });
 
   try {
+    const finalPromptText = appendImageCleanlinessInstruction(input.prompt);
     // gpt-image-2 / 多数兼容代理接受 SDK enum 之外的 size 值(如 'auto'),
     // 走 unchecked cast,跟主线 drivers/image/openai-compatible.ts 一致做法。
     const body = {
       model: input.model,
-      prompt: appendImageCleanlinessInstruction(input.prompt),
+      prompt: finalPromptText,
       ...(input.size ? { size: input.size } : {}),
       ...(input.n ? { n: input.n } : {}),
       response_format: "b64_json",
@@ -86,7 +89,12 @@ export async function passthroughGenerate(input: PassthroughInput): Promise<Pass
       throw new PassthroughError(null, "empty_response", "upstream returned no b64 images");
     }
 
-    return { b64Images, model: input.model, durationMs: Date.now() - started };
+    return {
+      b64Images,
+      model: input.model,
+      durationMs: Date.now() - started,
+      finalPromptText,
+    };
   } catch (err) {
     if (err instanceof PassthroughError) throw err;
     if (err instanceof APIError) {

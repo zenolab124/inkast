@@ -177,6 +177,11 @@ export interface Translations {
     prompt: string;
     copyJson: string;
     copied: string;
+    fullPrompt: string;
+    fullPromptExact: string;
+    fullPromptLegacy: string;
+    copyPrompt: string;
+    promptCopied: string;
     reuse: string;
     download: string;
     prose: string;

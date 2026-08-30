@@ -37,23 +37,13 @@ export function buildSeedreamRequestBody(
   input: ImageGenInput,
 ): SeedreamRequestBody {
   const refs = input.referenceImages ?? [];
-  const useRatio = isRatioSize(input.size);
+  const prompt = buildSeedreamPrompt(input);
   const exactMatch = typeof input.size === "string"
     ? input.size.match(/^(\d+)x(\d+)$/)
     : null;
   const exactWidth = exactMatch ? Number(exactMatch[1]) : 0;
   const exactHeight = exactMatch ? Number(exactMatch[2]) : 0;
   const exactSizeAllowed = exactWidth * exactHeight >= MIN_SEEDREAM_PIXELS;
-  const ratioDivisor = exactMatch && !exactSizeAllowed ? gcd(exactWidth, exactHeight) : 0;
-  const ratioHint = useRatio
-    ? extractRatio(input.size)
-    : ratioDivisor > 0
-      ? `${exactWidth / ratioDivisor}:${exactHeight / ratioDivisor}`
-      : null;
-  const prompt = appendImageCleanlinessInstruction(
-    input.promptText,
-    ratioHint ? [`Target aspect ratio: ${ratioHint}.`] : [],
-  );
   const upstreamSize = exactMatch && exactSizeAllowed
     ? input.size as string
     : DEFAULT_SEEDREAM_SIZE;
@@ -76,6 +66,26 @@ export function buildSeedreamRequestBody(
     // provider's visible corner watermark to user artwork.
     watermark: false,
   };
+}
+
+export function buildSeedreamPrompt(input: ImageGenInput): string {
+  const useRatio = isRatioSize(input.size);
+  const exactMatch = typeof input.size === "string"
+    ? input.size.match(/^(\d+)x(\d+)$/)
+    : null;
+  const exactWidth = exactMatch ? Number(exactMatch[1]) : 0;
+  const exactHeight = exactMatch ? Number(exactMatch[2]) : 0;
+  const exactSizeAllowed = exactWidth * exactHeight >= MIN_SEEDREAM_PIXELS;
+  const ratioDivisor = exactMatch && !exactSizeAllowed ? gcd(exactWidth, exactHeight) : 0;
+  const ratioHint = useRatio
+    ? extractRatio(input.size)
+    : ratioDivisor > 0
+      ? `${exactWidth / ratioDivisor}:${exactHeight / ratioDivisor}`
+      : null;
+  return appendImageCleanlinessInstruction(
+    input.promptText,
+    ratioHint ? [`Target aspect ratio: ${ratioHint}.`] : [],
+  );
 }
 
 export async function callSeedreamApi(

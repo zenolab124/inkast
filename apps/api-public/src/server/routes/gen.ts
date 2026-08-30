@@ -113,6 +113,7 @@ genRoutes.post(
       model: result.model,
       images: uploaded,
       duration_ms: result.durationMs,
+      prompt_text: result.finalPromptText,
     });
   } catch (err) {
     if (err instanceof PassthroughError) {
@@ -239,6 +240,7 @@ genRoutes.post(
       cost,
       balance_after: getBalance(user.id),
       duration_ms: result.durationMs,
+      prompt_text: result.finalPromptText,
     });
   } catch (err) {
     // 退款,task fail。

@@ -161,6 +161,8 @@ export interface ImageGenOutcome {
   providerName: string;
   attempts: ImageGenAttempt[];
   totalDurationMs: number;
+  /** Exact text sent to the successful provider, including engine hints and global tail. */
+  finalPromptText: string;
 }
 
 export type ImageGenErrorCode =

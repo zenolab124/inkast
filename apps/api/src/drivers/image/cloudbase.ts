@@ -84,10 +84,14 @@ export function buildCloudBaseRequestBody(input: ImageGenInput): string {
   }
   return JSON.stringify({
     taskId: randomUUID(),
-    prompt: appendImageCleanlinessInstruction(input.promptText),
+    prompt: buildCloudBasePrompt(input),
     imageUrls: sourceUrls,
     ratio: resolveCloudBaseRatio(input.size),
   });
+}
+
+export function buildCloudBasePrompt(input: ImageGenInput): string {
+  return appendImageCleanlinessInstruction(input.promptText);
 }
 
 function resolveMaxConcurrency(capability: ProviderCapability): number {

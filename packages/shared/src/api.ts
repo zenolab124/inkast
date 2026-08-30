@@ -293,7 +293,13 @@ export interface ReorderCapabilitiesRequest {
 export interface GenerationRecord {
   id: string;
   promptSnapshot: ImagePrompt;
+  /** Effective base prompt before provider-specific wrapping. */
   promptText: string;
+  /**
+   * Exact prompt sent to the successful image provider, including engine
+   * hints and the global cleanliness instruction. Null for historical rows.
+   */
+  finalPromptText: string | null;
   imagePath: string;
   /**
    * R2 public URL when the image lives on R2 (Web UI channel with R2 enabled).

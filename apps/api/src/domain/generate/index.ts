@@ -121,6 +121,7 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
   const generation = createGeneration({
     promptSnapshot: input.prompt,
     promptText,
+    finalPromptText: outcome.finalPromptText,
     imagePath,
     imageUrl,
     imageFormat: actualFormat,

@@ -48,10 +48,7 @@ export function buildSiliconFlowRequestBody(
   const imageSize = ratio
     ? (RATIO_SIZES[ratio] ?? DEFAULT_SIZE)
     : exactSize ?? DEFAULT_SIZE;
-  const prompt = appendImageCleanlinessInstruction(
-    input.promptText,
-    ratio ? [`Target aspect ratio: ${ratio}.`] : [],
-  );
+  const prompt = buildSiliconFlowPrompt(input);
 
   return {
     model: capability.model,
@@ -61,6 +58,14 @@ export function buildSiliconFlowRequestBody(
     num_inference_steps: 20,
     guidance_scale: 7.5,
   };
+}
+
+export function buildSiliconFlowPrompt(input: ImageGenInput): string {
+  const ratio = isRatioSize(input.size) ? extractRatio(input.size) : null;
+  return appendImageCleanlinessInstruction(
+    input.promptText,
+    ratio ? [`Target aspect ratio: ${ratio}.`] : [],
+  );
 }
 
 export async function callSiliconFlowApi(

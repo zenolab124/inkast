@@ -72,7 +72,7 @@ async function submitTask(
   signal: AbortSignal,
 ): Promise<string> {
   const clientTaskId = crypto.randomUUID();
-  const promptText = buildPromptText(input);
+  const promptText = buildC2iPromptText(input);
 
   const body: Record<string, unknown> = {
     client_task_id: clientTaskId,
@@ -255,7 +255,7 @@ async function fireResumePoll(
   }
 }
 
-function buildPromptText(input: ImageGenInput): string {
+export function buildC2iPromptText(input: ImageGenInput): string {
   const ratioHint = isRatioSize(input.size)
     ? `Target aspect ratio: ${extractRatio(input.size)}.`
     : null;

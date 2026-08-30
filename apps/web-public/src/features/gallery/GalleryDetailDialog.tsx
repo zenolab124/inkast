@@ -1,4 +1,4 @@
-import { Download, RefreshCw, Copy, Check, Sparkles, ChevronDown, Quote } from "lucide-react";
+import { Download, RefreshCw, Copy, Check, Sparkles, ChevronDown, Quote, FileText } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { GenerationRecord, ProviderSummary, TextElement } from "@inkast/shared";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,7 @@ const EDITOR_FIELD_KEY_MAP: Record<string, string> = {
 export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
   const [proseExpanded, setProseExpanded] = useState(false);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
 
@@ -53,6 +54,7 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
   useEffect(() => {
     setProseExpanded(false);
     setCopied(false);
+    setPromptCopied(false);
   }, [record?.id]);
 
   // Load provider list when the dialog opens, so we can resolve providerId → name.
@@ -89,6 +91,15 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function copyFullPrompt() {
+    if (!record) return;
+    await navigator.clipboard.writeText(
+      record.finalPromptText?.trim() || record.promptText,
+    );
+    setPromptCopied(true);
+    setTimeout(() => setPromptCopied(false), 1500);
+  }
+
   if (!record) return null;
 
   const url = generationImageUrl(record.id);
@@ -103,6 +114,8 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
   })();
   const hasProse = !!record.prose && record.prose.trim().length > 0;
   const isFromAi = (record.aiFilledFields?.length ?? 0) > 0;
+  const hasExactFinalPrompt = !!record.finalPromptText?.trim();
+  const displayedPrompt = record.finalPromptText?.trim() || record.promptText;
 
   return (
     <Dialog open={!!record} onOpenChange={open => !open && onClose()}>
@@ -187,6 +200,12 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
                 onToggle={() => setProseExpanded(v => !v)}
               />
             )}
+            <FullPromptBlock
+              prompt={displayedPrompt}
+              exact={hasExactFinalPrompt}
+              copied={promptCopied}
+              onCopy={copyFullPrompt}
+            />
             <StructuredBlock
               isFromAi={isFromAi}
               orderedFields={orderedFields}
@@ -196,6 +215,45 @@ export function GalleryDetailDialog({ record, onClose, onReuse }: Props) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function FullPromptBlock({
+  prompt,
+  exact,
+  copied,
+  onCopy,
+}: {
+  prompt: string;
+  exact: boolean;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  const { t } = useLanguage();
+  return (
+    <section className="flex flex-col gap-2">
+      <header className="flex items-center gap-2">
+        <FileText className="size-3.5 text-primary" strokeWidth={1.5} />
+        <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {t.detail.fullPrompt}
+        </span>
+        <span className="text-[10.5px] text-muted-foreground/70">
+          · {exact ? t.detail.fullPromptExact : t.detail.fullPromptLegacy}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onCopy}
+          className="ml-auto h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          {copied ? <Check strokeWidth={2.5} /> : <Copy strokeWidth={1.75} />}
+          {copied ? t.detail.promptCopied : t.detail.copyPrompt}
+        </Button>
+      </header>
+      <div className="whitespace-pre-wrap break-words rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-[12.5px] leading-relaxed text-foreground/90">
+        {prompt}
+      </div>
+    </section>
   );
 }
 

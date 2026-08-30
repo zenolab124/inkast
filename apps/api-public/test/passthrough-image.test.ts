@@ -30,6 +30,7 @@ test("public passthrough appends the cleanliness instruction to the upstream pro
     });
 
     assert.deepEqual(result.b64Images, ["aW1hZ2U="]);
+    assert.equal(result.finalPromptText, receivedPrompt);
     assert.equal(receivedPrompt.endsWith(IMAGE_CLEANLINESS_INSTRUCTION), true);
     assert.equal(receivedPrompt.split(IMAGE_CLEANLINESS_INSTRUCTION).length - 1, 1);
   } finally {

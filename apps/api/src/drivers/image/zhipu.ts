@@ -57,10 +57,7 @@ export function buildZhipuRequestBody(
     : input.size && isSupportedExplicitSize(input.size)
       ? input.size
       : DEFAULT_SIZE;
-  const prompt = appendImageCleanlinessInstruction(
-    input.promptText,
-    ratio ? [`Target aspect ratio: ${ratio}.`] : [],
-  );
+  const prompt = buildZhipuPrompt(input);
 
   return {
     model: capability.model,
@@ -68,6 +65,14 @@ export function buildZhipuRequestBody(
     size,
     quality: input.quality === "high" ? "hd" : "standard",
   };
+}
+
+export function buildZhipuPrompt(input: ImageGenInput): string {
+  const ratio = isRatioSize(input.size) ? extractRatio(input.size) : null;
+  return appendImageCleanlinessInstruction(
+    input.promptText,
+    ratio ? [`Target aspect ratio: ${ratio}.`] : [],
+  );
 }
 
 export async function callZhipuApi(

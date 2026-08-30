@@ -6,6 +6,7 @@ export interface Generation {
   id: string;
   promptSnapshot: ImagePrompt;
   promptText: string;
+  finalPromptText: string | null;
   imagePath: string;
   imageUrl: string | null;
   imageFormat: string;
@@ -21,6 +22,7 @@ export interface Generation {
 export interface CreateGenerationInput {
   promptSnapshot: ImagePrompt;
   promptText: string;
+  finalPromptText: string;
   imagePath: string;
   imageUrl?: string | null;
   imageFormat?: string;
@@ -36,6 +38,7 @@ interface GenerationRow {
   id: string;
   prompt_snapshot: string;
   prompt_text: string;
+  final_prompt_text: string | null;
   image_path: string;
   image_url: string | null;
   image_format: string;
@@ -62,6 +65,7 @@ function rowToGeneration(row: GenerationRow): Generation {
     id: row.id,
     promptSnapshot: JSON.parse(row.prompt_snapshot) as ImagePrompt,
     promptText: row.prompt_text,
+    finalPromptText: row.final_prompt_text,
     imagePath: row.image_path,
     imageUrl: row.image_url,
     imageFormat: row.image_format,
@@ -75,7 +79,7 @@ function rowToGeneration(row: GenerationRow): Generation {
   };
 }
 
-const SELECT_GENERATION_COLUMNS = `id, prompt_snapshot, prompt_text, image_path, image_url, image_format,
+const SELECT_GENERATION_COLUMNS = `id, prompt_snapshot, prompt_text, final_prompt_text, image_path, image_url, image_format,
         size, quality, provider_id, duration_ms, prose, ai_filled_fields, created_at`;
 
 export function createGeneration(input: CreateGenerationInput): Generation {
@@ -87,14 +91,15 @@ export function createGeneration(input: CreateGenerationInput): Generation {
   db()
     .prepare(
       `INSERT INTO generations
-       (id, prompt_snapshot, prompt_text, image_path, image_url, image_format,
+       (id, prompt_snapshot, prompt_text, final_prompt_text, image_path, image_url, image_format,
         size, quality, provider_id, duration_ms, prose, ai_filled_fields, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
       JSON.stringify(input.promptSnapshot),
       input.promptText,
+      input.finalPromptText,
       input.imagePath,
       input.imageUrl ?? null,
       input.imageFormat ?? "png",
@@ -110,6 +115,7 @@ export function createGeneration(input: CreateGenerationInput): Generation {
     id,
     promptSnapshot: input.promptSnapshot,
     promptText: input.promptText,
+    finalPromptText: input.finalPromptText,
     imagePath: input.imagePath,
     imageUrl: input.imageUrl ?? null,
     imageFormat: input.imageFormat ?? "png",
