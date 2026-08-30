@@ -134,7 +134,7 @@ export interface InkastPlugin {
   readonly skipLlmExpansion?: boolean;
   /**
    * 散文版业务约束。**仅在 `skipLlmExpansion=true` 时使用**。
-   * 内容应包含:画面比例、safe zone 百分比、不要文字 / UI overlay、SFW
+   * 内容应包含:画面比例、safe zone 百分比、不要文字 / UI overlay
    * 等所有硬约束。会被原样拼接到调用方 prompt 之后,直接喂图模。
    *
    * 写法上要把 systemPromptPatch 里那种"给 LLM 看的指令式语言"翻译

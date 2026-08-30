@@ -9,7 +9,7 @@ export interface DraftPromptInput {
   /**
    * Optional system prompt suffix appended after the engine's base instructions.
    * Used by the plugin channel to inject per-caller business constraints
-   * (e.g. snapub's "no text / no frame / SFW" patch). Web UI callers do not
+   * (e.g. snapub's "no text / no frame" patch). Web UI callers do not
    * pass this — they get the unmodified imagegen methodology prompt.
    */
   systemPromptSuffix?: string;

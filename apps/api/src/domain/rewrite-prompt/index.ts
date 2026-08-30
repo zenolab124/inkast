@@ -37,10 +37,9 @@ const REWRITE_TIMEOUT_MS = 90_000;
  * inserts signatures, seals, captions due to training data bias.
  *
  * Kept short and Chinese-only — gpt-image-2 handles both languages fine,
- * and a long bilingual block looked like overkill in production. SFW
- * dropped: the image model has its own content moderation pipeline,
- * stuffing "SFW" into the prompt does nothing useful and makes the prompt
- * read like it's evading review.
+ * and a long bilingual block looked like overkill in production. Content
+ * safety remains the image model's responsibility rather than an extra
+ * rewrite suffix.
  */
 /**
  * Two independent hard-constraint clauses, each with its own idempotent
