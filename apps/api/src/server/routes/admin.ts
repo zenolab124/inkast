@@ -351,14 +351,18 @@ function renderHtml(d: RenderInput): string {
           ? `<span class="round-tag" title="当前进行到第 ${r.currentRound} 轮(0=原图 1/2/3=改写降级轮)">r${r.currentRound}</span> `
           : "";
       const chain = roundTag + renderAttemptChain(r.providerName, r.attempts);
+      const rewrite = renderRewriteSummary(r);
       const errCell = r.errorCode
-        ? `<code title="${escapeAttr(r.errorMsg ?? "")}">${escapeText(r.errorCode)}</code>`
+        ? `<div class="error-cell"><code>${escapeText(r.errorCode)}</code>${
+            r.errorMsg ? `<span>${escapeText(shorten(r.errorMsg, 96))}</span>` : ""
+          }</div>`
         : "—";
       return `<tr>
         <td><code title="${escapeAttr(r.id)}">${escapeText(r.id.slice(0, 14))}…</code></td>
         <td><code>${escapeText(r.pluginId)}</code></td>
         <td>${statusBadge(r.status)}</td>
         <td>${chain}</td>
+        <td>${rewrite}</td>
         <td class="num">${llm}</td>
         <td class="num">${img}</td>
         <td class="num">${total}</td>
@@ -484,6 +488,13 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
 .meta { color: #7A6F5E; font-size: 11px; margin: 4px 0; }
 .chain { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; line-height: 1.5; }
 .round-tag { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; background: #3A5A40; color: #FBF6EA; margin-bottom: 3px; }
+.rewrite-state { display: flex; flex-direction: column; gap: 2px; min-width: 128px; max-width: 220px; }
+.rewrite-state strong { font-size: 11px; font-weight: 600; }
+.rewrite-state span { color: #7A6F5E; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+.rewrite-state.is-fail strong { color: #6B2620; }
+.rewrite-state.is-ok strong { color: #2A4A2E; }
+.error-cell { display: flex; flex-direction: column; gap: 3px; min-width: 160px; max-width: 280px; }
+.error-cell span { color: #6B2620; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
 .att { position: relative; display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; border-radius: 3px; font-size: 11px; white-space: nowrap; cursor: default; }
 .att-ok { background: rgba(58,90,64,0.12); color: #2A4A2E; }
 .att-fail { background: rgba(164,69,59,0.10); color: #6B2620; cursor: help; }
@@ -582,8 +593,8 @@ table td { overflow: visible; }
   <div class="card wide">
     <h2>最近任务(最近 50 条,不限时间窗口)</h2>
     <table>
-      <thead><tr><th>任务 ID</th><th>Plugin</th><th>状态</th><th>渠道</th><th>LLM</th><th>生图</th><th>总耗时</th><th>回调次数</th><th>错误</th><th>回调主机</th><th>创建时间</th></tr></thead>
-      <tbody>${recentRows || '<tr><td colspan="11" class="meta">(暂无任务)</td></tr>'}</tbody>
+      <thead><tr><th>任务 ID</th><th>Plugin</th><th>状态</th><th>渠道</th><th>重写</th><th>LLM</th><th>生图</th><th>总耗时</th><th>回调次数</th><th>错误</th><th>回调主机</th><th>创建时间</th></tr></thead>
+      <tbody>${recentRows || '<tr><td colspan="12" class="meta">(暂无任务)</td></tr>'}</tbody>
     </table>
   </div>
 
@@ -653,6 +664,89 @@ table td { overflow: visible; }
 </div>
 </body>
 </html>`;
+}
+
+const REWRITE_TRIGGER_CODES = new Set([
+  "provider_blocked_content",
+  "upstream_safety_rejected",
+  "moderation",
+]);
+
+/**
+ * Keep rewrite diagnostics visible in the table instead of hiding the only
+ * explanation in a mouse-only title attribute. Old rows predate explicit
+ * policy persistence, so a terminal r0 content rejection is labelled as an
+ * inference rather than claimed as stored fact.
+ */
+function renderRewriteSummary(r: RecentTaskRow): string {
+  const message = r.errorMsg ?? "";
+  const rewriteFailure = message.match(/rewrite r(\d+) LLM failed:\s*([\s\S]*?)(?:\s+— and earlier rounds|$)/i);
+  if (rewriteFailure) {
+    return rewriteState(
+      `r${rewriteFailure[1]} 改写失败`,
+      shorten(rewriteFailure[2] ?? "LLM 未返回可用改写", 120),
+      "is-fail",
+    );
+  }
+
+  if (message.includes("rewrite disabled by pipeline_policy.max_round=0")) {
+    return rewriteState("未启用", "调用方设置 max_round=0", "is-fail");
+  }
+
+  if (r.status === "running") {
+    if ((r.currentRound ?? 0) > 0) {
+      return rewriteState(`正在 r${r.currentRound}`, `已完成 ${r.rewrittenPrompts.length} 次改写`);
+    }
+    return rewriteState("等待触发", "正在执行原提示词 r0");
+  }
+
+  if (r.rewrittenPrompts.length > 0) {
+    if (r.status === "succeeded" || r.status === "callback_lost") {
+      return rewriteState(
+        `r${r.successRound ?? r.rewrittenPrompts.length} 生效`,
+        `共完成 ${r.rewrittenPrompts.length} 次改写`,
+        "is-ok",
+      );
+    }
+    return rewriteState(
+      `已改写 ${r.rewrittenPrompts.length} 轮`,
+      "改写后渠道仍未成功",
+      "is-fail",
+    );
+  }
+
+  if (r.status === "succeeded" || r.status === "callback_lost") {
+    return rewriteState("无需改写", "原提示词 r0 已成功", "is-ok");
+  }
+
+  if (r.status === "queued") {
+    return rewriteState("尚未开始", "等待 worker 执行");
+  }
+
+  const hasRewriteTrigger = r.attempts.some(
+    attempt =>
+      !attempt.ok &&
+      attempt.errorCode != null &&
+      REWRITE_TRIGGER_CODES.has(attempt.errorCode),
+  );
+  if (hasRewriteTrigger) {
+    return rewriteState(
+      "未进入改写",
+      "内容拒绝后在 r0 终止；旧记录推断为策略上限 0",
+      "is-fail",
+    );
+  }
+
+  return rewriteState("未触发", "渠道错误不属于可改写的内容拒绝");
+}
+
+function rewriteState(title: string, detail: string, tone = ""): string {
+  return `<div class="rewrite-state ${tone}"><strong>${escapeText(title)}</strong><span>${escapeText(detail)}</span></div>`;
+}
+
+function shorten(value: string, max: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
 }
 
 /**

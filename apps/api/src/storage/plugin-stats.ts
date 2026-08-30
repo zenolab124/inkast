@@ -53,6 +53,10 @@ export interface RecentTaskRow {
   imageDurationMs: number | null;
   totalDurationMs: number | null;
   attempts: GenerateImageAttempt[];
+  /** One prompt per completed LLM rewrite round. */
+  rewrittenPrompts: string[];
+  /** Terminal success round (0..3); null for failures/in-flight tasks. */
+  successRound: number | null;
   /** running only: live round (0..3) the task is on; null on terminal/old rows. */
   currentRound: number | null;
   createdAt: number;
@@ -237,7 +241,8 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
     .prepare(
       `SELECT id, plugin_id, status, callback_url, error_code, error_msg,
               callback_attempts, callback_lost, llm_duration_ms,
-              image_duration_ms, provider_name, attempts, current_round,
+              image_duration_ms, provider_name, attempts, rewritten_prompt,
+              success_round, current_round,
               created_at, completed_at
        FROM plugin_tasks
        ORDER BY created_at DESC
@@ -256,6 +261,8 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
       image_duration_ms: number | null;
       provider_name: string | null;
       attempts: string;
+      rewritten_prompt: string | null;
+      success_round: number | null;
       current_round: number | null;
       created_at: number;
       completed_at: number | null;
@@ -275,6 +282,8 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
     imageDurationMs: r.image_duration_ms,
     totalDurationMs: r.completed_at != null ? r.completed_at - r.created_at : null,
     attempts: safeParseAttempts(r.attempts),
+    rewrittenPrompts: safeParseStringArray(r.rewritten_prompt),
+    successRound: r.success_round,
     currentRound: r.current_round,
     createdAt: r.created_at,
   }));
@@ -304,6 +313,18 @@ function safeParseAttempts(raw: string | null | undefined): GenerateImageAttempt
   try {
     const v = JSON.parse(raw);
     return Array.isArray(v) ? (v as GenerateImageAttempt[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeParseStringArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value) && value.every(item => typeof item === "string")
+      ? value
+      : [];
   } catch {
     return [];
   }

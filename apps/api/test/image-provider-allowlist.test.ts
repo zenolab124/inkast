@@ -352,3 +352,46 @@ test("rewrite progress advances when each round starts, before its work complete
     { round: 2, attemptCount: 3 },
   ]);
 });
+
+test("maxRound 0 failure explains that caller policy disabled rewrite", async () => {
+  const attempt: ImageGenAttempt = {
+    providerId: "provider-a",
+    providerName: "Provider A",
+    ok: false,
+    errorCode: "moderation",
+    errorMessage: "blocked",
+    durationMs: 1,
+  };
+  let rewriteCalls = 0;
+  const dependencies: RewriteDependencies = {
+    generateImage: async () => {
+      throw new ImageGenError(
+        "all_providers_failed",
+        "all providers rejected the prompt",
+        [attempt],
+      );
+    },
+    rewriteBlockedPrompt: async () => {
+      rewriteCalls += 1;
+      throw new Error("rewrite should not run");
+    },
+  };
+
+  await assert.rejects(
+    driveWithRewriteFallback(
+      { promptText: "original" },
+      { maxRound: 0 },
+      undefined,
+      dependencies,
+    ),
+    (err: unknown) => {
+      assert.ok(err instanceof ImageGenError);
+      assert.equal(err.code, "all_providers_failed");
+      assert.match(err.message, /rewrite disabled by pipeline_policy\.max_round=0/);
+      assert.match(err.message, /content-related rejection from 1 provider/);
+      assert.equal(err.attempts.length, 1);
+      return true;
+    },
+  );
+  assert.equal(rewriteCalls, 0);
+});

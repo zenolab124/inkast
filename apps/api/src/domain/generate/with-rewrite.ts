@@ -156,9 +156,21 @@ export async function driveWithRewriteFallback(
       lastErr = err;
     }
 
-    // Round 0 failed. If max_round=0, surface the failure unchanged.
+    // Round 0 failed. If max_round=0, stop as requested but preserve that
+    // policy decision in the terminal message so ops can distinguish a
+    // disabled rewrite from an LLM rewrite failure.
     if (maxRound === 0) {
-      throw lastErr!;
+      const triggerCount = collectTriggerProviders(cumulativeAttempts).length;
+      const reason = triggerCount > 0
+        ? `rewrite disabled by pipeline_policy.max_round=0 after content-related rejection from ${triggerCount} provider(s)`
+        : "rewrite disabled by pipeline_policy.max_round=0";
+      throw new ImageGenError(
+        lastErr!.code,
+        `${reason}; ${lastErr!.message}`,
+        cumulativeAttempts,
+        lastErr!.cause,
+        rewritesHistory,
+      );
     }
 
     // Initial trigger gate: rewrite only makes sense if at least one of the
