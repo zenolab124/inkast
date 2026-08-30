@@ -11,6 +11,7 @@ import {
   buildZhipuRequestBody,
   callZhipuApi,
 } from "../src/drivers/image/zhipu.js";
+import { IMAGE_CLEANLINESS_INSTRUCTION } from "../src/drivers/image/prompt-cleanliness.js";
 
 const zhipuCapability: ProviderCapability = {
   kind: "image",
@@ -110,7 +111,7 @@ test("Kolors sends SiliconFlow image_size fields and downloads the one-hour URL"
   });
   assert.deepEqual(body, {
     model: "Kwai-Kolors/Kolors",
-    prompt: "一只橘猫\n\nTarget aspect ratio: 9:16.",
+    prompt: `一只橘猫\n\nTarget aspect ratio: 9:16.\n\n${IMAGE_CLEANLINESS_INSTRUCTION}`,
     image_size: "720x1280",
     batch_size: 1,
     num_inference_steps: 20,

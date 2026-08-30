@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
+import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_MAX_CONCURRENCY = 5;
@@ -83,7 +84,7 @@ export function buildCloudBaseRequestBody(input: ImageGenInput): string {
   }
   return JSON.stringify({
     taskId: randomUUID(),
-    prompt: input.promptText,
+    prompt: appendImageCleanlinessInstruction(input.promptText),
     imageUrls: sourceUrls,
     ratio: resolveCloudBaseRatio(input.size),
   });

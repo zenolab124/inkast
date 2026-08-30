@@ -1,6 +1,7 @@
 import { extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
 import { resolveExtraHeaders } from "../codex-header.js";
+import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_SIZE = "1024x1024";
@@ -47,9 +48,10 @@ export function buildSiliconFlowRequestBody(
   const imageSize = ratio
     ? (RATIO_SIZES[ratio] ?? DEFAULT_SIZE)
     : exactSize ?? DEFAULT_SIZE;
-  const prompt = ratio
-    ? `${input.promptText}\n\nTarget aspect ratio: ${ratio}.`
-    : input.promptText;
+  const prompt = appendImageCleanlinessInstruction(
+    input.promptText,
+    ratio ? [`Target aspect ratio: ${ratio}.`] : [],
+  );
 
   return {
     model: capability.model,

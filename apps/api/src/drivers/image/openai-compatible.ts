@@ -25,6 +25,7 @@ import { callSeedreamApi } from "./seedream.js";
 import { callSenseNovaApi } from "./sensenova.js";
 import { callSiliconFlowApi } from "./siliconflow.js";
 import { callZhipuApi } from "./zhipu.js";
+import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import {
   ImageGenError,
   type AttemptErrorCode,
@@ -189,7 +190,7 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
         `[image] ▶ ${tryLabel}: ${provider.name} (priority=${capability.priority}, mode=${mode}) → ${provider.baseUrl} · model=${capability.model}`,
       );
       console.log(
-        `[image]   size=${input.size ?? "1024x1024"} quality=${input.quality ?? "high"} prompt-bytes=${input.promptText.length}`,
+        `[image]   size=${input.size ?? "1024x1024"} quality=${input.quality ?? "high"} base-prompt-bytes=${input.promptText.length}`,
       );
       // Heartbeat so the operator can see the request is still alive while
       // the upstream model is working. Every 15s. Include mode + refs count
@@ -440,10 +441,7 @@ async function callProvider(
   // The ratio hint travels with the prompt text (caller embeds it) rather
   // than as a discrete param the upstream API doesn't have.
   const useRatio = isRatioSize(input.size);
-  const ratioHint = useRatio ? extractRatio(input.size) : null;
-  const promptForUpstream = ratioHint
-    ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
-    : input.promptText;
+  const promptForUpstream = buildOpenAIImagePrompt(input);
   const wantUrl = capability.extras?.imageOutput === "url";
   const requestedFormat = input.format ?? IMAGE_FORMAT_DEFAULT;
   const body = {
@@ -531,10 +529,7 @@ async function buildEditBody(
   // Mirror the ratio-mode handling in callProvider: drop `size` when the
   // caller passed `ratio:W:H`, and let the ratio hint travel via the prompt.
   const useRatio = isRatioSize(input.size);
-  const ratioHint = useRatio ? extractRatio(input.size) : null;
-  const promptForUpstream = ratioHint
-    ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
-    : input.promptText;
+  const promptForUpstream = buildOpenAIImagePrompt(input);
   const wantUrl = capability.extras?.imageOutput === "url";
   return {
     model: capability.model,
@@ -545,6 +540,15 @@ async function buildEditBody(
     response_format: wantUrl ? "url" : "b64_json",
     n: input.n ?? 1,
   } as unknown as ImageEditParams;
+}
+
+/** Shared final prompt for both images.generate and images.edit. */
+export function buildOpenAIImagePrompt(input: ImageGenInput): string {
+  const ratioHint = isRatioSize(input.size) ? extractRatio(input.size) : null;
+  return appendImageCleanlinessInstruction(
+    input.promptText,
+    ratioHint ? [`Target aspect ratio: ${ratioHint}.`] : [],
+  );
 }
 
 interface ClassifiedError {

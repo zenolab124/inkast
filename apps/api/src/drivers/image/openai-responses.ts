@@ -1,6 +1,7 @@
 import { IMAGE_FORMAT_DEFAULT, extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
 import { resolveExtraHeaders } from "../codex-header.js";
+import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -608,7 +609,7 @@ function tryParseJson(s: string): SseEventPayload | null {
  * and append size/quality as natural-language hints (the Responses API
  * doesn't accept those as discrete params).
  */
-function wrapPromptForImageGen(input: ImageGenInput): string {
+export function wrapPromptForImageGen(input: ImageGenInput): string {
   // Three size shapes the caller can send (see SIZE_AUTO / SIZE_RATIO_PREFIX
   // in @inkast/shared):
   //   "auto"        → omit dimension hint entirely; model picks freely
@@ -634,5 +635,5 @@ function wrapPromptForImageGen(input: ImageGenInput): string {
     qualityHint +
     countHint;
 
-  return `${directive}\n\n${input.promptText}`;
+  return `${directive}\n\n${appendImageCleanlinessInstruction(input.promptText)}`;
 }

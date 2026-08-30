@@ -9,6 +9,7 @@ import {
   resolveCloudBaseRatio,
 } from "../src/drivers/image/cloudbase.js";
 import type { Provider, ProviderCapability } from "../src/storage/providers.js";
+import { IMAGE_CLEANLINESS_INSTRUCTION } from "../src/drivers/image/prompt-cleanliness.js";
 
 const capability: ProviderCapability = {
   kind: "image",
@@ -92,7 +93,10 @@ test("CloudBase signs the exact body and downloads the temporary output", async 
     assert.equal(signatureValid, true);
     assert.equal(b64, Buffer.from("cloudbase-image").toString("base64"));
     const body = JSON.parse(receivedBody) as Record<string, unknown>;
-    assert.equal(body.prompt, "纸雕风格小狗");
+    assert.equal(
+      body.prompt,
+      `纸雕风格小狗\n\n${IMAGE_CLEANLINESS_INSTRUCTION}`,
+    );
     assert.equal(body.ratio, "3:4");
     assert.deepEqual(body.imageUrls, ["https://source.example/signed.jpg?token=secret"]);
   } finally {

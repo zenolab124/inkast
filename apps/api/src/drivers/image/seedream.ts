@@ -3,6 +3,7 @@ import type { ImageGenerateParams } from "openai/resources/images";
 import { extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
 import { resolveExtraHeaders } from "../codex-header.js";
+import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -49,9 +50,10 @@ export function buildSeedreamRequestBody(
     : ratioDivisor > 0
       ? `${exactWidth / ratioDivisor}:${exactHeight / ratioDivisor}`
       : null;
-  const prompt = ratioHint
-    ? `${input.promptText}\n\nTarget aspect ratio: ${ratioHint}.`
-    : input.promptText;
+  const prompt = appendImageCleanlinessInstruction(
+    input.promptText,
+    ratioHint ? [`Target aspect ratio: ${ratioHint}.`] : [],
+  );
   const upstreamSize = exactMatch && exactSizeAllowed
     ? input.size as string
     : DEFAULT_SEEDREAM_SIZE;

@@ -1,6 +1,7 @@
 import { extractRatio, isRatioSize } from "@inkast/shared";
 import type { Provider, ProviderCapability } from "../../storage/providers.js";
 import { resolveExtraHeaders } from "../codex-header.js";
+import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import type { ImageGenInput } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -255,11 +256,13 @@ async function fireResumePoll(
 }
 
 function buildPromptText(input: ImageGenInput): string {
-  let text = input.promptText;
-  if (isRatioSize(input.size)) {
-    text += `\n\nTarget aspect ratio: ${extractRatio(input.size)}.`;
-  }
-  return text;
+  const ratioHint = isRatioSize(input.size)
+    ? `Target aspect ratio: ${extractRatio(input.size)}.`
+    : null;
+  return appendImageCleanlinessInstruction(
+    input.promptText,
+    ratioHint ? [ratioHint] : [],
+  );
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

@@ -1,4 +1,5 @@
 import OpenAI, { APIError } from "openai";
+import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 
 /**
  * 透明代理 image driver。每次请求**新建** OpenAI client(用户带过来的 key
@@ -67,7 +68,7 @@ export async function passthroughGenerate(input: PassthroughInput): Promise<Pass
     // 走 unchecked cast,跟主线 drivers/image/openai-compatible.ts 一致做法。
     const body = {
       model: input.model,
-      prompt: input.prompt,
+      prompt: appendImageCleanlinessInstruction(input.prompt),
       ...(input.size ? { size: input.size } : {}),
       ...(input.n ? { n: input.n } : {}),
       response_format: "b64_json",

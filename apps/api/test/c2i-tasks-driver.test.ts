@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 
 import { callC2iTasksApi } from "../src/drivers/image/c2i-tasks.js";
+import { IMAGE_CLEANLINESS_INSTRUCTION } from "../src/drivers/image/prompt-cleanliness.js";
 import type { Provider, ProviderCapability } from "../src/storage/providers.js";
 
 test("c2i-tasks explicitly opts into upstream output optimization", async () => {
@@ -55,6 +56,10 @@ test("c2i-tasks explicitly opts into upstream output optimization", async () => 
     assert.equal(result.b64, "d2VicA==");
     assert.equal(generationBody?.output_format, "webp");
     assert.equal(generationBody?.background, "transparent");
+    assert.equal(
+      String(generationBody?.prompt).endsWith(IMAGE_CLEANLINESS_INSTRUCTION),
+      true,
+    );
     assert.equal(generationBody?.optimize_output, true);
     assert.equal(generationBody?.response_format, "b64_json");
     assert.equal(generationBody?.url_source, undefined);

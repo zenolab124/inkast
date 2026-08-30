@@ -7,6 +7,7 @@ import {
   buildSeedreamRequestBody,
   callSeedreamApi,
 } from "../src/drivers/image/seedream.js";
+import { IMAGE_CLEANLINESS_INSTRUCTION } from "../src/drivers/image/prompt-cleanliness.js";
 
 const capability: ProviderCapability = {
   kind: "image",
@@ -46,7 +47,10 @@ test("Seedream preserves an explicit pixel size accepted by Ark", () => {
   });
   assert.equal(body.size, "1664x2304");
   assert.equal(body.image, undefined);
-  assert.equal(body.prompt, "一只橘猫");
+  assert.equal(
+    body.prompt,
+    `一只橘猫\n\n${IMAGE_CLEANLINESS_INSTRUCTION}`,
+  );
 });
 
 test("Seedream converts a small final-output size to 2K plus an aspect-ratio hint", () => {
