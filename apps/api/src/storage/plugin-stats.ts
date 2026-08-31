@@ -42,6 +42,8 @@ export interface HourBucket {
 export interface RecentTaskRow {
   id: string;
   pluginId: string;
+  /** Original prompt submitted by the plugin caller. */
+  prompt: string;
   status: string;
   providerName: string | null;
   callbackHost: string;
@@ -239,7 +241,7 @@ export function getHourBuckets(sinceMs: number): HourBucket[] {
 export function getRecentTasks(limit = 50): RecentTaskRow[] {
   const rows = db()
     .prepare(
-      `SELECT id, plugin_id, status, callback_url, error_code, error_msg,
+      `SELECT id, plugin_id, prompt, status, callback_url, error_code, error_msg,
               callback_attempts, callback_lost, llm_duration_ms,
               image_duration_ms, provider_name, attempts, rewritten_prompt,
               success_round, current_round,
@@ -251,6 +253,7 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
     .all(limit) as Array<{
       id: string;
       plugin_id: string;
+      prompt: string;
       status: string;
       callback_url: string;
       error_code: string | null;
@@ -271,6 +274,7 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
   return rows.map(r => ({
     id: r.id,
     pluginId: r.plugin_id,
+    prompt: r.prompt,
     status: r.status,
     providerName: r.provider_name,
     callbackHost: extractHost(r.callback_url),

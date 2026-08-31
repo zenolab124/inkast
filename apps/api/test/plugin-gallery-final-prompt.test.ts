@@ -8,6 +8,7 @@ const dataDir = mkdtempSync(join(tmpdir(), "inkast-plugin-gallery-prompt-"));
 process.env.INKAST_DATA_DIR = dataDir;
 
 const { listPluginGallery } = await import("../src/storage/plugin-gallery.js");
+const { getRecentTasks } = await import("../src/storage/plugin-stats.js");
 const {
   createPluginTask,
   getPluginTask,
@@ -52,4 +53,5 @@ test("plugin gallery archives the exact prompt sent to the successful provider",
     gallery.items[0]?.finalPromptText,
     "重写后的提示词\n\n统一画面清洁度尾词",
   );
+  assert.equal(getRecentTasks(10)[0]?.prompt, "原始提示词");
 });

@@ -353,6 +353,7 @@ function renderHtml(d: RenderInput): string {
           : "";
       const chain = roundTag + renderAttemptChain(r.providerName, r.attempts);
       const rewrite = renderRewriteSummary(r);
+      const promptCell = renderUserPrompt(r.prompt);
       const errCell = r.errorCode
         ? `<div class="error-cell"><code>${escapeText(r.errorCode)}</code>${
             r.errorMsg ? `<span>${escapeText(shorten(r.errorMsg, 96))}</span>` : ""
@@ -361,6 +362,7 @@ function renderHtml(d: RenderInput): string {
       return `<tr>
         <td><code title="${escapeAttr(r.id)}">${escapeText(r.id.slice(0, 14))}…</code></td>
         <td><code>${escapeText(r.pluginId)}</code></td>
+        <td>${promptCell}</td>
         <td>${statusBadge(r.status)}</td>
         <td>${chain}</td>
         <td>${rewrite}</td>
@@ -494,6 +496,10 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
 .rewrite-state span { color: #7A6F5E; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
 .rewrite-state.is-fail strong { color: #6B2620; }
 .rewrite-state.is-ok strong { color: #2A4A2E; }
+.prompt-detail { min-width: 180px; max-width: 300px; }
+.prompt-detail summary { color: #3A5A40; cursor: pointer; line-height: 1.4; overflow-wrap: anywhere; }
+.prompt-detail summary:hover { color: #2A4A2E; }
+.prompt-detail pre { margin: 6px 0 0; padding: 8px 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid rgba(70,45,20,0.12); border-radius: 4px; background: rgba(70,45,20,0.04); color: #2A2620; font: 11px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
 .error-cell { display: flex; flex-direction: column; gap: 3px; min-width: 160px; max-width: 280px; }
 .error-cell span { color: #6B2620; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
 .att { position: relative; display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; border-radius: 3px; font-size: 11px; white-space: nowrap; cursor: default; }
@@ -594,8 +600,8 @@ table td { overflow: visible; }
   <div class="card wide">
     <h2>最近任务(最近 50 条,不限时间窗口)</h2>
     <table>
-      <thead><tr><th>任务 ID</th><th>Plugin</th><th>状态</th><th>渠道</th><th>重写</th><th>LLM</th><th>生图</th><th>总耗时</th><th>回调次数</th><th>错误</th><th>回调主机</th><th>创建时间</th></tr></thead>
-      <tbody>${recentRows || '<tr><td colspan="12" class="meta">(暂无任务)</td></tr>'}</tbody>
+      <thead><tr><th>任务 ID</th><th>Plugin</th><th>用户 Prompt</th><th>状态</th><th>渠道</th><th>重写</th><th>LLM</th><th>生图</th><th>总耗时</th><th>回调次数</th><th>错误</th><th>回调主机</th><th>创建时间</th></tr></thead>
+      <tbody>${recentRows || '<tr><td colspan="13" class="meta">(暂无任务)</td></tr>'}</tbody>
     </table>
   </div>
 
@@ -739,6 +745,11 @@ function renderRewriteSummary(r: RecentTaskRow): string {
   }
 
   return rewriteState("未触发", "渠道错误不属于可改写的内容拒绝");
+}
+
+function renderUserPrompt(prompt: string): string {
+  const preview = shorten(prompt, 72) || "(空)";
+  return `<details class="prompt-detail"><summary title="展开用户提交的完整 Prompt">${escapeText(preview)}</summary><pre>${escapeText(prompt)}</pre></details>`;
 }
 
 function rewriteState(title: string, detail: string, tone = ""): string {
