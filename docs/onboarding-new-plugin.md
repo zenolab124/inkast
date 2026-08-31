@@ -117,6 +117,7 @@ snap-ub 只允许 `https://img.124213.xyz` 直回，provider 白名单为
 - **IP / 著名角色处理**:如果用户场景涉及 Marvel / DC / 任天堂 IP 这种,需要显式覆盖默认"通用化"指引。措辞:`"调用方是 <品牌> 官方合作生态,不要通用化角色"`
 - **画面上的文字 / UI 元素禁止**:`"No text, letters, numbers, signatures, watermarks, logos"`——图模常会在没明说时塞 logo / 装饰文字
 - **画幅取向**:横版 / 竖版 / 方形要明说,图模默认偏 1:1
+- **SFW 红线**:务必加,即使场景看似无风险——图模在 borderline 描述下可能越界
 - **场景上下文**:告诉图模"图会被 Canvas overlay 叠 X/Y/Z",图模可以合理配置主体位置
 
 #### 3f. `enforceFields`(LLM 模式时兜底)

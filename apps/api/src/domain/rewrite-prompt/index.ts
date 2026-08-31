@@ -37,9 +37,9 @@ const REWRITE_TIMEOUT_MS = 90_000;
  * inserts signatures, seals, captions due to training data bias.
  *
  * Kept short and Chinese-only — gpt-image-2 handles both languages fine,
- * and a long bilingual block looked like overkill in production. Content
- * safety remains the image model's responsibility rather than an extra
- * rewrite suffix.
+ * and a long bilingual block looked like overkill in production. Plugin-
+ * specific SFW wording belongs to the overlay prompt rather than this global
+ * rewrite suffix, so unrelated callers do not inherit SnapUB's policy text.
  */
 /**
  * Two independent hard-constraint clauses, each with its own idempotent

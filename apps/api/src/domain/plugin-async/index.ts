@@ -205,7 +205,7 @@ async function runTask(taskId: string): Promise<void> {
       // ── Skip-LLM 模式:直接拼用户 prompt + plugin 散文约束 ─────────
       // 跳过 draftPrompt(节省 ~14s + LLM token + 一个失败点)。
       // plugin.skipLlmConstraintsText 应已包含 Marvel IP / safe zone
-      // / 无文字 / 无 UI overlay 等全部业务约束。
+      // / 无文字 / 无 UI overlay / SFW 等全部硬约束。
       promptText = buildSkipLlmPromptText(task.prompt, plugin);
       promptJsonStr = JSON.stringify({
         _mode: "skip_llm",
