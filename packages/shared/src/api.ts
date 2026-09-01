@@ -479,6 +479,8 @@ export interface PluginGalleryItem {
   /** plugin_tasks.id (e.g. `ink-<uuid>`). */
   id: string;
   pluginId: string;
+  /** Optional short display label resolved from the current plugin overlay. */
+  pluginLabel: string | null;
   providerName: string | null;
   /** Public R2 URL — `aivariants.124213.xyz/aiVariants/ink-…png` etc. */
   imageUrl: string;
@@ -512,6 +514,8 @@ export interface PluginGalleryItem {
 
 export interface PluginGalleryPluginCount {
   pluginId: string;
+  /** Optional short display label resolved from the current plugin overlay. */
+  pluginLabel: string | null;
   count: number;
 }
 

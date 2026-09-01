@@ -9,6 +9,7 @@ import {
   pluginGalleryCountsByPlugin,
   pluginGalleryTotal,
 } from "../../storage/plugin-gallery.js";
+import { getPluginById } from "../../plugins/registry.js";
 import {
   getCallbackHealth,
   getHourBuckets,
@@ -127,6 +128,7 @@ adminRoutes.get("/plugin-gallery.json", c => {
   const mapped: PluginGalleryItem[] = items.map(r => ({
     id: r.id,
     pluginId: r.pluginId,
+    pluginLabel: getPluginById(r.pluginId)?.galleryLabel ?? null,
     providerName: r.providerName,
     imageUrl: r.imageUrl,
     mime: r.mime,
@@ -145,7 +147,11 @@ adminRoutes.get("/plugin-gallery.json", c => {
     items: mapped,
     nextCursor,
     total: pluginGalleryTotal(),
-    pluginCounts: pluginGalleryCountsByPlugin(),
+    pluginCounts: pluginGalleryCountsByPlugin().map(({ pluginId, count }) => ({
+      pluginId,
+      pluginLabel: getPluginById(pluginId)?.galleryLabel ?? null,
+      count,
+    })),
   };
   return c.json(body);
 });

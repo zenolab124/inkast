@@ -41,6 +41,12 @@ export interface InkastPlugin {
   readonly id: string;
   readonly name: string;
   /**
+   * Short user-facing label shown in the loopback plugin gallery. This stays
+   * separate from `name`, which is an operational description and can be too
+   * long for card/filter UI. Historical rows resolve it from the live overlay.
+   */
+  readonly galleryLabel?: string;
+  /**
    * Optional request-scene delegation under the authenticated plugin token.
    * The caller may submit only a configured scene name; the mapped plugin id
    * supplies output constraints/storage but does not need its own bearer token.

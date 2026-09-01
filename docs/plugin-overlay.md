@@ -41,6 +41,7 @@ token → plugin id 映射就绪
   // 必填
   id: string;                        // 小写 + 数字 + - _,如 "snapub"
   name: string;                      // 人类可读名
+  galleryLabel?: string;             // 结果页短标签,最长 24 字符
   scenePlugins?: Record<string, string>; // 同一 token 下按 scene 委派到另一 overlay 输出配置
   imageDefaults: {
     size?: string;                   // "auto" | "1024x1024" | "1024x1536" | ...

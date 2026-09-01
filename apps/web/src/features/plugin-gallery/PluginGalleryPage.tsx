@@ -6,6 +6,7 @@ import type {
   PluginGalleryPluginCount,
 } from "@inkast/shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -178,10 +179,11 @@ export function PluginGalleryPage() {
             active={pluginFilter === ""}
             onClick={() => setPluginFilter("")}
           />
-          {page.pluginCounts.map(({ pluginId, count }) => (
+          {page.pluginCounts.map(({ pluginId, pluginLabel, count }) => (
             <FilterChip
               key={pluginId}
-              label={`${pluginId} · ${count}`}
+              label={`${pluginLabel ?? pluginId} · ${count}`}
+              title={pluginLabel ? `${pluginLabel} (${pluginId})` : pluginId}
               active={pluginFilter === pluginId}
               onClick={() => setPluginFilter(pluginId)}
             />
@@ -249,26 +251,26 @@ export function PluginGalleryPage() {
 
 function FilterChip({
   label,
+  title,
   active,
   onClick,
 }: {
   label: string;
+  title?: string;
   active?: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant={active ? "default" : "outline"}
+      size="sm"
+      title={title}
       onClick={onClick}
-      className={cn(
-        "rounded-full border border-border/50 bg-card px-2.5 py-0.5 text-[11px] transition",
-        active
-          ? "border-transparent bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:text-foreground hover:bg-secondary",
-      )}
+      className="h-6 rounded-sm px-2.5 text-[11px]"
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -303,6 +305,12 @@ function PluginGalleryCard({
         "transition hover:shadow-(--shadow-paper-lifted)",
       )}
     >
+      {item.pluginLabel && (
+        <PluginLabelBadge
+          label={item.pluginLabel}
+          className="pointer-events-none absolute left-2 top-2 z-10 shadow-(--shadow-paper)"
+        />
+      )}
       <button
         type="button"
         onClick={onOpen}
@@ -382,6 +390,26 @@ function ReviewBadge() {
   );
 }
 
+function PluginLabelBadge({
+  label,
+  className,
+}: {
+  label: string;
+  className?: string;
+}) {
+  return (
+    <Badge
+      variant="secondary"
+      className={cn(
+        "rounded-sm border border-accent/40 bg-card/90 px-1.5 py-0.5 text-[10px] text-foreground",
+        className,
+      )}
+    >
+      {label}
+    </Badge>
+  );
+}
+
 function fmtMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
@@ -421,6 +449,7 @@ function PluginGalleryDetailDialog({
       >
         <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-3">
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">
+            {item.pluginLabel && <PluginLabelBadge label={item.pluginLabel} />}
             <span className="font-mono">{item.pluginId}</span>
             <span className="text-xs text-muted-foreground">· {item.id}</span>
           </DialogTitle>

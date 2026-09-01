@@ -69,6 +69,7 @@ const InkastPluginSchema = z.object({
     .string()
     .regex(/^[a-z][a-z0-9_-]*$/, "plugin id must be lowercase + digits + _-"),
   name: z.string().min(1),
+  galleryLabel: z.string().trim().min(1).max(24).optional(),
   scenePlugins: z
     .record(
       z.string().regex(/^[a-z][a-z0-9_-]*$/, "scene name must be lowercase + digits + _-"),

@@ -145,3 +145,27 @@ test("plugin overlay accepts only bounded LLM expansion concurrency", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("plugin overlay accepts only a short non-empty gallery label", () => {
+  const dir = mkdtempSync(join(tmpdir(), "inkast-gallery-label-"));
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    for (const [id, galleryLabel] of [
+      ["valid", "艺术指导"],
+      ["empty", "   "],
+      ["long", "x".repeat(25)],
+    ] as const) {
+      writeFileSync(
+        join(dir, `${id}.json`),
+        JSON.stringify({ id, name: id, imageDefaults: {}, galleryLabel }),
+      );
+    }
+    const plugins = loadPluginConfigsFromDir(dir);
+    assert.deepEqual(plugins.map(plugin => plugin.id), ["valid"]);
+    assert.equal(plugins[0]?.galleryLabel, "艺术指导");
+  } finally {
+    console.error = originalConsoleError;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
