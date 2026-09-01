@@ -118,6 +118,12 @@ export interface InkastPlugin {
    * 必须配 env(本机无 ClaudeCode 凭据)。
    */
   readonly llmBackend?: LlmBackendDescriptor;
+  /**
+   * Maximum concurrent prose-to-JSON expansions for this plugin. Waiting
+   * prompts remain in the independent LLM queue and do not consume any of the
+   * 25 image workers. Omitted plugins retain the global LLM cap (25).
+   */
+  readonly llmExpansionConcurrency?: number;
   /** LLM 输出语言。默认 "en"(对生图模型更友好)。 */
   readonly lang?: OutputLang;
   /**

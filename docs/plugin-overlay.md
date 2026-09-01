@@ -75,6 +75,9 @@ token → plugin id 映射就绪
   llmBackend?:                       // 单 plugin 想指定专属 LLM provider 时用
     | "claude-code"
     | { kind: "openai-compatible"; providerId: string };
+
+  llmExpansionConcurrency?: number; // 该 plugin 的散文→JSON 并发上限(1..25);
+                                    // 等待不占 25 路生图 worker
 }
 ```
 

@@ -33,11 +33,12 @@ import {
 } from "../../storage/plugin-tasks.js";
 import { backfillPluginGalleryFromTasks } from "../../storage/plugin-gallery.js";
 import { redactUrl } from "./url-redaction.js";
+import { StageQueue } from "./stage-queue.js";
 
 /**
  * v2 异步协议的核心。负责:
  *   - submit 入口(synchronous,立刻返 task_id,不阻塞 LLM/image 调用)
- *   - 后台 worker(in-memory queue + concurrency cap)
+ *   - 后台分阶段 worker(LLM expansion queue + image queue)
  *   - source_image 源图拉取(v2.3 编辑任务:fetch 源图字节 → 参考图直传 driver)
  *   - JPEG transcode(image driver 输出 PNG → JPEG q80 缩减 callback payload)
  *   - callback 推送 + 5s/30s/5min × 3 重试
@@ -50,16 +51,49 @@ import { redactUrl } from "./url-redaction.js";
  * 状态机:queued → running → succeeded | failed → callback retry → final terminal
  */
 
-const MAX_CONCURRENT = 25;
+const MAX_LLM_CONCURRENT = 25;
+const MAX_IMAGE_CONCURRENT = 25;
 const CALLBACK_DELAYS_MS = [5_000, 30_000, 300_000];      // 5s / 30s / 5min
 const MAX_CALLBACK_ATTEMPTS = 1 + CALLBACK_DELAYS_MS.length;  // 4 = 1 immediate + 3 retries
 
 const GC_INTERVAL_MS = 60 * 60 * 1000;                    // 1h
 const TASK_RETENTION_MS = 24 * 60 * 60 * 1000;            // 24h
 
-// In-memory FIFO queue. We don't poll the DB; submit + recovery push here.
-const queuedTaskIds: string[] = [];
-let activeCount = 0;
+interface QueuedPluginTask {
+  readonly task: PluginTaskRow;
+  readonly plugin: InkastPlugin;
+  overallStart?: number;
+  llmDurationMs?: number;
+}
+
+interface PreparedPluginTask extends QueuedPluginTask {
+  readonly promptText: string;
+  readonly promptJsonStr: string;
+  readonly overallStart: number;
+  readonly llmDurationMs: number;
+}
+
+// LLM expansion and image generation are deliberately separate queues. A job
+// waiting for a scarce LLM account slot must never consume one of the 25 image
+// workers. Once expansion finishes, the prepared job joins the image queue and
+// the released LLM slot immediately admits the next waiting prompt.
+const llmStageQueue = new StageQueue<QueuedPluginTask>({
+  name: "plugin-llm-expansion",
+  maxConcurrent: MAX_LLM_CONCURRENT,
+  getGroup: item => item.plugin.id,
+  getGroupLimit: item => item.plugin.llmExpansionConcurrency ?? MAX_LLM_CONCURRENT,
+  run: runLlmStage,
+  onError: handleLlmStageError,
+});
+
+const imageStageQueue = new StageQueue<PreparedPluginTask>({
+  name: "plugin-image",
+  maxConcurrent: MAX_IMAGE_CONCURRENT,
+  getGroup: () => "all",
+  getGroupLimit: () => MAX_IMAGE_CONCURRENT,
+  run: runImageStage,
+  onError: handleUnexpectedImageStageError,
+});
 
 export function resolvePluginProviderPolicy(
   plugin: InkastPlugin,
@@ -150,26 +184,10 @@ export function submitForPlugin(input: SubmitInput): PluginTaskRow {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Worker: queue + concurrency cap
+// Worker: independent LLM expansion + image queues
 // ─────────────────────────────────────────────────────────────────────────
 
 function enqueueTask(taskId: string): void {
-  queuedTaskIds.push(taskId);
-  scheduleProcessing();
-}
-
-function scheduleProcessing(): void {
-  while (activeCount < MAX_CONCURRENT && queuedTaskIds.length > 0) {
-    const id = queuedTaskIds.shift()!;
-    activeCount++;
-    void runTask(id).finally(() => {
-      activeCount--;
-      scheduleProcessing();
-    });
-  }
-}
-
-async function runTask(taskId: string): Promise<void> {
   const task = getPluginTask(taskId);
   if (!task) {
     console.warn(`[plugin-async] task ${taskId} disappeared before run`);
@@ -185,11 +203,107 @@ async function runTask(taskId: string): Promise<void> {
     return;
   }
 
-  markTaskRunning(taskId);
-  const overallStart = Date.now();
-  console.log(`[plugin-async] ▶ running task=${taskId} plugin=${plugin.id}`);
+  const queued = { task, plugin } satisfies QueuedPluginTask;
+  if (plugin.skipLlmExpansion) {
+    const promptText = buildSkipLlmPromptText(task.prompt, plugin);
+    imageStageQueue.enqueue({
+      ...queued,
+      promptText,
+      promptJsonStr: JSON.stringify({
+        _mode: "skip_llm",
+        _raw_prompt: task.prompt,
+      }),
+      overallStart: Date.now(),
+      llmDurationMs: 0,
+    });
+    const imageStats = imageStageQueue.snapshot();
+    console.log(
+      `[plugin-async] queued image task=${taskId} plugin=${plugin.id} active=${imageStats.active}/${MAX_IMAGE_CONCURRENT} waiting=${imageStats.queued}`,
+    );
+    return;
+  }
 
-  let llmDurationMs = 0;
+  llmStageQueue.enqueue(queued);
+  const llmStats = llmStageQueue.snapshot();
+  console.log(
+    `[plugin-async] queued llm task=${taskId} plugin=${plugin.id} plugin-limit=${plugin.llmExpansionConcurrency ?? MAX_LLM_CONCURRENT} active=${llmStats.active}/${MAX_LLM_CONCURRENT} waiting=${llmStats.queued}`,
+  );
+}
+
+async function runLlmStage(item: QueuedPluginTask): Promise<void> {
+  const { task, plugin } = item;
+  item.overallStart = Date.now();
+  markTaskRunning(task.id);
+  console.log(`[plugin-async] ▶ llm task=${task.id} plugin=${plugin.id}`);
+
+  const llmStart = Date.now();
+  try {
+    const draftOutcome = await draftPrompt({
+      input: task.prompt,
+      backend: resolveLlmBackend(plugin),
+      lang: plugin.lang ?? "en",
+      systemPromptSuffix: plugin.systemPromptPatch,
+    });
+    item.llmDurationMs = Date.now() - llmStart;
+
+    const mergedPrompt = {
+      ...draftOutcome.draft.prompt,
+      ...(plugin.enforceFields ?? {}),
+    } as ImagePrompt;
+    const promptText = JSON.stringify(mergedPrompt);
+    imageStageQueue.enqueue({
+      ...item,
+      promptText,
+      promptJsonStr: promptText,
+      overallStart: item.overallStart,
+      llmDurationMs: item.llmDurationMs,
+    });
+    const imageStats = imageStageQueue.snapshot();
+    console.log(
+      `[plugin-async] ✓ llm task=${task.id} duration=${item.llmDurationMs}ms → image active=${imageStats.active}/${MAX_IMAGE_CONCURRENT} waiting=${imageStats.queued}`,
+    );
+  } catch (error) {
+    item.llmDurationMs = Date.now() - llmStart;
+    throw error;
+  }
+}
+
+function handleLlmStageError(error: unknown, item: QueuedPluginTask): void {
+  const mapped = toOpenAiError(error);
+  markTaskFailed(item.task.id, {
+    errorCode: mapped.body.error.code,
+    errorMsg: mapped.body.error.message,
+    llmDurationMs: item.llmDurationMs ?? null,
+  });
+  taskPolicies.delete(item.task.id);
+  console.warn(
+    `[plugin-async] ✗ llm task=${item.task.id} ${mapped.body.error.code}: ${mapped.body.error.message}`,
+  );
+  void deliverCallback(item.task.id, 0);
+}
+
+function handleUnexpectedImageStageError(error: unknown, item: PreparedPluginTask): void {
+  const mapped = toOpenAiError(error);
+  markTaskFailed(item.task.id, {
+    errorCode: mapped.body.error.code,
+    errorMsg: mapped.body.error.message,
+    llmDurationMs: item.llmDurationMs || null,
+  });
+  taskPolicies.delete(item.task.id);
+  console.warn(
+    `[plugin-async] ✗ unexpected image-stage escape task=${item.task.id} ${mapped.body.error.code}: ${mapped.body.error.message}`,
+  );
+  void deliverCallback(item.task.id, 0);
+}
+
+async function runImageStage(item: PreparedPluginTask): Promise<void> {
+  const { task, plugin, promptText, promptJsonStr, llmDurationMs, overallStart } = item;
+  const taskId = task.id;
+  // skip-LLM tasks stay queued until an actual image worker is available.
+  // LLM-expanded tasks are already running while they wait in the image queue.
+  if (plugin.skipLlmExpansion) markTaskRunning(taskId);
+  console.log(`[plugin-async] ▶ image task=${taskId} plugin=${plugin.id}`);
+
   let imageDurationMs = 0;
 
   try {
@@ -197,41 +311,6 @@ async function runTask(taskId: string): Promise<void> {
       imageProviderIds: allowedProviderIds,
       imageProviderOrder: providerOrder,
     } = resolvePluginProviderPolicy(plugin, task.providerProfile);
-
-    let promptText: string;
-    let promptJsonStr: string;
-
-    if (plugin.skipLlmExpansion) {
-      // ── Skip-LLM 模式:直接拼用户 prompt + plugin 散文约束 ─────────
-      // 跳过 draftPrompt(节省 ~14s + LLM token + 一个失败点)。
-      // plugin.skipLlmConstraintsText 应已包含 Marvel IP / safe zone
-      // / 无文字 / 无 UI overlay / SFW 等全部硬约束。
-      promptText = buildSkipLlmPromptText(task.prompt, plugin);
-      promptJsonStr = JSON.stringify({
-        _mode: "skip_llm",
-        _raw_prompt: task.prompt,
-      });
-      // llmDurationMs 保持 0
-    } else {
-      // ── 标准模式:走 LLM 拆解 + enforceFields 覆盖 ────────────────
-      // 1. 散文 → JSON(LLM),注入 plugin systemPromptPatch
-      const llmStart = Date.now();
-      const draftOutcome = await draftPrompt({
-        input: task.prompt,
-        backend: resolveLlmBackend(plugin),
-        lang: plugin.lang ?? "en",
-        systemPromptSuffix: plugin.systemPromptPatch,
-      });
-      llmDurationMs = Date.now() - llmStart;
-
-      // 2. 强制字段浅合并(plugin enforceFields 覆盖 LLM 输出)
-      const mergedPrompt = {
-        ...draftOutcome.draft.prompt,
-        ...(plugin.enforceFields ?? {}),
-      } as ImagePrompt;
-      promptText = JSON.stringify(mergedPrompt);
-      promptJsonStr = promptText;
-    }
 
     // 2.5 源图拉取(v2.3 source_image,编辑任务)— 从任务行读 source_image_url,
     // fetch 字节后作参考图**全尺寸**直传 image driver(照 post-review-edit 的

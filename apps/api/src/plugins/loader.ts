@@ -122,6 +122,7 @@ const InkastPluginSchema = z.object({
     })
     .optional(),
   llmBackend: LlmBackendDescriptorSchema.optional(),
+  llmExpansionConcurrency: z.number().int().min(1).max(25).optional(),
   lang: z.enum(["zh", "en"]).optional(),
   skipLlmExpansion: z.boolean().optional(),
   skipLlmConstraintsText: z.string().optional(),
