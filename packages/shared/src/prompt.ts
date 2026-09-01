@@ -20,6 +20,13 @@ export interface ImagePrompt {
   camera?: string;
   color_palette?: string[];
   count?: number;
+  environment_effects?: string;
+  negative_constraints?: string;
+  /**
+   * Backward compatibility for historical/manual prompt JSON. LLM-generated
+   * drafts use a closed schema and will not introduce keys outside the fields
+   * declared above.
+   */
   [extra: string]: unknown;
 }
 

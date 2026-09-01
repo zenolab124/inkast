@@ -11,6 +11,7 @@ import {
   type LlmDriver,
   type WarmupResult,
 } from "./types.js";
+import { PROMPT_DRAFT_SCHEMA } from "./prompt-draft-schema.js";
 
 /** A driver is considered "still warm" if a real call happened within this window. */
 const WARMUP_FRESHNESS_MS = 5 * 60 * 1000;
@@ -26,38 +27,6 @@ const WARMUP_FRESHNESS_MS = 5 * 60 * 1000;
  */
 const SDK_SYSTEM_MESSAGE_PATTERN =
   /not\s+logged\s+in|please\s+run\s*\/?login|session\s+expired|authentication\s+failed|invalid\s+api\s+key|unauthorized/i;
-
-/**
- * JSON Schema enforced by the SDK on the model's structured output.
- *
- * We intentionally only constrain the OUTER shape ({ prompt, hints }), not
- * the inner prompt fields — the imagegen methodology says the prompt schema
- * is open (the model is allowed to invent new fields). type/style/subject
- * being required is enforced by the system prompt and by the service layer.
- */
-const PROMPT_DRAFT_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["prompt", "hints"],
-  properties: {
-    prompt: {
-      type: "object",
-      additionalProperties: true,
-    },
-    hints: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["field", "suggestion"],
-        properties: {
-          field: { type: "string" },
-          suggestion: { type: "string" },
-        },
-      },
-    },
-  },
-};
 
 /**
  * ClaudeCode-backed LLM driver.

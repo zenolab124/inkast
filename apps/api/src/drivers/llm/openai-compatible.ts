@@ -8,30 +8,9 @@ import {
   type LlmDriver,
   type WarmupResult,
 } from "./types.js";
+import { PROMPT_DRAFT_SCHEMA } from "./prompt-draft-schema.js";
 
 const WARMUP_FRESHNESS_MS = 5 * 60 * 1000;
-
-/** Default schema mirrors the ClaudeCode driver's PROMPT_DRAFT_SCHEMA. */
-const DEFAULT_PROMPT_DRAFT_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["prompt", "hints"],
-  properties: {
-    prompt: { type: "object", additionalProperties: true },
-    hints: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["field", "suggestion"],
-        properties: {
-          field: { type: "string" },
-          suggestion: { type: "string" },
-        },
-      },
-    },
-  },
-};
 
 /**
  * OpenAI-compatible LLM driver — uses any /v1/chat/completions endpoint with
@@ -101,7 +80,7 @@ export class OpenAiCompatibleDriver implements LlmDriver {
     }
 
     const extras = (record.capability.extras ?? {}) as Record<string, unknown>;
-    const schema = opts.schema ?? DEFAULT_PROMPT_DRAFT_SCHEMA;
+    const schema = opts.schema ?? PROMPT_DRAFT_SCHEMA;
     const extraHeaders = resolveExtraHeaders(record.capability);
 
     const client = new OpenAI({

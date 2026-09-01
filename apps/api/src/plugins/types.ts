@@ -53,8 +53,8 @@ export interface InkastPlugin {
   readonly systemPromptPatch?: string;
   /**
    * LLM 拆完 JSON 后强制覆盖 / 注入的字段(浅合并,plugin 字段优先)。用于
-   * 兜底关键约束 — LLM 漏写也保证字段有值。ImagePrompt 是开放 schema,
-   * 这里允许任意键。
+   * 兜底关键约束 — LLM 漏写也保证字段有值。LLM 生成的 ImagePrompt
+   * 使用闭合字段契约；这里仍允许 overlay 注入历史/业务专用字段。
    */
   readonly enforceFields?: Record<string, unknown>;
   /**
