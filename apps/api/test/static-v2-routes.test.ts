@@ -77,5 +77,14 @@ test("check recovery endpoint is worker-only, validates cooldown and never expos
     assert.equal(data.lease_hash,undefined); assert.equal(data.lease_token,undefined);
     assert.equal(data.owner_key,undefined);
     assert.equal((await post(body)).status,200);
+    const next = store.claim("snapub", "test-worker", "revision", false);
+    assert.equal(next, null);
+    const planningId = "v2-33333333-3333-4333-8333-333333333333";
+    store.submit({id:planningId,plugin:"snapub",owner:"other-owner",task:"task-another",source:"https://images.example/b.png"});
+    const planning = store.claim("snapub", "test-worker", "revision", true)!;
+    store.renew("snapub", planning.id, planning.leaseToken, "plan_retry_wait");
+    const planResponse = await app.request(`/v2/worker/${planningId}/defer`, {method:"POST",headers:worker,body:JSON.stringify({lease_token:planning.leaseToken,stage:"plan_retry_wait",retry_after_ms:60000})});
+    assert.equal(planResponse.status, 200);
+    assert.equal((await planResponse.json() as {stage:string}).stage, "plan_retry_wait");
   } finally { conn.close(); }
 });

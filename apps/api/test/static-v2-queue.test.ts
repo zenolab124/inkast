@@ -155,3 +155,25 @@ test("allowing same-owner queuing preserves the global sixteen-job bound", () =>
     assert.equal(store.submit(input("full","owner-full")).status,"queued");
   } finally { conn.close(); }
 });
+
+test("planning deferral preserves FIFO and rejects recovery for the wrong stage", () => {
+  const { conn, store, input, advance } = fixture();
+  try {
+    store.submit(input("first")); store.submit(input("second"));
+    const first = store.claim("snapub", "worker-one", "revision", true)!;
+    store.renew("snapub", first.id, first.leaseToken, "planning");
+    assert.throws(() => store.defer("snapub", first.id, first.leaseToken, 60000), /invalid_recovery/);
+    const deferred = store.defer("snapub", first.id, first.leaseToken, 60000, "plan_retry_wait");
+    assert.equal(deferred.stage, "plan_retry_wait"); assert.equal(deferred.status, "queued");
+    advance(1000);
+    assert.equal(store.defer("snapub", first.id, first.leaseToken, 60000, "plan_retry_wait").lease_until, deferred.lease_until);
+    assert.equal(store.claim("snapub", "worker-one", "revision", true), null);
+    advance(59000);
+    const resumed = store.claim("snapub", "worker-one", "revision", true)!;
+    assert.equal(resumed.id, first.id); assert.equal(resumed.deliveries, 2);
+    store.renew("snapub", resumed.id, resumed.leaseToken, "checking");
+    assert.throws(() => store.defer("snapub", resumed.id, resumed.leaseToken, 60000, "plan_retry_wait"), /invalid_recovery/);
+    store.finish("snapub", resumed.id, resumed.leaseToken, { status: "succeeded" });
+    assert.equal(store.claim("snapub", "worker-one", "revision", true)!.id, "second");
+  } finally { conn.close(); }
+});

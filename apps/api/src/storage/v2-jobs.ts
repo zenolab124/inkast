@@ -65,16 +65,17 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
       conn.prepare("UPDATE static_v2_jobs SET status='running',stage='starting',lease_hash=?,lease_until=?,deliveries=deliveries+1,pipeline_revision=?,updated_at=? WHERE id=?").run(digest(token), clock() + 180_000, revision, clock(), row.id);
       return { ...get(plugin, row.id)!, leaseToken: token };
     }),
-    defer: conn.transaction((plugin: string, id: string, token: string, retryAfterMs: number) => {
+    defer: conn.transaction((plugin: string, id: string, token: string, retryAfterMs: number, stage: 'check_retry_wait' | 'plan_retry_wait' = 'check_retry_wait') => {
       const old = get(plugin, id);
       // An acknowledgement retry cannot keep pushing the cooldown into the future.
-      if (old?.lease_hash === digest(token) && ((old.status === "queued" && old.stage === "check_retry_wait") || (old.status === "failed" && old.error_code === "recovery_limit"))) return old;
+      if (old?.lease_hash === digest(token) && ((old.status === "queued" && old.stage === stage) || (old.status === "failed" && old.error_code === "recovery_limit"))) return old;
       const row = leased(plugin, id, token);
-      if (!Number.isSafeInteger(retryAfterMs) || retryAfterMs < 60000 || retryAfterMs > 300000 || (!/^check/.test(row.stage) && row.stage !== "recovery_wait")) throw new V2QueueError("invalid_recovery", 409);
+      const allowedStage = stage === 'plan_retry_wait' ? /^plan/.test(row.stage) : stage === 'check_retry_wait' && (/^check/.test(row.stage) || row.stage === "recovery_wait");
+      if (!Number.isSafeInteger(retryAfterMs) || retryAfterMs < 60000 || retryAfterMs > 300000 || !allowedStage) throw new V2QueueError("invalid_recovery", 409);
       if (row.deliveries >= 3) {
         conn.prepare("UPDATE static_v2_jobs SET status='failed',stage='failed',error_code='recovery_limit',updated_at=? WHERE plugin_id=? AND id=?").run(clock(), plugin, id);
       } else {
-        conn.prepare("UPDATE static_v2_jobs SET status='queued',stage='check_retry_wait',lease_until=?,error_code=NULL,updated_at=? WHERE plugin_id=? AND id=?").run(clock() + retryAfterMs, clock(), plugin, id);
+        conn.prepare("UPDATE static_v2_jobs SET status='queued',stage=?,lease_until=?,error_code=NULL,updated_at=? WHERE plugin_id=? AND id=?").run(stage, clock() + retryAfterMs, clock(), plugin, id);
       }
       return get(plugin, id)!;
     }),
