@@ -9,10 +9,14 @@ import { getPluginTask } from "../../storage/plugin-tasks.js";
 import { getPluginById } from "../../plugins/registry.js";
 import type { InkastPlugin } from "../../plugins/types.js";
 import { pluginAuth } from "../middleware/plugin-auth.js";
+import { createVisionRoutes } from "./vision.js";
+import { createV2Routes } from "./v2.js";
 
 export const pluginRoutes = new Hono();
 
 pluginRoutes.use("*", pluginAuth);
+pluginRoutes.route("/v1/vision", createVisionRoutes());
+pluginRoutes.route("/v1/v2", createV2Routes());
 
 const PROMPT_MIN_LEN = 2;
 const PROMPT_MAX_LEN = 2000;

@@ -66,6 +66,7 @@ function migrate(conn: Database.Database): void {
   addColumnIfMissing(conn, "jobs", "provider_id", "TEXT");
   addColumnIfMissing(conn, "jobs", "provider_name", "TEXT");
   addColumnIfMissing(conn, "provider_capabilities", "auto_disabled_until", "INTEGER");
+  addColumnIfMissing(conn, "static_v2_jobs", "pipeline_revision", "TEXT");
 
   backfillCapabilities(conn);
   seedBuiltinClaudeCode(conn);

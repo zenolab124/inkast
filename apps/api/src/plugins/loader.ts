@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { z } from "zod";
 import type { InkastPlugin } from "./types.js";
+import { compileVisionSchema } from "../domain/vision/schema.js";
 
 /**
  * Plugin overlay loader.
@@ -124,6 +125,19 @@ const InkastPluginSchema = z.object({
     .optional(),
   llmBackend: LlmBackendDescriptorSchema.optional(),
   llmExpansionConcurrency: z.number().int().min(1).max(25).optional(),
+  visionTasks: z.record(
+    z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+    z.object({
+      systemPrompt: z.string().min(1).max(24000),
+      outputSchema: z.record(z.string(), z.unknown()).refine(schema => {
+        if (JSON.stringify(schema).length > 64000 || schema.type !== "object") return false;
+        try { compileVisionSchema(schema); return true; } catch { return false; }
+      }, "vision outputSchema must be a valid bounded JSON object schema"),
+      providerIds: z.array(z.string().trim().min(1)).min(1).max(4)
+        .refine(ids => new Set(ids).size === ids.length, "provider ids must be unique"),
+      maxImages: z.number().int().min(1).max(6).default(4),
+    }).strict(),
+  ).refine(tasks => Object.keys(tasks).length <= 8).optional(),
   lang: z.enum(["zh", "en"]).optional(),
   skipLlmExpansion: z.boolean().optional(),
   skipLlmConstraintsText: z.string().optional(),

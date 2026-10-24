@@ -9,6 +9,27 @@
 
 export type LlmBackend = "claude-code" | "openai-compatible";
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
+export interface LlmCallReceipt {
+  providerId: string;
+  model: string;
+  requestId?: string | null;
+  completionId?: string | null;
+  upstreamStatus?: number | null;
+  reasoningEffort: string | null;
+  durationMs: number;
+  outcome: "succeeded" | "invalid_json" | "failed";
+  /** Missing upstream usage is unknown, never zero. Output includes reasoning. */
+  usage: {
+    inputTokens: number;
+    cachedInputTokens: number | null;
+    outputTokens: number;
+    reasoningOutputTokens: number | null;
+    totalTokens: number;
+  } | null;
+}
+
 export interface CompleteJsonOptions {
   /** System prompt — methodology + output schema. */
   systemPrompt: string;
@@ -25,6 +46,12 @@ export interface CompleteJsonOptions {
   timeoutMs?: number;
   /** Optional caller-provided abort signal. */
   signal?: AbortSignal;
+  /** Trusted server-side override; takes precedence over provider extras. */
+  reasoningEffort?: ReasoningEffort;
+  /** Vision-only jobs must fail rather than silently lose their images. */
+  requireVision?: boolean;
+  /** Trusted server-only peer transport; never read from request context. */
+  endpointOverride?: { providerId: string; baseUrl: string };
   /**
    * Reference images to send alongside the text prompt. Each entry is a publicly
    * fetchable URL — drivers pass them to the upstream model's vision input
@@ -44,6 +71,9 @@ export interface CompleteJsonResult<T = unknown> {
   backend: LlmBackend;
   /** Wall-clock ms spent. */
   durationMs: number;
+  receipt?: LlmCallReceipt;
+  /** All attempted model calls, including rejected JSON and failover calls. */
+  attempts?: LlmCallReceipt[];
 }
 
 export type LlmDriverErrorCode =
@@ -61,6 +91,8 @@ export class LlmDriverError extends Error {
     public readonly code: LlmDriverErrorCode,
     message: string,
     override readonly cause?: unknown,
+    public readonly receipt?: LlmCallReceipt,
+    public readonly attempts?: LlmCallReceipt[],
   ) {
     super(message);
   }

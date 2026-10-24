@@ -29,6 +29,7 @@ import {
   LlmDriverError,
   type CompleteJsonOptions,
   type CompleteJsonResult,
+  type LlmCallReceipt,
 } from "./types.js";
 
 function backendLabel(b: LlmBackendDescriptor): string {
@@ -52,17 +53,24 @@ function backendLabel(b: LlmBackendDescriptor): string {
  * resolveLlmBackend in plugins/registry.ts, for plugins that don't
  * declare their own llmBackend), but it no longer reorders this pool.
  */
-function resolveCandidates(): LlmBackendDescriptor[] {
+export interface LlmCallPolicy {
+  providerIds?: readonly string[];
+  apiOnly?: boolean;
+  maxCalls?: number;
+}
+
+function resolveCandidates(policy: LlmCallPolicy): LlmBackendDescriptor[] {
   const candidates: LlmBackendDescriptor[] = [];
 
-  const enabledLlms = listEnabledCapabilities("llm");
+  const enabledLlms = listEnabledCapabilities("llm", { providerIds: policy.providerIds });
   let claudeCodeEnabled = false;
   for (const cap of enabledLlms) {
     const id = cap.provider.id;
     if (id === BUILTIN_CLAUDE_CODE_ID) {
-      claudeCodeEnabled = true;
+      claudeCodeEnabled = !policy.apiOnly;
       continue;
     }
+    if (policy.apiOnly && cap.capability.extras?.supportsVision === false) continue;
     candidates.push({ kind: "openai-compatible", providerId: id });
   }
 
@@ -89,9 +97,12 @@ export async function completeJsonWithFallover<T = unknown>(
   opts: CompleteJsonOptions,
   contextLabel = "llm",
   postValidate?: (data: T) => string | null,
+  policy: LlmCallPolicy = {},
 ): Promise<CompleteJsonResult<T>> {
-  const candidates = resolveCandidates();
+  const candidates = resolveCandidates(policy);
   let lastErr: unknown;
+  const attempts: LlmCallReceipt[] = [];
+  let calls = 0;
 
   for (let i = 0; i < candidates.length; i++) {
     const backend = candidates[i]!;
@@ -102,10 +113,12 @@ export async function completeJsonWithFallover<T = unknown>(
     // e.g. gpt-5.5 returning plain "我不能帮助..." text instead of JSON).
     // Other LlmDriverError codes jump to the next backend immediately.
     for (let attempt = 1; attempt <= 2; attempt++) {
+      if (policy.maxCalls !== undefined && calls >= policy.maxCalls) break;
       if (opts.signal?.aborted) {
-        throw new LlmDriverError("aborted", `${contextLabel} aborted by caller`);
+        throw new LlmDriverError("aborted", `${contextLabel} aborted by caller`, undefined, undefined, attempts);
       }
       try {
+        calls += 1;
         const result = await driver.completeJson<T>(opts);
         if (postValidate) {
           const reason = postValidate(result.data);
@@ -115,13 +128,19 @@ export async function completeJsonWithFallover<T = unknown>(
             throw new LlmDriverError(
               "invalid_json",
               `postValidate rejected: ${reason}`,
+              undefined,
+              result.receipt ? { ...result.receipt, outcome: "invalid_json" } : undefined,
             );
           }
         }
-        return result;
+        if (result.receipt) attempts.push(result.receipt);
+        return { ...result, attempts };
       } catch (err) {
         lastErr = err;
-        if (err instanceof LlmDriverError && err.code === "aborted") throw err;
+        if (err instanceof LlmDriverError && err.receipt) attempts.push(err.receipt);
+        if (err instanceof LlmDriverError && err.code === "aborted") {
+          throw new LlmDriverError("aborted", `${contextLabel} aborted`, undefined, undefined, attempts);
+        }
         if (
           err instanceof LlmDriverError &&
           err.code === "invalid_json" &&
@@ -132,7 +151,7 @@ export async function completeJsonWithFallover<T = unknown>(
           );
           continue;
         }
-        const msg = err instanceof Error ? err.message.slice(0, 160) : String(err);
+        const msg = policy.apiOnly ? "vision backend call failed" : err instanceof Error ? err.message.slice(0, 160) : String(err);
         const code = err instanceof LlmDriverError ? err.code : "unknown";
         const remaining = candidates.length - i - 1;
         if (remaining > 0) {
@@ -149,5 +168,11 @@ export async function completeJsonWithFallover<T = unknown>(
     }
   }
 
+  if (policy.apiOnly) {
+    throw new LlmDriverError(
+      lastErr instanceof LlmDriverError ? lastErr.code : "backend_unavailable",
+      `${contextLabel}: no eligible API backend produced a result`, undefined, undefined, attempts,
+    );
+  }
   throw lastErr ?? new LlmDriverError("unknown", `${contextLabel}: no candidates produced a result`);
 }

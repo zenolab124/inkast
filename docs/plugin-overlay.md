@@ -79,12 +79,36 @@ token → plugin id 映射就绪
 
   llmExpansionConcurrency?: number; // 该 plugin 的散文→JSON 并发上限(1..25);
                                     // 等待不占 25 路生图 worker
+
+  visionTasks?: Record<string, {     // 可选：独立结构化视觉任务；不配置即关闭
+    systemPrompt: string;           // 服务端固定规则，不接受客户端覆盖
+    outputSchema: Record<string, unknown>; // JSON 对象 Schema，加载时编译校验
+    providerIds: string[];           // 1..4 个准入 API provider，最多调用 2 次
+    maxImages?: number;             // 1..6，默认 4
+  }>;
 }
 ```
 
 字段含义详见 [apps/api/src/plugins/types.ts](../apps/api/src/plugins/types.ts)。
 
 zod 校验定义在 [apps/api/src/plugins/loader.ts](../apps/api/src/plugins/loader.ts)。
+
+## 结构化视觉接口（2026-10-24，JDC 已部署）
+
+`POST /plugins/v1/vision/{任务名}` 复用调用方 Bearer Token，只能调用本 plugin 的 `visionTasks`，不接受原始 plugin ID、自定义提示词、Schema、模型或思考强度。使用现有专用域名时，Nginx 的既有 rewrite 对应 `/vision/{任务名}`。它是供后台 Worker 使用的同步原语，不创建生图任务、不调用图片 Provider，也不替代业务端的持久化队列。
+
+- 请求：`{images:[{url:"..."}], context:{...}}`。图片按任务规则约定顺序；context 仅作数据。body 上限 16 MiB，context 序列化不超过 96,000 字符。支持校验 MIME/格式的 PNG、JPEG、WebP data URL（单图解码上限 4 MiB、1600 万像素、拒绝多帧），或 plugin 的存储 origin、`sourceImageHosts`、上游持久直链白名单内的 HTTPS URL。服务本身不抓取这些远程 URL，由视觉上游接收。
+- 成功：`{data, duration_ms, attempts}`。data 由配置 Schema 再次校验；attempts 包含 providerId、model、实际请求的 reasoningEffort、上游 requestId／completionId／HTTP 状态、耗时、结果与 Token 用量。outputTokens 已含推理 Token，不重复相加；上游缺失的用量保持 null，不推断零费用。失败响应也返回已取得的回执；网络中断时仍可能不知道上游是否已计费。
+- 思考强度固定 `high`，覆盖 provider extras；仅尝试 allowlist 内启用的 API provider，排除明确标记 `supportsVision:false` 的渠道，绝不回退本机 ClaudeCode。allowlist 是操作员对视觉能力的显式准入声明；未知模型能否看图仍需接入验收。每个请求最多两次上游调用，SDK 隐式重试关闭，合计 480 秒期限。格式不合法可重试，调用方不得无限重放。
+- 全局最多 4 个、每 plugin 最多 2 个进行中请求；满载返回 `429 + Retry-After:5`。技术失败为 503，超时为 504。这里不排队、不落盘，不承诺中断恢复或业务幂等，外层 Worker 应持久化阶段并控制重试。
+
+LLM 通用驱动仍尊重 provider 的 `extras.reasoning_effort`；可信服务端调用可用 `reasoningEffort` 显式覆盖。配置页没有该选择器，但编辑 provider 时保留未展示的 extras。不能给不支持推理参数的模型统一强加 high；当前生产渠道配置见基础设施文档，不以源码或历史文档推断线上模型。
+
+部署核对：shared/API 构建与 67 项 API 测试通过；生产切换前 Plugin/Web 均零在途，重启后健康正常，61 个 API 构建文件与 SNAP-UB overlay 哈希回读一致，4 份插件配置全部加载。无凭据请求 401，带合法插件凭据但空图片的请求 400，未调用模型。回滚包 `/root/inkast/releases/20261024-v2-vision-high` 保存旧 dist、API package、lockfile 与 snapub overlay。Web UI 未修改、未重建。
+
+同轮真实请求暴露了缓冲式上游长请求问题：两次调用方约 129 秒先报错，而网关后台分别在约 133／162 秒完成并计费。视觉专用调用已改用上游 SSE（含 usage），拼接完整 JSON、要求正常 stop 后再校验；旧非视觉调用保持原方式。流式修订再次通过 67 项测试与构建、部署哈希回读，修订前驱动另存 `/root/inkast/releases/20261024-v2-vision-stream`。后台 Worker 应同机或经私有连接调用本同步接口；上游流式并不改变 Inkast 对调用方仍一次性返回 JSON 的契约，不能据此宣称公网长同步请求已解决所有代理超时。
+
+固定六图联调完成：模型调用均由 Inkast API 承担，取得回执／网关审计的请求均为 `gpt-6.1-sol + high`；Mac CPU 继续执行原分割与合成。原始批次 4 张通过、1 张待修复、1 张检查连接失败，976.264 秒墙钟、平均 290.050 秒／张。失败张的同图补验另耗 56.091 秒，确认分割与截断缺陷，仍不通过。正式批次网关已知计账 $0.837718；另有一次连接失败费用未知。补验 $0.0525636，首轮排障 $0.272240，独立计数。证据在 SNAP-UB 的 Git 忽略目录 `temp/ai-variant-v2-inkast-20261024/`；该结果不代表图片 Worker 已部署、小程序已接入或六图全部通过。
 
 ## 加新客户接入
 
@@ -144,3 +168,15 @@ JSON 不能表达**代码**。如果未来某客户需要:
 
 - minor 升级(加可选字段):所有 overlay 自动兼容
 - major 升级(破坏性):同步在 overlay README 标注,各 overlay 自查升级
+
+2026-10-24 后续恢复联调：公网先出现 Tunnel 530，随后上游 524；网关审计显示调用方失败后仍有约 306／325 秒完成的记录，因此将视觉期限从 180 调至 480 秒（Worker 510 秒），67 项 API 测试、构建与 61 文件哈希回读通过。试验临时将仅有 LLM capability 的 `sub` 传输改为 JDC loopback18318 → Mini loopback8318 的受限 SSH 连接，服务端两机直连不经过操作者 Mac；同一网关、凭据、模型与 high 保持。试验结束已条件恢复原 provider 地址，移除临时 launchd 任务、监听及授权键；480 秒期限保留。六图原批 3 张模型放行／3 张运行失败，其中第 1 张复看仍漏检；第 6 张独立恢复已实际补矛尖并完成两轮重合成，最终因矛杆回框硬截面保留 needs_review。临时 peer 曾有 No route to host／断链，不能称网络稳定性已解决。外层仍同步返回，不作为小程序接入方案。
+
+同轮确认 Worker 的 Node 内置 fetch 还有独立 300 秒响应头期限，单改 AbortSignal 不足以覆盖。Worker 已改用原生 HTTP、显式 510 秒连接／总期限，错误回执仅保留安全的传输错误代码；本地延迟响应头测试与实跑回执分开记录，不以单元测试替代长等待验证。
+
+### 静态 V2 试用队列（2026-10-24）
+
+`/plugins/v1/v2` 仅供 snapub 的服务端调用：config、jobs 提交／状态、worker claim／renew／finish／image。SQLite 事务保证提交幂等、同用户一个在途、滚动 24 小时三次、同原图两次及全局 16 个排队上限；180 秒租约、最多三次失联重投。Worker 的代码／权重／边框／API 身份改变时不重放旧在途任务，防止清零视觉调用预算。
+
+只有检查通过的 1280 RGBA PNG 才上传 R2；接口仅裁透明留白并回传原画布及裁边几何。框内备用和 needs_review 不交付为成功。用户所有权由调用云对象校验并散列；插件 token、Worker 证明和租约均不下发小程序。免费试用不读写能量。
+
+队列开关／发布版本为 `INKAST_V2_ENABLED`、`INKAST_V2_REVISION`；Worker 需携带同一发布版本。可用固定 loopback `INKAST_V2_PEER_BASE_URL=http://127.0.0.1:18318/v1` 与精确 provider ID，为 v2_plan／v2_review 单独覆盖传输路径；保留同一 API key、模型和 high，不改变普通 LLM 调用或数据库 provider 地址。Worker 是 Mini launchd 服务，通过受限 SSH 接入 JDC；非本机 Codex Agent。

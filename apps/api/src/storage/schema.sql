@@ -170,3 +170,18 @@ CREATE INDEX IF NOT EXISTS idx_plugin_gallery_created_at
   ON plugin_gallery_items(created_at DESC, id);
 CREATE INDEX IF NOT EXISTS idx_plugin_gallery_plugin_id
   ON plugin_gallery_items(plugin_id, created_at DESC);
+
+-- Static V2 derivatives are independent of image generation and its callbacks.
+CREATE TABLE IF NOT EXISTS static_v2_jobs (
+  id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, owner_key TEXT NOT NULL,
+  source_task_id TEXT NOT NULL, source_url TEXT NOT NULL,
+  status TEXT NOT NULL, stage TEXT NOT NULL,
+  lease_hash TEXT, lease_until INTEGER NOT NULL DEFAULT 0, deliveries INTEGER NOT NULL DEFAULT 0, pipeline_revision TEXT,
+  image_url TEXT, geometry_json TEXT, source_sha256 TEXT, code_sha256 TEXT, error_code TEXT,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_static_v2_owner ON static_v2_jobs(plugin_id,owner_key,created_at);
+CREATE INDEX IF NOT EXISTS idx_static_v2_queue ON static_v2_jobs(status,created_at);
+CREATE TABLE IF NOT EXISTS static_v2_workers (
+  plugin_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL, revision TEXT NOT NULL, seen_at INTEGER NOT NULL
+);

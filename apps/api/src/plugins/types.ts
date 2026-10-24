@@ -130,6 +130,14 @@ export interface InkastPlugin {
    * 25 image workers. Omitted plugins retain the global LLM cap (25).
    */
   readonly llmExpansionConcurrency?: number;
+  /** Named, server-configured vision tasks; absent means this API is disabled. */
+  readonly visionTasks?: Readonly<Record<string, {
+    readonly systemPrompt: string;
+    readonly outputSchema: Record<string, unknown>;
+    /** Explicit API-provider allowlist; never includes local OAuth backends. */
+    readonly providerIds: readonly string[];
+    readonly maxImages: number;
+  }>>;
   /** LLM 输出语言。默认 "en"(对生图模型更友好)。 */
   readonly lang?: OutputLang;
   /**

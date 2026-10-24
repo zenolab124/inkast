@@ -7,6 +7,7 @@ import {
   type CompleteJsonResult,
   type LlmDriver,
   type WarmupResult,
+  type LlmCallReceipt,
 } from "./types.js";
 import { PROMPT_DRAFT_SCHEMA } from "./prompt-draft-schema.js";
 
@@ -22,7 +23,7 @@ const WARMUP_FRESHNESS_MS = 5 * 60 * 1000;
  *   - temperature: number
  *   - top_p: number
  *   - max_tokens: number
- *   - reasoning_effort: 'low' | 'medium' | 'high' (for o1-like models)
+ *   - reasoning_effort: configured reasoning effort, overridden by trusted callers
  *
  * Unknown keys are silently ignored to keep the door open for future params.
  */
@@ -80,13 +81,26 @@ export class OpenAiCompatibleDriver implements LlmDriver {
     }
 
     const extras = (record.capability.extras ?? {}) as Record<string, unknown>;
+    if (opts.requireVision && (!opts.images?.length || extras.supportsVision === false)) {
+      throw new LlmDriverError("backend_unavailable", "Vision input is required by this task");
+    }
+    const reasoningEffort = opts.reasoningEffort ?? (
+      typeof extras.reasoning_effort === "string" ? extras.reasoning_effort : undefined
+    );
+    const receipt: LlmCallReceipt = {
+      providerId: this.providerId, model: record.capability.model,
+      reasoningEffort: reasoningEffort ?? null, durationMs: 0, usage: null, outcome: "failed",
+    };
     const schema = opts.schema ?? PROMPT_DRAFT_SCHEMA;
     const extraHeaders = resolveExtraHeaders(record.capability);
 
     const client = new OpenAI({
       apiKey: record.apiKey,
-      baseURL: record.provider.baseUrl,
+      baseURL: opts.requireVision && opts.endpointOverride?.providerId === this.providerId
+        ? opts.endpointOverride.baseUrl : record.provider.baseUrl,
       timeout: opts.timeoutMs ?? 120_000,
+      // Vision jobs account for retries explicitly in the caller's bounded pool.
+      ...(opts.requireVision ? { maxRetries: 0 } : {}),
       ...(extraHeaders ? { defaultHeaders: extraHeaders } : {}),
     });
 
@@ -100,8 +114,7 @@ export class OpenAiCompatibleDriver implements LlmDriver {
             })),
           ]
         : opts.userPrompt;
-      const completion = await client.chat.completions.create(
-        {
+      const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
           model: record.capability.model,
           messages: [
             { role: "system", content: opts.systemPrompt },
@@ -118,19 +131,58 @@ export class OpenAiCompatibleDriver implements LlmDriver {
           ...(typeof extras.temperature === "number" ? { temperature: extras.temperature } : {}),
           ...(typeof extras.top_p === "number" ? { top_p: extras.top_p } : {}),
           ...(typeof extras.max_tokens === "number" ? { max_tokens: extras.max_tokens } : {}),
-          ...(typeof extras.reasoning_effort === "string"
-            ? { reasoning_effort: extras.reasoning_effort as "low" | "medium" | "high" }
+          ...(reasoningEffort
+            ? { reasoning_effort: reasoningEffort as "low" | "medium" | "high" }
             : {}),
-        },
-        { signal: opts.signal },
-      );
-
-      const message = completion.choices[0]?.message;
-      const raw = message?.content ?? "";
+        };
+      const captureUsage = (usage: OpenAI.Completions.CompletionUsage | null | undefined) => {
+        if (!usage) return;
+        const detailed = usage as typeof usage & {
+          prompt_tokens_details?: { cached_tokens?: number };
+          completion_tokens_details?: { reasoning_tokens?: number };
+        };
+        receipt.usage = {
+          inputTokens: detailed.prompt_tokens,
+          cachedInputTokens: detailed.prompt_tokens_details?.cached_tokens ?? null,
+          outputTokens: detailed.completion_tokens,
+          reasoningOutputTokens: detailed.completion_tokens_details?.reasoning_tokens ?? null,
+          totalTokens: detailed.total_tokens,
+        };
+      };
+      let raw = "";
+      let finishReason: string | null = null;
+      if (opts.requireVision) {
+        // Consume upstream SSE so long reasoning calls can receive gateway heartbeats
+        // instead of waiting for a single buffered response through a public proxy.
+        const { data: stream, response } = await client.chat.completions.create(
+          { ...params, stream: true, stream_options: { include_usage: true } },
+          { signal: opts.signal },
+        ).withResponse();
+        receipt.requestId = response.headers.get("x-request-id");
+        receipt.upstreamStatus = response.status;
+        for await (const chunk of stream) {
+          receipt.completionId = chunk.id ?? receipt.completionId ?? null;
+          captureUsage(chunk.usage);
+          const choice = chunk.choices[0];
+          raw += choice?.delta.content ?? "";
+          if (raw.length > 1_000_000) throw new LlmDriverError("invalid_json", "Vision output exceeded its size bound");
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
+        }
+        if (finishReason !== "stop") throw new LlmDriverError("invalid_json", "Vision stream ended without a complete response");
+      } else {
+        const completion = await client.chat.completions.create(params, { signal: opts.signal });
+        receipt.requestId = (completion as typeof completion & { _request_id?: string })._request_id ?? null;
+        receipt.completionId = completion.id ?? null;
+        captureUsage(completion.usage);
+        raw = completion.choices[0]?.message.content ?? "";
+        finishReason = completion.choices[0]?.finish_reason ?? null;
+      }
+      receipt.durationMs = Date.now() - started;
+      receipt.outcome = "invalid_json";
       if (!raw) {
         throw new LlmDriverError(
           "invalid_json",
-          `model returned empty content. finish_reason=${completion.choices[0]?.finish_reason}`,
+          `model returned empty content. finish_reason=${finishReason}`,
         );
       }
 
@@ -146,16 +198,25 @@ export class OpenAiCompatibleDriver implements LlmDriver {
       }
 
       this.lastRoundTripAt = Date.now();
+      receipt.outcome = "succeeded";
 
       return {
         data,
         raw,
         backend: this.backend,
         durationMs: Date.now() - started,
+        receipt,
       };
     } catch (err) {
-      if (err instanceof LlmDriverError) throw err;
-      throw classifyOpenAiError(err);
+      receipt.durationMs = Date.now() - started;
+      if (err instanceof APIError) {
+        receipt.upstreamStatus = err.status ?? null;
+        receipt.requestId = err.headers?.["x-request-id"] ?? receipt.requestId ?? null;
+      }
+      const classified = opts.signal?.aborted
+        ? new LlmDriverError(opts.signal.reason?.name === "TimeoutError" ? "timeout" : "aborted", "LLM call aborted")
+        : err instanceof LlmDriverError ? err : classifyOpenAiError(err);
+      throw new LlmDriverError(classified.code, classified.message, classified, receipt);
     }
   }
 }
