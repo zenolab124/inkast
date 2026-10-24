@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS static_v2_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_static_v2_owner ON static_v2_jobs(plugin_id,owner_key,created_at);
 CREATE INDEX IF NOT EXISTS idx_static_v2_queue ON static_v2_jobs(status,created_at);
+CREATE INDEX IF NOT EXISTS idx_static_v2_timeline ON static_v2_jobs(plugin_id,owner_key,(CASE WHEN status='succeeded' THEN updated_at ELSE created_at END) DESC,id DESC);
 CREATE TABLE IF NOT EXISTS static_v2_workers (
   plugin_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL, revision TEXT NOT NULL, seen_at INTEGER NOT NULL
 );

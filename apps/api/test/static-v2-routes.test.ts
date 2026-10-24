@@ -27,6 +27,12 @@ test("V2 routes reject wrong owner/worker/SSRF and publish one immutable alpha-p
     assert.equal((await post("/v2/jobs", { id, owner_key: owner, task_id: "task-original", source_image_url: "https://images.example/original.png", model: "injected" })).status, 400);
     assert.equal((await post("/v2/jobs", { id, owner_key: owner, task_id: "task-original", source_image_url: "https://images.example/original.png" })).status, 202);
     assert.equal((await app.request(`/v2/jobs/${id}`, { headers: { ...headers, "x-v2-owner": "b".repeat(64) } })).status, 404);
+    assert.equal((await app.request('/v2/jobs', { headers })).status, 400);
+    const ownList = await (await app.request('/v2/jobs?limit=1', { headers: { ...headers, 'x-v2-owner': owner } })).json() as { items: Array<Record<string, unknown>> };
+    assert.equal(ownList.items[0]!.id, id);
+    assert.equal(ownList.items[0]!.owner_key, undefined);
+    assert.equal(ownList.items[0]!.lease_hash, undefined);
+    assert.equal((await app.request('/v2/jobs?before_time=5', { headers: { ...headers, 'x-v2-owner': owner } })).status, 400);
     const claim = await (await post("/v2/worker/claim", { worker_id: "test-worker", revision: owner }, worker)).json() as { job: { lease_token: string } };
     const pixels = Buffer.alloc(1280 * 1280 * 4);
     for (let y = 300; y < 800; y++) for (let x = 200; x < 700; x++) { const i = (y * 1280 + x) * 4; pixels[i] = 200; pixels[i + 3] = 123; }

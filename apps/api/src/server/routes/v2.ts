@@ -8,7 +8,7 @@ import { putImage } from "../../drivers/storage/r2.js";
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/);
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
-const publicJob = (j: V2Job) => ({ id: j.id, status: j.status, stage: j.stage, image_url: j.image_url,
+const publicJob = (j: V2Job) => ({ id: j.id, source_task_id: j.source_task_id, created_at: j.created_at, status: j.status, stage: j.stage, image_url: j.image_url,
   source_image_url: j.source_url, source_sha256: j.source_sha256, code_sha256: j.code_sha256,
   error_code: j.error_code, geometry: j.geometry_json ? JSON.parse(j.geometry_json) : null, updated_at: j.updated_at });
 const enabled = () => process.env.INKAST_V2_ENABLED === "true";
@@ -28,6 +28,13 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     return next();
   });
   routes.get("/config", c => c.json({ enabled: enabled() && store().online(c.get("plugin").id), energy_cost: 0, daily_limit: V2_DAILY_LIMIT, max_attempts: 2, revision: process.env.INKAST_V2_REVISION ?? null }));
+  routes.get("/jobs", c => {
+    const owner = sha.parse(c.req.header("x-v2-owner"));
+    const input = z.object({ limit: z.coerce.number().int().min(1).max(24).default(12), before_time: z.coerce.number().int().nonnegative().optional(), before_id: id.optional() }).strict().parse(c.req.query());
+    if ((input.before_time === undefined) !== (input.before_id === undefined)) return c.json({ error: { code: "invalid_input" } }, 400);
+    const result = store().list(c.get("plugin").id, owner, input.limit, input.before_id ? { time: input.before_time!, id: input.before_id } : undefined);
+    return c.json({ items: result.items.map(publicJob), next: result.next });
+  });
   routes.post("/jobs", async c => {
     const input = z.object({ id, owner_key: sha, task_id: id, source_image_url: z.string().max(4096) }).strict().parse(await c.req.json());
     const plugin = c.get("plugin");

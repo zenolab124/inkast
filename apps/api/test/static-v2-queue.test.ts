@@ -70,3 +70,28 @@ test("an interrupted task cannot silently reset its model budget after code/asse
     assert.equal(store.get("snapub", "one")?.error_code, "pipeline_changed");
   } finally { conn.close(); }
 });
+
+test("independent V2 history is owner-bound, keeps failed attempts and promotes an old task when it completes", () => {
+  const { conn, store, input, advance } = fixture();
+  try {
+    store.submit(input("old-job", "owner-a"));
+    const old = store.claim("snapub", "worker-one", "revision", true)!;
+    store.submit(input("new-job", "owner-b"));
+    advance(1000); store.finish("snapub", old.id, old.leaseToken, { status: "succeeded" });
+    // A later failed attempt remains its own history entry.
+    store.submit(input("retry-job", "owner-a", "different-source"));
+    const other = store.claim("snapub", "worker-one", "revision", true)!;
+    store.finish("snapub", other.id, other.leaseToken, { status: "failed" });
+    const last = store.claim("snapub", "worker-one", "revision", true)!;
+    store.finish("snapub", last.id, last.leaseToken, { status: "failed" });
+    const page = store.list("snapub", "owner-a", 1);
+    assert.equal(page.items[0]!.id, "retry-job");
+    assert.ok(page.next);
+    assert.equal(store.list("snapub", "owner-a", 1, page.next!).items[0]!.id, "old-job");
+    assert.equal(store.list("snapub", "owner-b", 12).items.length, 1);
+    assert.equal(store.list("other-plugin", "owner-a", 12).items.length, 0);
+    // Completion time, not original creation time, determines its final position.
+    conn.prepare("UPDATE static_v2_jobs SET updated_at=updated_at+10000 WHERE id='old-job'").run();
+    assert.equal(store.list("snapub", "owner-a", 12).items[0]!.id, "old-job");
+  } finally { conn.close(); }
+});

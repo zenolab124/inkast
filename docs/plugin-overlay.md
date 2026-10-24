@@ -180,3 +180,5 @@ JSON 不能表达**代码**。如果未来某客户需要:
 只有检查通过的 1280 RGBA PNG 才上传 R2；接口仅裁透明留白并回传原画布及裁边几何。框内备用和 needs_review 不交付为成功。用户所有权由调用云对象校验并散列；插件 token、Worker 证明和租约均不下发小程序。免费试用不读写能量。
 
 队列开关／发布版本为 `INKAST_V2_ENABLED`、`INKAST_V2_REVISION`；Worker 需携带同一发布版本。可用固定 loopback `INKAST_V2_PEER_BASE_URL=http://127.0.0.1:18318/v1` 与精确 provider ID，为 v2_plan／v2_review 单独覆盖传输路径；保留同一 API key、模型和 high，不改变普通 LLM 调用或数据库 provider 地址。Worker 是 Mini launchd 服务，通过受限 SSH 接入 JDC；非本机 Codex Agent。
+
+V2 独立任务历史由 `GET /plugins/v1/v2/jobs` 提供，必须携带 owner 哈希头，按插件与所有者双重过滤。每页默认12、最多24，使用时间与任务ID复合游标；成品按完成时间，其余状态按提交时间排序，保留所有失败／重试记录。返回公开任务字段，排除 owner_key、lease_hash 和租约令牌。调用云对象还需按当前用户核对原作品及根作品未删除，剔除失效来源；不把 V2 插入原生图任务或公开作品池。

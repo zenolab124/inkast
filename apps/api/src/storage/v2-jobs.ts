@@ -23,6 +23,14 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
   };
   return {
     get, online, leased,
+    list(plugin: string, owner: string, limit: number, before?: { time: number; id: string }) {
+      const stamp = "CASE WHEN status='succeeded' THEN updated_at ELSE created_at END";
+      const rows = conn.prepare(`SELECT * FROM static_v2_jobs WHERE plugin_id=? AND owner_key=? ${before ? `AND (${stamp}<? OR (${stamp}=? AND id<?))` : ""} ORDER BY ${stamp} DESC,id DESC LIMIT ?`).all(
+        plugin, owner, ...(before ? [before.time, before.time, before.id] : []), limit + 1,
+      ) as V2Job[];
+      const items = rows.slice(0, limit), last = items.at(-1);
+      return { items, next: rows.length > limit && last ? { time: last.status === "succeeded" ? last.updated_at : last.created_at, id: last.id } : null };
+    },
     submit: conn.transaction((input: { id: string; plugin: string; owner: string; task: string; source: string }) => {
       const old = get(input.plugin, input.id);
       if (old) {
