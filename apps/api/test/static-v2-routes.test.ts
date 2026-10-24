@@ -50,3 +50,32 @@ test("V2 routes reject wrong owner/worker/SSRF and publish one immutable alpha-p
     assert.equal(uploads.length, 1, "lost acknowledgement must not upload a second object");
   } finally { if (previous === undefined) delete process.env.INKAST_V2_ENABLED; else process.env.INKAST_V2_ENABLED = previous; conn.close(); }
 });
+
+test("check recovery endpoint is worker-only, validates cooldown and never exposes lease information", async () => {
+  const conn = new Database(":memory:"); conn.exec(readFileSync(new URL("../src/storage/schema.sql", import.meta.url), "utf8"));
+  const store = createV2Store(conn);
+  const plugin: InkastPlugin = { id: "snapub", name: "test", imageDefaults: {} };
+  const token = "test-token", proof = createHmac("sha256",token).update("static-v2-worker-v1").digest("hex");
+  const headers = {authorization:`Bearer ${token}`,"content-type":"application/json"};
+  const worker = {...headers,"x-v2-worker":proof};
+  const app = new Hono(); app.use("*",async(c,next)=>{c.set("plugin",plugin);await next();});
+  app.route("/v2",createV2Routes({store:()=>store}));
+  const jobId="v2-22222222-2222-4222-8222-222222222222";
+  try {
+    store.claim("snapub","test-worker","revision",false);
+    store.submit({id:jobId,plugin:"snapub",owner:"owner",task:"task-original",source:"https://images.example/a.png"});
+    const job=store.claim("snapub","test-worker","revision",true)!;
+    store.renew("snapub",jobId,job.leaseToken,"recovery_wait");
+    const body={lease_token:job.leaseToken,stage:"check_retry_wait",retry_after_ms:60000};
+    const post=(value:object,h:Record<string,string>=worker)=>app.request(`/v2/worker/${jobId}/defer`,{method:"POST",headers:h,body:JSON.stringify(value)});
+    assert.equal((await post(body,headers)).status,403);
+    assert.equal((await post({...body,retry_after_ms:1})).status,400);
+    assert.equal((await post({...body,lease_token:"b".repeat(64)})).status,409);
+    const result=await post(body); assert.equal(result.status,200);
+    const data=await result.json() as Record<string,unknown>;
+    assert.equal(data.status,"queued"); assert.equal(data.stage,"check_retry_wait");
+    assert.equal(data.lease_hash,undefined); assert.equal(data.lease_token,undefined);
+    assert.equal(data.owner_key,undefined);
+    assert.equal((await post(body)).status,200);
+  } finally { conn.close(); }
+});

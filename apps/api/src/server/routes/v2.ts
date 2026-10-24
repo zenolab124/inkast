@@ -70,6 +70,10 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     store().renew(c.get("plugin").id, id.parse(c.req.param("id")), input.lease_token, input.stage);
     return c.json({ ok: true });
   });
+  routes.post("/worker/:id/defer", async c => {
+    const input = z.object({ lease_token: sha, stage: z.literal("check_retry_wait"), retry_after_ms: z.number().int().min(60000).max(300000) }).strict().parse(await c.req.json());
+    return c.json(publicJob(store().defer(c.get("plugin").id, id.parse(c.req.param("id")), input.lease_token, input.retry_after_ms)));
+  });
   routes.post("/worker/:id/finish", async c => {
     const input = z.object({ lease_token: sha, status: z.enum(["needs_review", "failed"]), source_sha256: sha.optional(), code_sha256: sha.optional(), error_code: z.string().regex(/^[a-z_0-9]{1,60}$/) }).strict().parse(await c.req.json());
     return c.json(publicJob(store().finish(c.get("plugin").id, id.parse(c.req.param("id")), input.lease_token, { status: input.status, sourceSha256: input.source_sha256, codeSha256: input.code_sha256, errorCode: input.error_code })));

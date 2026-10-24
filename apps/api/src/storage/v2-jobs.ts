@@ -40,7 +40,6 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
       if (!online(input.plugin)) throw new V2QueueError("worker_unavailable", 503);
       const count = (sql: string, ...args: Array<string | number>) => (conn.prepare(sql).get(...args) as { n: number }).n;
       if (count("SELECT count(*) n FROM static_v2_jobs WHERE plugin_id=? AND owner_key=? AND created_at>?", input.plugin, input.owner, clock() - 86400_000) >= V2_DAILY_LIMIT) throw new V2QueueError("daily_limit", 429);
-      if (count("SELECT count(*) n FROM static_v2_jobs WHERE plugin_id=? AND owner_key=? AND status IN ('queued','running')", input.plugin, input.owner)) throw new V2QueueError("owner_busy", 429);
       if (count("SELECT count(*) n FROM static_v2_jobs WHERE plugin_id=? AND owner_key=? AND source_task_id=? AND source_url=?", input.plugin, input.owner, input.task, input.source) >= 2) throw new V2QueueError("retry_limit", 429);
       if (count("SELECT count(*) n FROM static_v2_jobs WHERE status IN ('queued','running')") >= 16) throw new V2QueueError("queue_full", 429);
       conn.prepare("INSERT INTO static_v2_jobs(id,plugin_id,owner_key,source_task_id,source_url,status,stage,created_at,updated_at) VALUES(?,?,?,?,?,'queued','queued',?,?)").run(input.id, input.plugin, input.owner, input.task, input.source, clock(), clock());
@@ -49,14 +48,35 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
     claim: conn.transaction((plugin: string, worker: string, revision: string, enabled: boolean) => {
       conn.prepare("INSERT INTO static_v2_workers(plugin_id,worker_id,revision,seen_at) VALUES(?,?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET worker_id=excluded.worker_id,revision=excluded.revision,seen_at=excluded.seen_at").run(plugin, worker, revision, clock());
       if (!enabled) return null;
-      conn.prepare("UPDATE static_v2_jobs SET status='failed',stage='failed',error_code='pipeline_changed',updated_at=? WHERE plugin_id=? AND status='running' AND lease_until<=? AND pipeline_revision IS NOT NULL AND pipeline_revision<>?").run(clock(), plugin, clock(), revision);
-      conn.prepare("UPDATE static_v2_jobs SET status='failed',stage='failed',error_code='recovery_limit',updated_at=? WHERE plugin_id=? AND status='running' AND lease_until<=? AND deliveries>=3").run(clock(), plugin, clock());
+      conn.prepare("UPDATE static_v2_jobs SET status='failed',stage='failed',error_code='pipeline_changed',updated_at=? WHERE plugin_id=? AND status IN ('queued','running') AND lease_until<=? AND pipeline_revision IS NOT NULL AND pipeline_revision<>?").run(clock(), plugin, clock(), revision);
+      conn.prepare("UPDATE static_v2_jobs SET status='failed',stage='failed',error_code='recovery_limit',updated_at=? WHERE plugin_id=? AND status IN ('queued','running') AND lease_until<=? AND deliveries>=3").run(clock(), plugin, clock());
       if (conn.prepare("SELECT 1 FROM static_v2_jobs WHERE status='running' AND lease_until>?").get(clock())) return null;
-      const row = conn.prepare("SELECT * FROM static_v2_jobs WHERE plugin_id=? AND (status='queued' OR (status='running' AND lease_until<=?)) ORDER BY created_at,id LIMIT 1").get(plugin, clock()) as V2Job | undefined;
+      // A cooling-down head blocks this owner's later jobs, while other owners
+      // remain eligible. No second running job can bypass the global lease gate.
+      const row = conn.prepare(`SELECT j.* FROM static_v2_jobs j
+        WHERE j.plugin_id=? AND j.status IN ('queued','running') AND j.lease_until<=?
+        AND NOT EXISTS (SELECT 1 FROM static_v2_jobs head
+          WHERE head.plugin_id=j.plugin_id AND head.owner_key=j.owner_key
+          AND head.status IN ('queued','running')
+          AND (head.created_at<j.created_at OR (head.created_at=j.created_at AND head.rowid<j.rowid)))
+        ORDER BY j.created_at,j.rowid LIMIT 1`).get(plugin, clock()) as V2Job | undefined;
       if (!row) return null;
       const token = randomBytes(32).toString("hex");
       conn.prepare("UPDATE static_v2_jobs SET status='running',stage='starting',lease_hash=?,lease_until=?,deliveries=deliveries+1,pipeline_revision=?,updated_at=? WHERE id=?").run(digest(token), clock() + 180_000, revision, clock(), row.id);
       return { ...get(plugin, row.id)!, leaseToken: token };
+    }),
+    defer: conn.transaction((plugin: string, id: string, token: string, retryAfterMs: number) => {
+      const old = get(plugin, id);
+      // An acknowledgement retry cannot keep pushing the cooldown into the future.
+      if (old?.lease_hash === digest(token) && ((old.status === "queued" && old.stage === "check_retry_wait") || (old.status === "failed" && old.error_code === "recovery_limit"))) return old;
+      const row = leased(plugin, id, token);
+      if (!Number.isSafeInteger(retryAfterMs) || retryAfterMs < 60000 || retryAfterMs > 300000 || (!/^check/.test(row.stage) && row.stage !== "recovery_wait")) throw new V2QueueError("invalid_recovery", 409);
+      if (row.deliveries >= 3) {
+        conn.prepare("UPDATE static_v2_jobs SET status='failed',stage='failed',error_code='recovery_limit',updated_at=? WHERE plugin_id=? AND id=?").run(clock(), plugin, id);
+      } else {
+        conn.prepare("UPDATE static_v2_jobs SET status='queued',stage='check_retry_wait',lease_until=?,error_code=NULL,updated_at=? WHERE plugin_id=? AND id=?").run(clock() + retryAfterMs, clock(), plugin, id);
+      }
+      return get(plugin, id)!;
     }),
     renew(plugin: string, id: string, token: string, stage: string) {
       leased(plugin, id, token);

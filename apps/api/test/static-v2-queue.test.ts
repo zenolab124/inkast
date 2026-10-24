@@ -19,10 +19,10 @@ test("V2 submit is idempotent, owner-bound and atomically limits active/free tas
     const first = store.submit(input("one"));
     assert.equal(store.submit(input("one")).id, first.id);
     assert.throws(() => store.submit(input("one", "other-owner")), /idempotency_conflict/);
-    assert.throws(() => store.submit(input("two")), /owner_busy/);
+    assert.equal(store.submit(input("two", "owner-one", "one")).status, "queued");
     const claim = store.claim("snapub", "worker-one", "revision", true)!;
     store.finish("snapub", claim.id, claim.leaseToken, { status: "needs_review" });
-    store.submit(input("two", "owner-one", "one"));
+    assert.equal(store.submit(input("two", "owner-one", "one")).status, "queued");
     const next = store.claim("snapub", "worker-one", "revision", true)!;
     store.finish("snapub", next.id, next.leaseToken, { status: "failed" });
     assert.throws(() => store.submit(input("three", "owner-one", "one")), /retry_limit/);
@@ -93,5 +93,65 @@ test("independent V2 history is owner-bound, keeps failed attempts and promotes 
     // Completion time, not original creation time, determines its final position.
     conn.prepare("UPDATE static_v2_jobs SET updated_at=updated_at+10000 WHERE id='old-job'").run();
     assert.equal(store.list("snapub", "owner-a", 12).items[0]!.id, "old-job");
+  } finally { conn.close(); }
+});
+
+test("same-owner tasks wait FIFO through check cooldown; other owners run and deferred acknowledgements are idempotent", () => {
+  const { conn, store, input, advance } = fixture();
+  try {
+    store.submit(input("z-first"));
+    const first = store.claim("snapub", "worker-one", "revision", true)!;
+    store.submit(input("a-second")); // same millisecond, reverse lexical order
+    store.submit(input("other", "owner-two"));
+    store.renew("snapub", first.id, first.leaseToken, "recovery_wait");
+    const deferred = store.defer("snapub", first.id, first.leaseToken, 60000);
+    assert.equal(deferred.status, "queued"); assert.equal(deferred.stage, "check_retry_wait");
+    assert.equal(deferred.deliveries, 1);
+    advance(1000);
+    assert.equal(store.defer("snapub", first.id, first.leaseToken, 60000).lease_until, deferred.lease_until);
+    const other = store.claim("snapub", "worker-one", "revision", true)!;
+    assert.equal(other.id, "other");
+    store.finish("snapub", other.id, other.leaseToken, { status: "succeeded" });
+    assert.equal(store.claim("snapub", "worker-one", "revision", true), null);
+    advance(59000);
+    const resumed = store.claim("snapub", "worker-one", "revision", true)!;
+    assert.equal(resumed.id, first.id); assert.equal(resumed.deliveries, 2);
+    assert.throws(() => store.defer("snapub", first.id, first.leaseToken, 60000), /lease_lost/);
+    store.finish("snapub", resumed.id, resumed.leaseToken, { status: "succeeded" });
+    const second = store.claim("snapub", "worker-one", "revision", true)!;
+    assert.equal(second.id, "a-second");
+    assert.equal(store.list("snapub", "owner-one", 12).items.length, 2);
+  } finally { conn.close(); }
+});
+
+test("check deferral cannot reset delivery bounds, bypass pipeline identity, or defer a non-check stage", () => {
+  const { conn, store, input, advance } = fixture();
+  try {
+    store.submit(input("one"));
+    let claim = store.claim("snapub", "worker-one", "revision", true)!;
+    assert.throws(() => store.defer("snapub", claim.id, claim.leaseToken, 60000), /invalid_recovery/);
+    for (let i=1;i<=3;i++) {
+      store.renew("snapub", claim.id, claim.leaseToken, "checking");
+      const row = store.defer("snapub", claim.id, claim.leaseToken, 60000);
+      if (i<3) { advance(60000); claim = store.claim("snapub", "worker-one", "revision", true)!; }
+      else { assert.equal(row.status,"failed"); assert.equal(row.error_code,"recovery_limit"); }
+    }
+    store.submit(input("new"));
+    const old = store.claim("snapub", "worker-one", "old-revision", true)!;
+    store.renew("snapub", old.id, old.leaseToken, "checking");
+    store.defer("snapub", old.id, old.leaseToken, 60000); advance(60000);
+    assert.equal(store.claim("snapub", "worker-one", "new-revision", true), null);
+    assert.equal(store.get("snapub",old.id)?.error_code,"pipeline_changed");
+  } finally { conn.close(); }
+});
+
+test("allowing same-owner queuing preserves the global sixteen-job bound", () => {
+  const { conn, store, input } = fixture();
+  try {
+    for (let i=0;i<16;i++) store.submit(input(`job-${i}`,`owner-${i}`));
+    assert.throws(() => store.submit(input("full","owner-full")), /queue_full/);
+    const first = store.claim("snapub","worker-one","revision",true)!;
+    store.finish("snapub",first.id,first.leaseToken,{status:"succeeded"});
+    assert.equal(store.submit(input("full","owner-full")).status,"queued");
   } finally { conn.close(); }
 });
