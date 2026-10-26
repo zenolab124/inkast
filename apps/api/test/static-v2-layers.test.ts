@@ -267,3 +267,37 @@ test("small source margins do not reject valid foregrounds or prevent background
     } finally { f.conn.close(); }
   }
 });
+
+test("local repair binds frozen foreground and payload, survives lost acknowledgement, and persists rejection without resubmission", async () => {
+  const f = await fixture(); let posts = 0, repairId = "";
+  const square = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: "transparent" } }).png().toBuffer();
+  const data = `data:image/png;base64,${square.toString("base64")}`;
+  const input = { foreground_sha256: "a".repeat(64), crop_png: data, mask_png: data, part: "右侧袖口", material: "solid" as const };
+  f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "foreground", JSON.stringify({ status: "succeeded", imageSha256: input.foreground_sha256, providerId: f.entry.provider.id }));
+  // First create the foreground through the real layer state to bind provider hash.
+  f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "foreground", "null");
+  const base = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (init?.method === "POST") return Response.json({ id: JSON.parse(String(init.body)).client_task_id, status: "queued" });
+    return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: "success", data: [{ url: "https://images.example/layer.png" }] }] });
+  } });
+  const make = () => createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (_url, init) => {
+    if (init?.method === "POST") {
+      posts++; const body = JSON.parse(String(init.body)); repairId = body.client_task_id;
+      assert.equal(body.size, "1024x1024"); assert.equal(body.background, "transparent"); assert.equal(body.images.length, 2);
+      throw Error("lost repair acknowledgement");
+    }
+    return Response.json({ items: [{ id: repairId, status: "error", error_code: "request_rejected", error: "request rejected" }] });
+  } });
+  try {
+    await base(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    const foreground = await base(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); input.foreground_sha256 = foreground.image_sha256!;
+    await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", { ...input, foreground_sha256: "b".repeat(64) }), /repair_source_mismatch/);
+    await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input), /lost repair/);
+    const failed = await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input);
+    assert.equal(failed.error_code, "generation_rejected");
+    assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input)).status, "failed");
+    assert.equal(posts, 1);
+    await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", { ...input, part: "different part" }), /repair_input_changed/);
+  } finally { f.conn.close(); }
+});

@@ -116,3 +116,21 @@ test("vision route is behind bearer auth and rejects client-selected schemas or 
   assert.equal((await send({ ...input, schema: {} })).status, 400);
   assert.equal((await send(input)).status, 200);
 });
+
+test("adaptive native composition returns bounded alternatives in one high-effort call; existing images retain single-plan schema", async () => {
+  const v2Plugin = { ...plugin, visionTasks: { v2_plan: plugin.visionTasks!.compose! } };
+  let calls = 0;
+  const candidate = { plan: { zoom: 1.2 }, fitness: .8, intent: "expressive", reason: "完整手势可出框", repair: { part: "", material: "solid" } };
+  await analyzeVision(v2Plugin, "v2_plan", { ...input, context: { composition_mode: "adaptive-v1", extraction: { mode: "generated-native-alpha-no-segmentation" } } }, undefined,
+    async <T>(opts: CompleteJsonOptions) => {
+      calls++; assert.ok(opts.systemPrompt.includes("不要固定选最保守"));
+      assert.equal(opts.reasoningEffort, "high");
+      const validate = compileVisionSchema(opts.schema!);
+      assert.equal(validate({ candidates: [candidate] }), false);
+      assert.equal(validate({ candidates: [candidate, candidate, candidate, candidate] }), false);
+      return result({ candidates: [candidate, candidate] } as T);
+    });
+  assert.equal(calls, 1);
+  await analyzeVision(v2Plugin, "v2_plan", { ...input, context: { composition_mode: "adaptive-v1" } }, undefined,
+    async <T>(opts: CompleteJsonOptions) => { assert.equal(opts.schema, v2Plugin.visionTasks.v2_plan.outputSchema); return result({ zoom: 1.2 } as T); });
+});

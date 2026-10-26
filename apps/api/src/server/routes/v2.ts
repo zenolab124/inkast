@@ -94,6 +94,16 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     const job = queue.leased(plugin.id, jobId, input.lease_token);
     return c.json(await layers(queue, plugin, job, input.lease_token, layer));
   });
+  routes.post("/worker/:id/repair", async c => {
+    const input = z.object({ lease_token: sha, foreground_sha256: sha,
+      crop_png: z.string().max(5_592_432), mask_png: z.string().max(5_592_432),
+      part: z.string().trim().min(1).max(120), material: z.enum(["solid", "energy"]),
+    }).strict().parse(await c.req.json());
+    const plugin = c.get("plugin"), queue = store(), jobId = id.parse(c.req.param("id"));
+    const job = queue.leased(plugin.id, jobId, input.lease_token);
+    const { lease_token, ...repair } = input;
+    return c.json(await layers(queue, plugin, job, lease_token, "repair", repair));
+  });
   routes.post("/worker/:id/renew", async c => {
     const input = z.object({ lease_token: sha, stage: z.string().regex(/^[a-z_0-9-]{1,40}$/) }).strict().parse(await c.req.json());
     store().renew(c.get("plugin").id, id.parse(c.req.param("id")), input.lease_token, input.stage);

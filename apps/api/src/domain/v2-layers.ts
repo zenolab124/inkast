@@ -7,7 +7,9 @@ import { buildC2iPromptText } from "../drivers/image/c2i-tasks.js";
 import { resolveExtraHeaders } from "../drivers/codex-header.js";
 import sharp from "sharp";
 
-type Layer = "foreground" | "background";
+type Layer = "foreground" | "background" | "repair";
+export interface V2RepairInput { foreground_sha256: string; crop_png: string; mask_png: string; part: string; material: "solid" | "energy"; }
+const repairPrompt = (repair: V2RepairInput) => `Edit only the small missing terminal of ${JSON.stringify(repair.part)} on the isolated transparent foreground in image 1. Image 2 is an edit guide: white is the only editable region, black must remain unchanged. Reconstruct a short natural rounded ending continuing the local anatomy, garment or prop and matching exact texture, focus, lighting and color. Do not alter the pose, identity, face, existing detail or any other part. Keep the restored silhouette away from the guide outer boundary; finish it naturally with transparent space beyond it. Genuine transparent RGBA PNG, square. ${repair.material === "solid" ? "Solid material remains fully opaque; never dissolve or fade anatomy or clothing." : "Preserve only the physically translucent energy as translucent."} No frame, numbers, text, backdrop or extra objects.`;
 export interface V2LayerResult { status: "submitted" | "succeeded" | "failed"; image_url?: string; image_sha256?: string; error_code?: string; phase?: "awaiting_admission" | "preparing" | "queued" | "generating"; }
 type ProviderEntry = NonNullable<ReturnType<typeof getProviderCapability>>;
 interface LayerState {
@@ -15,13 +17,13 @@ interface LayerState {
   createdAt: number; status: "submitted" | "succeeded" | "failed";
   referenceMode?: "url-sha256" | "inline"; admissionProtocol?: "durable-v1"; postAttempts?: number; lastPostAt?: number; admittedAt?: number; lastHttpStatus?: number;
   upstreamStatus?: string; lastPolledAt?: number; completedAt?: number;
-  imageUrl?: string; imageSha256?: string; errorCode?: string;
+  inputHash?: string; imageUrl?: string; imageSha256?: string; errorCode?: string;
 }
 class InvalidGeneratedLayer extends Error {}
 const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const providerHash = ({ provider, capability }: ProviderEntry) => digest(JSON.stringify({ id: provider.id, base: provider.baseUrl, model: capability.model, extras: capability.extras }));
 const common = "Premium collectible-card artwork. Portrait 2:3, 1024x1536. No text, logo, watermark, numbers or card frame. ";
-export function layerPrompt(prompt: string, layer: Layer): string {
+export function layerPrompt(prompt: string, layer: Exclude<Layer, "repair">): string {
   const brief = `Creative brief (subject, scene, style and lighting): ${JSON.stringify(prompt)}. `;
   return buildC2iPromptText({ promptText: common + brief + (layer === "foreground"
     ? "Create ONLY the foreground on genuine transparent RGBA alpha, no checkerboard, painted backing, ground or sky. Keep head, hair, horns, hands, clothing and held objects as foreground with solid opaque material. Only actual energy, smoke, translucent materials and antialiased silhouette edges may use partial alpha. This is an isolated source layer for later card composition. Preserve the requested portrait framing and close-up impact: waist-up, bust and medium close-up compositions are welcome; do not switch to a distant full-body shot just to include legs or feet. A natural torso crop at the bottom is allowed. Compose the head, hair, headwear, expressive hands and held objects comfortably inside the top and side canvas edges. When an arm is raised, bent behind the head or extended sideways, show its full shoulder-to-elbow-to-hand gesture inside the image: especially leave transparent space beyond the outermost elbow, do not let that elbow run off the left or right edge. Prefer a slightly roomier upper-body framing or bring the bent elbow gently inward while preserving the pose; pull the camera back only enough to fit that gesture. Do not solve overflow by cutting off the arm, flattening its silhouette against the canvas edge, or fading solid anatomy. Space around important silhouettes is a composition preference, not a uniform border or fixed margin quota. Final top/side frame-break and torso framing are decided later during card composition. Light the subject for the scene in the brief."
@@ -40,7 +42,7 @@ export function createV2Layers(deps: {
   const lookup = deps.provider ?? (id => getProviderCapability(id, "image"));
   const allowed = (plugin: InkastPlugin, entry: ProviderEntry) =>
     plugin.imageProviderIds?.includes(entry.provider.id) && !entry.capability.disabled && entry.capability.extras?.mode === "c2i-tasks";
-  const readImage = async (url: string, plugin: InkastPlugin) => {
+  const readImage = async (url: string, plugin: InkastPlugin, repair = false) => {
     try { await validateVisionImage(url, plugin); } catch { throw new InvalidGeneratedLayer("Invalid layer URL"); }
     if (!url.startsWith("https://")) throw new InvalidGeneratedLayer("Invalid layer URL");
     const res = await request(url, { redirect: "error", signal: AbortSignal.timeout(8000) });
@@ -49,18 +51,32 @@ export function createV2Layers(deps: {
     for await (const chunk of res.body) { size += chunk.length; if (size > 8 * 1024 * 1024) { await res.body.cancel().catch(() => {}); throw new InvalidGeneratedLayer("Layer too large"); } chunks.push(chunk); }
     const bytes = Buffer.concat(chunks);
     let meta;
-    try { meta = await sharp(bytes, { limitInputPixels: 1024 * 1536 }).metadata(); } catch { throw new InvalidGeneratedLayer("Invalid generated image"); }
-    if (meta.format !== "png" || meta.width !== 1024 || meta.height !== 1536 || (meta.pages ?? 1) !== 1) throw new InvalidGeneratedLayer("Invalid generated PNG");
+    try { meta = await sharp(bytes, { limitInputPixels: repair ? 2048 * 2048 : 1024 * 1536 }).metadata(); } catch { throw new InvalidGeneratedLayer("Invalid generated image"); }
+    if (meta.format !== "png" || (repair ? !meta.width || meta.width < 512 || meta.width > 2048 || meta.width !== meta.height || !meta.hasAlpha : meta.width !== 1024 || meta.height !== 1536) || (meta.pages ?? 1) !== 1) throw new InvalidGeneratedLayer("Invalid generated PNG");
     return bytes;
   };
-  return async (store: ReturnType<typeof createV2Store>, plugin: InkastPlugin, job: V2Job, token: string, layer: Layer): Promise<V2LayerResult> => {
+  return async (store: ReturnType<typeof createV2Store>, plugin: InkastPlugin, job: V2Job, token: string, layer: Layer, repair?: V2RepairInput): Promise<V2LayerResult> => {
     if (job.input_kind !== "generated" || !job.creation_json) throw new V2QueueError("invalid_generation", 409);
     const key = `${job.id}:${layer}`;
     if (active.has(key)) throw new V2QueueError("generation_busy", 409);
     active.add(key);
     try {
-      const prompt = layerPrompt((JSON.parse(job.creation_json) as { prompt: string }).prompt, layer);
+      if ((layer === "repair") !== !!repair) throw new V2QueueError("invalid_repair", 409);
+      const previous = layer !== "foreground" ? JSON.parse(store.layer(plugin.id, job.id, "foreground") ?? "null") as LayerState | null : null;
+      if (layer !== "foreground" && previous?.status !== "succeeded") throw new V2QueueError("foreground_required", 409);
+      if (repair && previous?.imageSha256 !== repair.foreground_sha256) throw new V2QueueError("repair_source_mismatch", 409);
+      if (repair) {
+        for (const url of [repair.crop_png, repair.mask_png]) {
+          if (!url.startsWith("data:image/png;base64,")) throw new V2QueueError("invalid_repair", 409);
+          await validateVisionImage(url, plugin);
+          const meta = await sharp(Buffer.from(url.split(",")[1]!, "base64")).metadata();
+          if (meta.width !== 1024 || meta.height !== 1024) throw new V2QueueError("invalid_repair", 409);
+        }
+      }
+      const inputHash = repair ? digest(JSON.stringify(repair)) : undefined;
+      const prompt = repair ? repairPrompt(repair) : layerPrompt((JSON.parse(job.creation_json) as { prompt: string }).prompt, layer as Exclude<Layer, "repair">);
       let state = JSON.parse(store.layer(plugin.id, job.id, layer) ?? "null") as LayerState | null;
+      if (state && state.inputHash !== inputHash) throw new V2QueueError("repair_input_changed", 409);
       if (state?.status === "succeeded" || state?.status === "failed") return { status: state.status, image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode };
       if (state && now() - state.createdAt > 45 * 60_000) {
         state.status = "failed"; state.completedAt = now();
@@ -68,8 +84,6 @@ export function createV2Layers(deps: {
         store.saveLayer(plugin.id, job.id, token, layer, JSON.stringify(state));
         return { status: state.status, error_code: state.errorCode };
       }
-      const previous = layer === "background" ? JSON.parse(store.layer(plugin.id, job.id, "foreground") ?? "null") as LayerState | null : null;
-      if (layer === "background" && previous?.status !== "succeeded") throw new V2QueueError("foreground_required", 409);
       // Explicit configured allowlist only. Pin the same channel for both layers;
       // content rejections never switch providers or rewrite the creative brief.
       const entry = state ? lookup(state.providerId) : previous ? lookup(previous.providerId) : candidates(plugin.imageProviderIds ?? [])
@@ -85,14 +99,14 @@ export function createV2Layers(deps: {
         state.admissionProtocol === "durable-v1" && !state.admittedAt &&
         (state.postAttempts ?? 1) < 3 && now() - (state.lastPostAt ?? state.createdAt) >= 10_000);
       let foreground: Buffer | undefined;
-      const referenceMode = state?.referenceMode ?? (first && previous?.admissionProtocol === "durable-v1" ? "url-sha256" : "inline");
-      if (submit && previous?.imageUrl && referenceMode === "inline") {
+      const referenceMode = repair ? "inline" : state?.referenceMode ?? (first && previous?.admissionProtocol === "durable-v1" ? "url-sha256" : "inline");
+      if (submit && !repair && previous?.imageUrl && referenceMode === "inline") {
         foreground = await readImage(previous.imageUrl, plugin);
         if (digest(foreground) !== previous.imageSha256) throw new V2QueueError("invalid_generated_layer", 409);
       }
       if (!state) {
         state = { version: 1, taskId: `inkast-3d-${digest(`${plugin.id}:${job.id}:${layer}`).slice(0, 40)}`, providerId: entry.provider.id,
-          providerHash: providerHash(entry), promptHash: digest(prompt), referenceMode, createdAt: now(), status: "submitted" };
+          inputHash, providerHash: providerHash(entry), promptHash: digest(prompt), referenceMode, createdAt: now(), status: "submitted" };
         // Reserve BEFORE the POST. A lost response is recovered by GET of the
         // deterministic ID; never blindly submit again after uncertain delivery.
         store.saveLayer(plugin.id, job.id, token, layer, JSON.stringify(state));
@@ -108,9 +122,9 @@ export function createV2Layers(deps: {
       }
       const res = submit
         ? await request(`${root}/api/image-tasks/${layer === "foreground" ? "generations" : "edits"}`, { method: "POST", headers, signal: AbortSignal.timeout(previous && referenceMode === "inline" ? 25_000 : 8000), body: JSON.stringify({
-          client_task_id: state.taskId, prompt, model: entry.capability.model, size: "1024x1536", quality: "high", output_format: "png",
-          background: layer === "foreground" ? "transparent" : "opaque", response_format: "url", url_source: "r2", optimize_output: false,
-          ...(previous?.imageUrl ? { images: [referenceMode === "url-sha256" ? previous.imageUrl : `data:image/png;base64,${foreground!.toString("base64")}`] } : {}),
+          client_task_id: state.taskId, prompt, model: entry.capability.model, size: repair ? "1024x1024" : "1024x1536", quality: "high", output_format: "png",
+          background: layer !== "background" ? "transparent" : "opaque", response_format: "url", url_source: "r2", optimize_output: false,
+          ...(repair ? { images: [repair.crop_png, repair.mask_png] } : previous?.imageUrl ? { images: [referenceMode === "url-sha256" ? previous.imageUrl : `data:image/png;base64,${foreground!.toString("base64")}`] } : {}),
         }) })
         : await request(`${root}/api/image-tasks?ids=${encodeURIComponent(state.taskId)}`, { headers, signal: AbortSignal.timeout(8000) });
       if (!res.ok) {
@@ -159,7 +173,7 @@ export function createV2Layers(deps: {
         const result = task as { data?: Array<{ url?: string }> }, url = result.data?.[0]?.url;
         if (!url) throw Error("Missing generated layer URL");
         try {
-          const bytes = await readImage(url, plugin); // Freeze bytes before publishing any layer URL.
+          const bytes = await readImage(url, plugin, !!repair); // Freeze bytes before publishing any layer URL.
           state.status = "succeeded"; state.imageUrl = url; state.imageSha256 = digest(bytes);
         } catch (error) {
           if (!(error instanceof InvalidGeneratedLayer)) throw error;
