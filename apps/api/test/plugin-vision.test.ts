@@ -41,6 +41,21 @@ test("vision task uses server-owned prompt/schema, high effort and an API-only b
   assert.equal(seen?.signal?.aborted, false);
 });
 
+test("native 3D material policy is server-owned, retains high effort and leaves ordinary segmentation tasks unchanged", async () => {
+  const v2Plugin = { ...plugin, visionTasks: { v2_review: plugin.visionTasks!.compose! } };
+  const prompts: string[] = [];
+  const fake = async <T>(opts: CompleteJsonOptions) => { prompts.push(opts.systemPrompt); assert.equal(opts.reasoningEffort, "high"); return result({ zoom: 1.2 } as T); };
+  await analyzeVision(v2Plugin, "v2_review", { ...input, context: { extraction: { mode: "generated-native-alpha-no-segmentation" } } }, undefined, fake);
+  await analyzeVision(v2Plugin, "v2_review", input, undefined, fake);
+  assert.ok(prompts[0]!.includes("不要请求SAM补分割"));
+  assert.ok(prompts[0]!.includes("实体头手衣物保持实心"));
+  for (const prompt of prompts) {
+    assert.ok(prompt.includes("少量半透明抗锯齿像素触边也不能单独判为source-cropped"));
+    assert.ok(prompt.includes("整段框带压在该分支上"));
+  }
+  assert.ok(!prompts[1]!.includes("本任务使用原生透明前景"));
+});
+
 test("vision rejects unavailable tasks, missing images, unknown origins and invalid model geometry", async () => {
   await assert.rejects(() => analyzeVision(plugin, "other", input, undefined, goodComplete), /not enabled/);
   await assert.rejects(() => analyzeVision(plugin, "toString", input, undefined, goodComplete), /not enabled/);

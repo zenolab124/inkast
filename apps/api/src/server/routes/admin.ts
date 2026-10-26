@@ -4,6 +4,7 @@ import type {
   PluginGalleryItem,
 } from "@inkast/shared";
 import { Hono } from "hono";
+import { getV2AdminSnapshot, type V2AdminSnapshot } from "../../storage/v2-admin.js";
 import {
   listPluginGallery as listPluginGalleryRows,
   pluginGalleryCountsByPlugin,
@@ -66,13 +67,29 @@ adminRoutes.get("/plugin-stats", c => {
   const windowMs = WINDOW_OPTIONS[window] ?? WINDOW_OPTIONS["24h"]!;
   const since = window === "all" ? 0 : Date.now() - windowMs;
 
+  const v2 = getV2AdminSnapshot(since);
   const overview = getOverview(since);
+  overview.total += v2.total;
+  for (const row of v2.overview) overview.byStatus[row.status] = (overview.byStatus[row.status] ?? 0) + row.count;
+  for (const row of v2.byPlugin) {
+    const plugin = overview.byPlugin[row.pluginId] ??= { total: 0, succeeded: 0, failed: 0, callbackLost: 0 };
+    plugin.total += row.count;
+    if (row.status === "succeeded") plugin.succeeded += row.count;
+    if (row.status === "failed" || row.status === "needs_review") plugin.failed += row.count;
+  }
   const latency = getLatency(since);
   const callback = getCallbackHealth(since);
-  const errors = getTopErrorCodes(since, 10);
+  const errorCounts = new Map<string, number>();
+  for (const row of [...getTopErrorCodes(since, 2147483647), ...v2.errors]) errorCounts.set(row.code, (errorCounts.get(row.code) ?? 0) + row.count);
+  const errors = [...errorCounts].map(([code, count]) => ({ code, count })).sort((a,b) => b.count-a.count || a.code.localeCompare(b.code)).slice(0,10);
   const providers = getProviderBreakdown(since);
   const providerFailures = getProviderFailures(since);
-  const buckets = getHourBuckets(Date.now() - 24 * 60 * 60 * 1000); // 24h 趋势固定
+  const hours = new Map<string, HourBucket>();
+  for (const row of [...getHourBuckets(Date.now() - 24 * 60 * 60 * 1000), ...v2.buckets]) {
+    const bucket = hours.get(row.hour) ?? { hour: row.hour, total: 0, succeeded: 0, failed: 0 };
+    bucket.total += row.total; bucket.succeeded += row.succeeded; bucket.failed += row.failed; hours.set(row.hour, bucket);
+  }
+  const buckets = [...hours.values()].sort((a,b) => a.hour.localeCompare(b.hour));
   const recent = getRecentTasks(50);
 
   // Web UI 通道(jobs 表)— 与 plugin_tasks 完全独立
@@ -102,6 +119,7 @@ adminRoutes.get("/plugin-stats", c => {
       webProviderFailures,
       webBuckets,
       webRecent,
+      v2,
     }),
   );
 });
@@ -127,6 +145,7 @@ adminRoutes.get("/plugin-gallery.json", c => {
   const { items, nextCursor } = listPluginGalleryRows({ cursor, limit, pluginId });
   const mapped: PluginGalleryItem[] = items.map(r => ({
     id: r.id,
+    artifactKind: r.artifactKind,
     pluginId: r.pluginId,
     pluginLabel: getPluginById(r.pluginId)?.galleryLabel ?? null,
     providerName: r.providerName,
@@ -146,7 +165,7 @@ adminRoutes.get("/plugin-gallery.json", c => {
   const body: ListPluginGalleryResponse = {
     items: mapped,
     nextCursor,
-    total: pluginGalleryTotal(),
+    total: pluginGalleryTotal(pluginId),
     pluginCounts: pluginGalleryCountsByPlugin().map(({ pluginId, count }) => ({
       pluginId,
       pluginLabel: getPluginById(pluginId)?.galleryLabel ?? null,
@@ -169,6 +188,7 @@ function safeParseJson(raw: string): unknown {
 // ─────────────────────────────────────────────────────────────────────────
 
 interface RenderInput {
+  v2: V2AdminSnapshot;
   window: string;
   overview: OverviewStats;
   latency: { llm: LatencyStats; image: LatencyStats; total: LatencyStats };
@@ -187,6 +207,27 @@ interface RenderInput {
   webRecent: RecentJobRow[];
 }
 
+const V2_STAGE_ZH: Record<string,string> = {
+  queued:"排队中", starting:"开始处理", generating_foreground:"生成前景", generating_background:"生成背景",
+  preparing_layers:"准备图层", extracting:"前景分割", planning:"构图", rendering:"合成", checking:"检查",
+  plan_retry_wait:"等待构图恢复", check_retry_wait:"等待检查恢复", succeeded:"成功", failed:"失败", needs_review:"检查未通过",
+};
+const V2_LAYER_ZH: Record<string,string> = {
+  submitted:"已提交", succeeded:"成功", failed:"失败", awaiting_admission:"等待上游建立记录",
+  queued:"上游排队", running:"上游生成", success:"上游成功", error:"上游失败", unknown:"未记录",
+};
+function renderV2ImageLink(url: string | null, label: string): string {
+  if (!url) return "";
+  try { const parsed = new URL(url); if (parsed.protocol !== "https:" || parsed.username || parsed.password) return ""; } catch { return ""; }
+  return `<a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">${escapeText(label)}</a>`;
+}
+function renderV2Layers(job: V2AdminSnapshot["recent"][number]): string {
+  if (!job.layers.length) return job.inputKind === "generated" ? "尚无图层记录" : "已有图转换";
+  const summary = job.layers.map(layer => `${layer.layer === "foreground" ? "前景" : "背景"}：${V2_LAYER_ZH[layer.status] ?? layer.status}`).join(" · ");
+  const details = job.layers.map(layer => `<div><strong>${layer.layer === "foreground" ? "前景" : "背景"}</strong> · ${escapeText(V2_LAYER_ZH[layer.upstreamStatus] ?? layer.upstreamStatus)}<br><code>${escapeText(layer.taskId ?? "—")}</code> ${renderV2ImageLink(layer.imageUrl,"查看中间图层")}${layer.errorCode ? `<br>${escapeText(layer.errorCode)}` : ""}${layer.lastPolledAt ? `<br>最近查询 ${formatBeijing(layer.lastPolledAt)}` : ""}</div>`).join("");
+  return `<details class="prompt-detail"><summary>${escapeText(summary)}</summary>${details}</details>`;
+}
+
 const STATUS_ZH: Record<string, string> = {
   queued: "排队中",
   running: "进行中",
@@ -194,6 +235,7 @@ const STATUS_ZH: Record<string, string> = {
   succeeded: "成功",
   failed: "失败",
   callback_lost: "回调丢失",
+  needs_review: "检查未通过",
 };
 
 // 北京时间(Asia/Shanghai)格式化。sv-SE locale 天然输出 "YYYY-MM-DD HH:mm:ss"
@@ -344,8 +386,26 @@ function renderHtml(d: RenderInput): string {
     })
     .join("");
 
-  const recentRows = d.recent
-    .map(r => {
+  const recentRows = [
+    ...d.recent.map(task => ({ kind: "plugin" as const, task })),
+    ...d.v2.recent.map(task => ({ kind: "3d" as const, task })),
+  ].sort((a,b) => b.task.createdAt-a.task.createdAt || (a.task.id < b.task.id ? 1 : a.task.id > b.task.id ? -1 : 0)).slice(0,50)
+    .map(entry => {
+      if (entry.kind === "3d") {
+        const job = entry.task;
+        return `<tr data-task-kind="3d" data-task-id="${escapeAttr(job.id)}">
+          <td><code title="${escapeAttr(job.id)}">${escapeText(job.id.slice(0,14))}…</code></td>
+          <td><code>${escapeText(job.pluginId)}</code></td>
+          <td class="task-kind">3D 卡牌 · ${job.inputKind === "generated" ? "直接生成" : "已有图转换"}</td>
+          <td>—</td>
+          <td class="task-state">${statusBadge(job.status)}${job.stage !== job.status ? `<br>${escapeText(V2_STAGE_ZH[job.stage] ?? job.stage)}` : ""}<br>领取 ${job.deliveries} 次</td>
+          <td>—</td><td>${renderV2Layers(job)} ${renderV2ImageLink(job.imageUrl,"查看3D成品")}</td>
+          <td class="num">—</td><td class="num">—</td><td class="num">${fmtMs(job.elapsedMs)}</td>
+          <td>—</td><td>${escapeText(job.errorCode ?? "—")}</td><td>—</td>
+          <td class="num meta-time">${escapeText(formatBeijing(job.createdAt,{short:true}))}</td>
+        </tr>`;
+      }
+      const r = entry.task;
       const created = formatBeijing(r.createdAt, { short: true });
       const total = r.totalDurationMs != null ? fmtMs(r.totalDurationMs) : "—";
       const llm = r.llmDurationMs ? fmtMs(r.llmDurationMs) : "—";
@@ -365,9 +425,10 @@ function renderHtml(d: RenderInput): string {
             r.errorMsg ? `<span>${escapeText(shorten(r.errorMsg, 96))}</span>` : ""
           }</div>`
         : "—";
-      return `<tr>
+      return `<tr data-task-kind="plugin" data-task-id="${escapeAttr(r.id)}">
         <td><code title="${escapeAttr(r.id)}">${escapeText(r.id.slice(0, 14))}…</code></td>
         <td><code>${escapeText(r.pluginId)}</code></td>
+        <td class="task-kind">普通生图</td>
         <td>${promptCell}</td>
         <td>${statusBadge(r.status)}</td>
         <td>${chain}</td>
@@ -527,6 +588,7 @@ code { font-family: "SF Mono", Menlo, "Courier New", monospace; font-size: 11px;
 /* table cells must allow the tip to escape — overflow:visible is default but
    spell it out so future themes don't accidentally clip with overflow:hidden */
 table td { overflow: visible; }
+.task-kind, .task-state { white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -551,6 +613,7 @@ table td { overflow: visible; }
 
   <div class="card">
     <h2>耗时分布 · 毫秒</h2>
+    <div class="meta">普通插件生图样本；3D 各阶段耗时尚未拆分</div>
     <div class="latencyrow">
       ${renderLatencyCol("LLM 拆解", d.latency.llm)}
       ${renderLatencyCol("生图", d.latency.image)}
@@ -559,7 +622,7 @@ table td { overflow: visible; }
   </div>
 
   <div class="card">
-    <h2>回调健康度</h2>
+    <h2>回调健康度（普通插件任务）</h2>
     <div class="row"><span class="key">总尝试回调数</span><span class="val num">${d.callback.totalCallbacks}</span></div>
     <div class="row"><span class="key">每任务平均尝试次数</span><span class="val num">${d.callback.avgAttempts.toFixed(2)}</span></div>
     <div class="row"><span class="key">回调丢失(4 次重试都失败)</span><span class="val num">${d.callback.callbackLost}</span></div>
@@ -573,7 +636,7 @@ table td { overflow: visible; }
 
   <div class="card wide">
     <h2>渠道分布(出图来源)</h2>
-    <div class="meta">仅统计 succeeded + callback_lost(图已生成);前置失败(如 LLM 不可用)未到 driver,不计入</div>
+    <div class="meta">普通插件生图，仅统计 succeeded + callback_lost(图已生成);前置失败(如 LLM 不可用)未到 driver,不计入</div>
     <table>
       <thead><tr><th>渠道(provider)</th><th>成功出图数</th><th>平均生图耗时</th></tr></thead>
       <tbody>${providerRows}</tbody>
@@ -582,7 +645,7 @@ table td { overflow: visible; }
 
   <div class="card wide">
     <h2>渠道失败 Top(按 attempt 维度)</h2>
-    <div class="meta">从每条任务的 attempts 链聚合,包含 retry 内 + provider 切换。鼠标悬停错误码可看 raw 字符串</div>
+    <div class="meta">从普通插件任务的 attempts 链聚合,包含 retry 内 + provider 切换。鼠标悬停错误码可看 raw 字符串</div>
     <table>
       <thead><tr><th>渠道(provider)</th><th>总 attempt</th><th>失败 attempt(率)</th><th>错误码分布</th></tr></thead>
       <tbody>${providerFailureRows}</tbody>
@@ -605,9 +668,10 @@ table td { overflow: visible; }
 
   <div class="card wide">
     <h2>最近任务(最近 50 条,不限时间窗口)</h2>
-    <table>
-      <thead><tr><th>任务 ID</th><th>Plugin</th><th>用户 Prompt</th><th>状态</th><th>渠道</th><th>重写</th><th>LLM</th><th>生图</th><th>总耗时</th><th>回调次数</th><th>错误</th><th>回调主机</th><th>创建时间</th></tr></thead>
-      <tbody>${recentRows || '<tr><td colspan="13" class="meta">(暂无任务)</td></tr>'}</tbody>
+    <div class="meta">普通生图与3D卡牌按创建时间混排。3D耗时包含排队，图层详情可展开；未记录的阶段耗时与不适用的回调显示“—”。</div>
+    <table id="plugin-recent-tasks">
+      <thead><tr><th>任务 ID</th><th>Plugin</th><th>类型</th><th>用户 Prompt</th><th>状态 / 阶段</th><th>渠道</th><th>重写 / 图层</th><th>LLM</th><th>生图</th><th>总耗时</th><th>回调次数</th><th>错误</th><th>回调主机</th><th>创建时间</th></tr></thead>
+      <tbody>${recentRows || '<tr><td colspan="14" class="meta">(暂无任务)</td></tr>'}</tbody>
     </table>
   </div>
 

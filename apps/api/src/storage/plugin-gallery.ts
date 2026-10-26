@@ -1,4 +1,12 @@
 import { db } from "./db.js";
+import { V2_GALLERY_SQL } from "./v2-admin.js";
+
+// Both inputs are durable. Keep pagination and counts over exactly the same union.
+const gallerySource = `(SELECT id,plugin_id,provider_id,provider_name,image_url,mime,prompt,
+  final_prompt_text,prompt_json,rewritten_prompts,success_round,post_review_edited,
+  llm_duration_ms,image_duration_ms,created_at,'image' AS artifact_kind FROM plugin_gallery_items
+  UNION ALL SELECT * FROM (${V2_GALLERY_SQL}) v
+  WHERE NOT EXISTS (SELECT 1 FROM plugin_gallery_items old WHERE old.id=v.id))`;
 
 /**
  * Plugin gallery storage — long-lived archive of every succeeded plugin task
@@ -11,6 +19,7 @@ import { db } from "./db.js";
  */
 
 export interface PluginGalleryRecord {
+  artifactKind: "image" | "3d_card" | "3d_foreground" | "3d_background";
   id: string;
   pluginId: string;
   providerId: string | null;
@@ -81,6 +90,7 @@ export function insertPluginGalleryItem(input: InsertPluginGalleryItemInput): bo
 }
 
 interface DbRow {
+  artifact_kind: PluginGalleryRecord["artifactKind"];
   id: string;
   plugin_id: string;
   provider_id: string | null;
@@ -100,6 +110,7 @@ interface DbRow {
 
 function rowToRecord(row: DbRow): PluginGalleryRecord {
   return {
+    artifactKind: row.artifact_kind,
     id: row.id,
     pluginId: row.plugin_id,
     providerId: row.provider_id,
@@ -170,8 +181,8 @@ export function listPluginGallery(query: ListPluginGalleryQuery): ListPluginGall
     .prepare(
       `SELECT id, plugin_id, provider_id, provider_name, image_url, mime,
               prompt, final_prompt_text, prompt_json, rewritten_prompts, success_round,
-              post_review_edited, llm_duration_ms, image_duration_ms, created_at
-       FROM plugin_gallery_items
+              post_review_edited, llm_duration_ms, image_duration_ms, created_at, artifact_kind
+       FROM ${gallerySource}
        ${whereClause}
        ORDER BY created_at DESC, id DESC
        LIMIT ?`,
@@ -205,7 +216,7 @@ export function pluginGalleryCountsByPlugin(): PluginCount[] {
   const rows = db()
     .prepare(
       `SELECT plugin_id AS pluginId, COUNT(*) AS count
-       FROM plugin_gallery_items
+       FROM ${gallerySource}
        GROUP BY plugin_id
        ORDER BY count DESC, pluginId ASC`,
     )
@@ -213,10 +224,10 @@ export function pluginGalleryCountsByPlugin(): PluginCount[] {
   return rows.map(r => ({ pluginId: r.pluginId, count: r.count }));
 }
 
-export function pluginGalleryTotal(): number {
+export function pluginGalleryTotal(pluginId?: string | null): number {
   const row = db()
-    .prepare(`SELECT COUNT(*) AS n FROM plugin_gallery_items`)
-    .get() as { n: number };
+    .prepare(`SELECT COUNT(*) AS n FROM ${gallerySource} ${pluginId ? "WHERE plugin_id=?" : ""}`)
+    .get(...(pluginId ? [pluginId] : [])) as { n: number };
   return row.n;
 }
 

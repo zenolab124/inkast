@@ -175,6 +175,7 @@ CREATE INDEX IF NOT EXISTS idx_plugin_gallery_plugin_id
 CREATE TABLE IF NOT EXISTS static_v2_jobs (
   id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, owner_key TEXT NOT NULL,
   source_task_id TEXT NOT NULL, source_url TEXT NOT NULL,
+  input_kind TEXT NOT NULL DEFAULT 'existing', creation_json TEXT, card_stats_json TEXT,
   status TEXT NOT NULL, stage TEXT NOT NULL,
   lease_hash TEXT, lease_until INTEGER NOT NULL DEFAULT 0, deliveries INTEGER NOT NULL DEFAULT 0, pipeline_revision TEXT,
   image_url TEXT, geometry_json TEXT, source_sha256 TEXT, code_sha256 TEXT, error_code TEXT,
@@ -185,4 +186,10 @@ CREATE INDEX IF NOT EXISTS idx_static_v2_queue ON static_v2_jobs(status,created_
 CREATE INDEX IF NOT EXISTS idx_static_v2_timeline ON static_v2_jobs(plugin_id,owner_key,(CASE WHEN status='succeeded' THEN updated_at ELSE created_at END) DESC,id DESC);
 CREATE TABLE IF NOT EXISTS static_v2_workers (
   plugin_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL, revision TEXT NOT NULL, seen_at INTEGER NOT NULL
+);
+
+-- Frozen, server-owned image layer checkpoints for direct 3D jobs.
+CREATE TABLE IF NOT EXISTS static_v2_layers (
+  job_id TEXT NOT NULL REFERENCES static_v2_jobs(id), layer TEXT NOT NULL,
+  state_json TEXT NOT NULL, PRIMARY KEY(job_id,layer)
 );

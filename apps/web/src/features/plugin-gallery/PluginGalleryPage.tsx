@@ -159,7 +159,7 @@ export function PluginGalleryPage() {
           · {page.items.length}/{page.total}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          (永久归档 · R2 链接)
+          (普通成图 · 3D 成品与图层)
         </span>
         <div className="relative ml-2 max-w-md flex-1">
           <Search
@@ -175,7 +175,7 @@ export function PluginGalleryPage() {
         </div>
         <div className="flex flex-wrap gap-1.5">
           <FilterChip
-            label={`全部 · ${page.total}`}
+            label={`全部 · ${page.pluginCounts.reduce((total, plugin) => total + plugin.count, 0)}`}
             active={pluginFilter === ""}
             onClick={() => setPluginFilter("")}
           />
@@ -332,7 +332,7 @@ function PluginGalleryCard({
           <span className="shrink-0 font-mono">{time}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1 text-[10px]">
-          <RoundBadge round={item.successRound} />
+          <ArtifactBadge item={item} />
           {item.postReviewEdited && <ReviewBadge />}
           {item.providerName && (
             <span className="rounded bg-secondary/60 px-1.5 py-0.5 font-mono text-muted-foreground/80">
@@ -356,6 +356,17 @@ function PluginGalleryCard({
       </div>
     </article>
   );
+}
+
+function artifactLabel(item: PluginGalleryItem): string | null {
+  if (!("artifactKind" in item) || typeof item.artifactKind !== "string") return null;
+  const labels: Record<string, string> = { "3d_card": "3D 卡牌成品", "3d_foreground": "3D 前景 · 中间素材", "3d_background": "3D 背景 · 中间素材" };
+  return labels[item.artifactKind] ?? null;
+}
+
+function ArtifactBadge({ item }: { item: PluginGalleryItem }) {
+  const label = artifactLabel(item);
+  return label ? <Badge variant="secondary" className="rounded-sm text-[10px]">{label}</Badge> : <RoundBadge round={item.successRound} />;
 }
 
 function RoundBadge({ round }: { round: 0 | 1 | 2 | 3 }) {
@@ -472,7 +483,7 @@ function PluginGalleryDetailDialog({
 
           <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-l border-border/60 p-5">
             <div className="flex flex-wrap gap-1.5 text-[11px]">
-              <RoundBadge round={item.successRound} />
+              <ArtifactBadge item={item} />
               {item.postReviewEdited && <ReviewBadge />}
               {item.providerName && (
                 <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-muted-foreground">
@@ -495,12 +506,12 @@ function PluginGalleryDetailDialog({
             </div>
 
             <DetailSection
-              title={hasExactFinalPrompt
+              title={artifactLabel(item) ? "3D 创作要求" : hasExactFinalPrompt
                 ? "最终生图 Prompt(成功引擎实际收到)"
                 : "最终使用的基础 Prompt(历史记录)"}
               copyText={displayedFinalPrompt}
             >
-              {!hasExactFinalPrompt && (
+              {!hasExactFinalPrompt && !artifactLabel(item) && (
                 <p className="m-0 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
                   此历史作品未保存引擎包装与统一尾词，下面展示当时可恢复的最终基础 Prompt。
                 </p>

@@ -247,7 +247,7 @@ export function getRecentTasks(limit = 50): RecentTaskRow[] {
               success_round, current_round,
               created_at, completed_at
        FROM plugin_tasks
-       ORDER BY created_at DESC
+       ORDER BY created_at DESC, id DESC
        LIMIT ?`,
     )
     .all(limit) as Array<{

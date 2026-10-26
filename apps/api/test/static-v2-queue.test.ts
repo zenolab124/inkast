@@ -9,11 +9,55 @@ function fixture() {
   conn.exec(readFileSync(new URL("../src/storage/schema.sql", import.meta.url), "utf8"));
   let now = 1000000;
   const store = createV2Store(conn, () => now);
-  store.claim("snapub", "worker-one", "revision", false);
-  const input = (id: string, owner = "owner-one", task = id) => ({ id, plugin: "snapub", owner, task, source: "https://images.example/original.png" });
+  store.heartbeat("snapub", "worker-one", "revision");
+  const input = (id: string, owner = "owner-one", task = id) => ({ id, plugin: "snapub", owner, task, source: "https://images.example/original.png", billingVersion: 1 });
   return { conn, store, input, advance: (ms: number) => { now += ms; } };
 }
-test("V2 submit is idempotent, owner-bound and atomically limits active/free tasks", () => {
+test("resource gating leaves conversions untouched while native jobs of the same owner run independently", () => {
+  const { conn, store, input } = fixture();
+  try {
+    store.submit(input("conversion", "owner-one"));
+    store.submit({ ...input("same-owner-native", "owner-one"), creation: { prompt: "Native layers" } });
+    store.submit({ ...input("other-owner-native", "owner-two"), creation: { prompt: "Native layers" } });
+    const before = store.get("snapub", "conversion");
+    const first = store.claim("snapub", "worker-one", "revision", true, false)!;
+    const second = store.claim("snapub", "worker-two", "revision", true, false)!;
+    assert.equal(first.id, "same-owner-native"); assert.equal(second.id, "other-owner-native");
+    assert.deepEqual(store.get("snapub", "conversion"), before);
+    assert.equal(store.claim("snapub", "worker-one", "revision", true, false), null);
+    const conversion = store.claim("snapub", "worker-one", "revision", true, true)!;
+    assert.equal(conversion.id, "conversion");
+    assert.equal(store.get("snapub", first.id)?.status, "running");
+    store.finish("snapub", first.id, first.leaseToken, { status: "succeeded" });
+    store.finish("snapub", second.id, second.leaseToken, { status: "failed" });
+    store.finish("snapub", conversion.id, conversion.leaseToken, { status: "failed" });
+  } finally { conn.close(); }
+});
+test("global capacity is five generated plus one conversion across workers, including one user's parallel jobs", () => {
+  const { conn, store, input, advance } = fixture();
+  try {
+    for (let n=0;n<7;n++) store.submit({ ...input(`native-${n}`, "same-owner"), creation: { prompt: "Native layers" } });
+    store.submit(input("convert-1")); store.submit(input("convert-2", "other-owner"));
+    const native = Array.from({ length: 5 }, (_, n) => store.claim("snapub", `worker-${n}`, "revision", true, false)!);
+    assert.equal(new Set(native.map(row => row.id)).size, 5);
+    assert.equal(store.claim("snapub", "worker-6", "revision", true, false), null);
+    const conversion = store.claim("snapub", "worker-6", "revision", true)!;
+    assert.equal(conversion.id, "convert-1");
+    assert.equal(store.claim("snapub", "worker-7", "revision", true), null);
+    assert.equal(store.get("snapub", "native-5")?.deliveries, 0);
+    assert.equal(store.get("snapub", "convert-2")?.deliveries, 0);
+    assert.equal(store.claim("snapub", "worker-7", "revision", true, false, false), null);
+    store.finish("snapub", native[0]!.id, native[0]!.leaseToken, { status: "succeeded" });
+    const sixth = store.claim("snapub", "worker-7", "revision", true, false)!;
+    assert.equal(sixth.id, "native-5");
+    advance(150000); store.renew("snapub", sixth.id, sixth.leaseToken, "planning"); advance(31000);
+    const resumed = store.claim("snapub", "worker-8", "revision", true, false)!;
+    assert.equal(resumed.id, native[1]!.id);
+    assert.throws(() => store.renew("snapub", resumed.id, native[1]!.leaseToken, "planning"), /lease_lost/);
+    assert.equal(store.get("snapub", sixth.id)?.lease_hash, sixth.lease_hash);
+  } finally { conn.close(); }
+});
+test("V2 submit is idempotent and owner-bound, without trial daily/source limits", () => {
   const { conn, store, input } = fixture();
   try {
     const first = store.submit(input("one"));
@@ -25,11 +69,11 @@ test("V2 submit is idempotent, owner-bound and atomically limits active/free tas
     assert.equal(store.submit(input("two", "owner-one", "one")).status, "queued");
     const next = store.claim("snapub", "worker-one", "revision", true)!;
     store.finish("snapub", next.id, next.leaseToken, { status: "failed" });
-    assert.throws(() => store.submit(input("three", "owner-one", "one")), /retry_limit/);
-    store.submit(input("three"));
+    assert.equal(store.submit(input("three", "owner-one", "one")).status, "queued");
     const third = store.claim("snapub", "worker-one", "revision", true)!;
     store.finish("snapub", third.id, third.leaseToken, { status: "failed" });
-    assert.throws(() => store.submit(input("four")), /daily_limit/);
+    assert.equal(store.submit(input("four")).status, "queued");
+    assert.throws(() => store.submit({ ...input("missing-billing"), billingVersion: undefined }), /billing_required/);
   } finally { conn.close(); }
 });
 test("V2 leases fence old workers; heartbeats preserve long tasks; result acknowledgement can be retried", () => {
@@ -176,4 +220,38 @@ test("planning deferral preserves FIFO and rejects recovery for the wrong stage"
     store.finish("snapub", resumed.id, resumed.leaseToken, { status: "succeeded" });
     assert.equal(store.claim("snapub", "worker-one", "revision", true)!.id, "second");
   } finally { conn.close(); }
+});
+
+
+test("heartbeats keep a resource-waiting worker online without leasing jobs; claim alone is not a heartbeat", () => {
+  const {conn,store,input,advance}=fixture();
+  try {
+    store.submit(input("waiting")); const before=store.get("snapub","waiting");
+    for(let i=0;i<8;i++){advance(30000);store.heartbeat("snapub","worker-one","revision");assert.equal(store.online("snapub"),true);}
+    assert.deepEqual(store.get("snapub","waiting"),before);
+    store.submit(input("second"));assert.equal(store.get("snapub","second")?.status,"queued");
+    advance(121000);assert.equal(store.online("snapub"),false);
+    assert.equal(store.claim("snapub","worker-one","revision",false),null);
+    assert.equal(store.online("snapub"),false);
+    store.heartbeat("snapub","worker-one","revision");
+    assert.equal(store.claim("snapub","worker-one","revision",true)?.id,"waiting");
+  } finally {conn.close();}
+});
+
+test("a worker never reclaims or exhausts a task still active locally after a temporary lease-renewal outage", () => {
+  const { conn, store, input, advance } = fixture();
+  try {
+    store.submit({ ...input("locally-active"), creation: { prompt: "Native" } });
+    const first=store.claim("snapub","worker","revision",true)!;
+    conn.prepare("UPDATE static_v2_jobs SET deliveries=3 WHERE id=?").run(first.id);
+    advance(181000); store.heartbeat("snapub","worker","revision");
+    store.submit({ ...input("next-native"), creation: { prompt: "Native" } });
+    const next=store.claim("snapub","worker","revision",true,false,true,[first.id])!;
+    assert.equal(next.id,"next-native");
+    assert.equal(store.get("snapub",first.id)?.status,"running");
+    assert.equal(store.get("snapub",first.id)?.deliveries,3);
+    assert.equal(store.claim("snapub","worker","revision",true,false,true,[first.id,next.id]),null);
+    store.claim("snapub","worker","revision",true,false,true,[next.id]);
+    assert.equal(store.get("snapub",first.id)?.error_code,"recovery_limit");
+  } finally {conn.close();}
 });

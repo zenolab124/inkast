@@ -284,3 +284,7 @@ ssh jdc "systemctl restart inkast-api && sleep 3 && curl -s http://127.0.0.1:878
    - 前端 console 看 `/admin/plugin-gallery.json?cursor=...` 的响应 `nextCursor` 是不是 null。
    - 服务端 `listPluginGallery` cursor 解析失败时按"无 cursor"处理(返回第一页),前端会陷入循环——看 sentinel 是否一直 intersect 但 `nextCursor` 没推进。
    - 验证 SQL 索引:`idx_plugin_gallery_created_at` 必须存在,`EXPLAIN QUERY PLAN` 应当用上。
+
+## 3D原生图层接单延迟（2026-10-25）
+
+独立3D走static_v2_jobs/static_v2_layers，不在plugin_tasks；监控/作品聚合应同时核对这两表。真实故障：背景图层18:57保留确定性ID、POST超时，18:58首次GET missing即被旧代码判generation_task_missing；上游18:59才建立记录、19:05完成，两图均存在。edit路由在保存任务前会做内容检查与参考素材处理，因此“回执未知后暂未查到”不是永久丢失。修订代码保留同ID持续GET到原45分钟期限，成功下载后冻结PNG哈希；不再次POST或要求用户从头生成。此修订已于同日授权后部署（身份01ebb4541425），线上当前错误终态不自动重开；恢复旧任务还需核对云端退款/免费资格与旧管线身份，不能只改API状态。

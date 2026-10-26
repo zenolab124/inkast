@@ -476,6 +476,8 @@ export interface ListJobsResponse {
  * GC on `plugin_tasks`. b64-mode tasks never land here (transient bytes only).
  */
 export interface PluginGalleryItem {
+  /** 3D intermediate layers are explicitly distinguished from delivered cards. */
+  artifactKind?: "image" | "3d_card" | "3d_foreground" | "3d_background";
   /** plugin_tasks.id (e.g. `ink-<uuid>`). */
   id: string;
   pluginId: string;
@@ -484,7 +486,7 @@ export interface PluginGalleryItem {
   providerName: string | null;
   /** Public R2 URL — `aivariants.124213.xyz/aiVariants/ink-…png` etc. */
   imageUrl: string;
-  /** `image/png` / `image/jpeg`. */
+  /** `image/png` / `image/jpeg` / `image/webp`. */
   mime: string | null;
   /** Original caller prompt (free-form prose; never truncated). */
   prompt: string;
