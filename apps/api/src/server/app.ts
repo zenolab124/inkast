@@ -13,6 +13,7 @@ import { db } from "../storage/db.js";
 import { reaperAbandonedJobs } from "../storage/jobs.js";
 import { getLlmDriver } from "../drivers/llm/index.js";
 import { initPluginAsync } from "../domain/plugin-async/index.js";
+import { visionJobRunner } from "../domain/vision/jobs.js";
 
 export function createApp() {
   // Touch the DB to apply schema before serving any request.
@@ -29,6 +30,7 @@ export function createApp() {
   // Plugin 通道 v2 异步:同样的恢复语义(interrupted task 立即 callback)+
   // 启动 24h GC loop。
   initPluginAsync();
+  visionJobRunner().start();
 
   // Pre-pay LLM cold-start in the background so the user's first real prompt
   // doesn't eat the subprocess spawn + OAuth decrypt + TLS handshake.

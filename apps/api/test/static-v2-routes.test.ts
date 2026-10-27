@@ -255,3 +255,54 @@ test("recomposition HTTP route freezes server-side originals; claims carry prior
     conn.close();
   }
 });
+
+test("administrator recovery preserves original owner/layers, fences stale leases, prepares immutable candidates and adopts once", async () => {
+  const conn = new Database(":memory:"); conn.exec(readFileSync(new URL("../src/storage/schema.sql", import.meta.url), "utf8"));
+  const store = createV2Store(conn); store.heartbeat("snapub", "worker", "rev");
+  const owner = "a".repeat(64), operator = "b".repeat(64), jobId = "v2-12345678-1234-4234-8234-123456789abc";
+  const token = "test", headers = { authorization: `Bearer ${token}`, "content-type": "application/json" }, worker = { ...headers, "x-v2-worker": createHmac("sha256", token).update("static-v2-worker-v1").digest("hex") };
+  const plugin: InkastPlugin = { id: "snapub", name: "test", imageDefaults: {}, imageStorage: { kind: "r2", bucket: "test", publicBase: "https://images.example", keyPrefix: "art/", contentType: "image/png" } };
+  let uploads = 0;
+  const app = new Hono(); app.use("*", async (c, next) => { c.set("plugin", plugin); await next(); });
+  app.route("/v2", createV2Routes({ store: () => store, upload: async input => { uploads++; assert.equal(input.contentType, "image/webp"); return { bytes: input.body.length, attempts: 1, durationMs: 0 }; } }));
+  const post = (route: string, body: object, h = headers) => app.request(route, { method: "POST", headers: h, body: JSON.stringify(body) });
+  try {
+    store.submit({ id: jobId, plugin: "snapub", owner, task: "", source: "", billingVersion: 1, creation: { prompt: "original" } });
+    const first = store.claim("snapub", "worker", "old", true)!;
+    const recovery = { task_id: jobId, owner_key: owner, operator, request_id: "recovery-request-1", mode: "preview" };
+    assert.equal((await post("/v2/recoveries", recovery)).status, 409, "cannot reset running work");
+    for (const [name, char] of [["foreground", "f"], ["background", "e"]]) store.saveLayer("snapub", jobId, first.leaseToken, name!, JSON.stringify({ status: "succeeded", imageUrl: `https://images.example/${name}.png`, imageSha256: char!.repeat(64) }));
+    const fgBefore = store.layer("snapub", jobId, "foreground"), bgBefore = store.layer("snapub", jobId, "background");
+    store.finish("snapub", jobId, first.leaseToken, { status: "failed", errorCode: "composition_validation_failed" });
+    assert.equal((await post("/v2/recoveries", { ...recovery, owner_key: operator })).status, 409);
+    assert.equal((await post("/v2/recoveries", { ...recovery, image_url: "https://evil.example/a.webp" })).status, 400);
+    assert.equal((await post("/v2/recoveries", recovery)).status, 202);
+    const lease = store.claim("snapub", "worker", "new", true)!;
+    assert.equal((await post("/v2/recoveries", recovery)).status, 202, "same recovery ID does not reset a running lease");
+    assert.equal(store.get("snapub", jobId)!.deliveries, 1);
+    assert.throws(() => store.finish("snapub", jobId, first.leaseToken, { status: "failed" }), /lease_lost/);
+    const pixels = Buffer.alloc(1280 * 1280 * 4); pixels[(500 * 1280 + 500) * 4 + 3] = 255;
+    const png = await sharp(pixels, { raw: { width: 1280, height: 1280, channels: 4 } }).png().toBuffer();
+    const input = { lease_token: lease.leaseToken, png_base64: png.toString("base64"), source_sha256: owner, code_sha256: operator,
+      foreground_sha256: "f".repeat(64), background_sha256: "e".repeat(64), stats_sha256: null, plan: { zoom: 1, centerX: .5, centerY: .5, rotationDeg: 0 } };
+    assert.equal((await post(`/v2/worker/${jobId}/candidates`, input)).status, 403);
+    assert.equal((await post(`/v2/worker/${jobId}/candidates`, { ...input, foreground_sha256: owner }, worker)).status, 409);
+    const overflow = Buffer.from(pixels); overflow[3] = 1;
+    const bad = await sharp(overflow, { raw: { width: 1280, height: 1280, channels: 4 } }).png().toBuffer();
+    assert.equal((await post(`/v2/worker/${jobId}/candidates`, { ...input, png_base64: bad.toString("base64") }, worker)).status, 400);
+    const candidate = await (await post(`/v2/worker/${jobId}/candidates`, input, worker)).json() as { id: string };
+    await post(`/v2/worker/${jobId}/candidates`, input, worker); assert.equal(uploads, 1);
+    assert.equal((await app.request(`/v2/jobs/${jobId}/candidates`, { headers: { ...headers, "x-v2-owner": operator } })).status, 404);
+    store.finish("snapub", jobId, lease.leaseToken, { status: "needs_review", errorCode: "recovery_candidates_ready" });
+    const adopt = { ...recovery, request_id: "adoption-request-1", mode: "adopt", candidate_id: candidate.id };
+    assert.equal((await post("/v2/recoveries", { ...adopt, candidate_id: "d".repeat(64) })).status, 409);
+    assert.equal((await post("/v2/recoveries", adopt)).status, 202);
+    const done = store.get("snapub", jobId)!; assert.equal(done.status, "succeeded"); assert.equal(done.owner_key, owner); assert.match(done.image_url!, /\.webp$/);
+    assert.deepEqual(store.get("snapub", jobId), done);
+    assert.equal((await post("/v2/recoveries", adopt)).status, 202);
+    assert.deepEqual(store.get("snapub", jobId), done, "duplicate adopt does not change timeline or artwork");
+    assert.equal((await post("/v2/recoveries", { ...adopt, request_id: "another-adoption" })).status, 409);
+    assert.equal(store.layer("snapub", jobId, "foreground"), fgBefore); assert.equal(store.layer("snapub", jobId, "background"), bgBefore);
+    assert.equal(store.list("snapub", owner, 12).items[0]!.status, "succeeded"); assert.equal(store.list("snapub", operator, 12).items.length, 0);
+  } finally { conn.close(); }
+});

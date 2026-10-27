@@ -19,6 +19,7 @@ interface LayerState {
   referenceMode?: "url-sha256" | "inline"; admissionProtocol?: "durable-v1"; postAttempts?: number; lastPostAt?: number; admittedAt?: number; lastHttpStatus?: number;
   upstreamStatus?: string; lastPolledAt?: number; completedAt?: number;
   outputSize?: string; inputHash?: string; imageUrl?: string; imageSha256?: string; errorCode?: string;
+  repairRetry?: { previousTaskId: string; errorCode?: string; detail: string; completedAt: number };
   rewrite?: {
     originalPromptHash: string; round: number; prompt: string;
     history: Array<{ round: number; taskId: string; prompt: string; promptHash: string; errorCode: string; detail: string; completedAt: number }>;
@@ -82,12 +83,14 @@ export function createV2Layers(deps: {
   };
   return async (store: ReturnType<typeof createV2Store>, plugin: InkastPlugin, job: V2Job, token: string, layer: Layer, repair?: V2RepairInput): Promise<V2LayerResult> => {
     if (job.input_kind !== "generated" || !job.creation_json) throw new V2QueueError("invalid_generation", 409);
-    const recomposition = JSON.parse(job.creation_json).recomposition;
-    if (recomposition && layer !== "repair") {
+    const { recomposition, recovery } = JSON.parse(job.creation_json);
+    if (recovery && layer === "repair") throw new V2QueueError("recovery_no_generation", 409);
+    if ((recomposition || recovery) && layer !== "repair") {
       store.leased(plugin.id, job.id, token);
       const raw = store.layer(plugin.id, job.id, layer);
       const frozen = raw ? JSON.parse(raw) as LayerState : null;
       if (frozen?.status !== "succeeded" || !frozen.imageUrl || !frozen.imageSha256) throw new V2QueueError("recomposition_layers_missing", 409);
+      if (recovery && frozen.imageSha256 !== (layer === "foreground" ? recovery.foregroundSha256 : recovery.backgroundSha256)) throw new V2QueueError("recovery_layers_changed", 409);
       await validateVisionImage(frozen.imageUrl, plugin);
       return { status: "succeeded", image_url: frozen.imageUrl, image_sha256: frozen.imageSha256 };
     }
@@ -267,6 +270,21 @@ export function createV2Layers(deps: {
         state.errorCode = code === "request_preparation_failed" ? "generation_submission_failed" :
           code === "admission_capacity" ? "generation_queue_full" :
           rejected ? "generation_rejected" : "generation_failed";
+        // Only a confirmed terminal transport failure without a result permits
+        // a second edit. Unknown acknowledgements keep querying the same ID.
+        const resultUrls = (task as { data?: Array<{ url?: string }> }).data;
+        const transportFailure = ["network_error", "connection_error", "upstream_timeout", "ETIMEDOUT", "ECONNRESET"].includes(code ?? "") ||
+          /curl: \((?:5|6|7|18|28|35|52|55|56)\)|connection (?:closed|reset|aborted)|socket hang up|ETIMEDOUT|ECONNRESET|network error/i.test(detail);
+        if (layer === "repair" && !rejected && transportFailure && !resultUrls?.some(item => item.url) &&
+            !state.imageUrl && !state.repairRetry && now() - state.createdAt < 45 * 60_000) {
+          state.repairRetry = { previousTaskId: state.taskId, errorCode: code, detail, completedAt: now() };
+          state.taskId = `inkast-3d-${digest(`${plugin.id}:${job.id}:repair:network-retry:1`).slice(0, 40)}`;
+          state.status = "submitted";
+          for (const field of ["lastPostAt", "admittedAt", "lastHttpStatus", "upstreamStatus", "lastPolledAt", "completedAt", "errorCode", "admissionProtocol"] as const) delete state[field];
+          state.postAttempts = 0;
+          save();
+          return { status: "submitted", phase: "preparing" };
+        }
         if (layer === "foreground" && state.rewrite && state.errorCode === "generation_rejected") {
           state.rewrite.history.push({ round: state.rewrite.round, taskId: state.taskId, prompt: state.rewrite.prompt,
             promptHash: state.promptHash, errorCode: state.errorCode, detail, completedAt: now() });

@@ -193,3 +193,12 @@ CREATE TABLE IF NOT EXISTS static_v2_layers (
   job_id TEXT NOT NULL REFERENCES static_v2_jobs(id), layer TEXT NOT NULL,
   state_json TEXT NOT NULL, PRIMARY KEY(job_id,layer)
 );
+
+-- Durable vision calls survive HTTP disconnects; input/result are server-owned.
+CREATE TABLE IF NOT EXISTS plugin_vision_jobs (
+  id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, task_name TEXT NOT NULL,
+  input_hash TEXT NOT NULL, input_json TEXT NOT NULL,
+  status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  started_at INTEGER, result_json TEXT, error_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_plugin_vision_queue ON plugin_vision_jobs(status,created_at);

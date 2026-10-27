@@ -597,3 +597,69 @@ test("recomposition repairs use the original pinned provider across reused ances
     await assert.rejects(run(f.store, f.plugin, next, lease.leaseToken, "repair", { ...input, part: "different" }), /input_changed/);
   } finally { f.conn.close(); }
 });
+
+test("repair retries only a confirmed terminal transport failure once; lost second acknowledgement resumes the same ID", async () => {
+  for (const scenario of ["success", "second-network-error", "refusal", "has-result", "unknown-error"] as const) {
+    const f = await fixture(); let phase: "foreground" | "repair" = "foreground";
+    const repairPosts: string[] = []; let loseSecondAck = true;
+    const square = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: "transparent" } }).png().toBuffer();
+    const png = `data:image/png;base64,${square.toString("base64")}`;
+    const make = () => createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (url, init) => {
+      if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(phase === "repair" ? square : f.png));
+      if (init?.method === "POST") {
+        const id = JSON.parse(String(init.body)).client_task_id as string;
+        if (phase === "repair") {
+          repairPosts.push(id);
+          if (repairPosts.length === 2 && loseSecondAck) { loseSecondAck = false; throw Error("lost second acknowledgement"); }
+        }
+        return Response.json({ id, status: "queued" });
+      }
+      const id = new URL(String(url)).searchParams.get("ids");
+      if (phase === "foreground" || repairPosts.length === 2 && scenario === "success") return Response.json({ items: [{ id, status: "success", data: [{ url: "https://images.example/layer.png" }] }] });
+      return Response.json({ items: [{ id, status: "error", error_code: scenario === "refusal" ? "request_rejected" : "generation_failed",
+        error: scenario === "unknown-error" ? "image execution failed" : "Failed to perform, curl: (56) Connection closed abruptly.",
+        ...(scenario === "has-result" ? { data: [{ url: "https://images.example/reusable.png" }] } : {}),
+      }] });
+    } });
+    try {
+      await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+      const fg = await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); phase = "repair";
+      const input = { foreground_sha256: fg.image_sha256!, crop_png: png, mask_png: png, part: "fan terminal", material: "solid" as const };
+      await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input);
+      const firstState = JSON.parse(f.store.layer("snapub", f.job.id, "repair")!);
+      const result = await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input);
+      if (["refusal", "has-result", "unknown-error"].includes(scenario)) {
+        assert.equal(result.status, "failed");
+        assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input)).status, "failed");
+        assert.equal(repairPosts.length, 1); continue;
+      }
+      assert.equal(result.status, "submitted");
+      const retryState = JSON.parse(f.store.layer("snapub", f.job.id, "repair")!);
+      assert.equal(retryState.createdAt, firstState.createdAt, "retry cannot reset the deadline");
+      assert.equal(retryState.repairRetry.previousTaskId, repairPosts[0]);
+      assert.equal(retryState.inputHash, firstState.inputHash); assert.equal(retryState.promptHash, firstState.promptHash);
+      assert.equal(retryState.providerHash, firstState.providerHash); assert.notEqual(retryState.taskId, firstState.taskId);
+      await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", { ...input, part: "changed" }), /input_changed/);
+      await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input), /lost second acknowledgement/);
+      const resumed = await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input);
+      assert.equal(resumed.status, scenario === "success" ? "succeeded" : "failed");
+      assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input)).status, resumed.status);
+      assert.equal(repairPosts.length, 2, "no third image task after recovery or another terminal network failure");
+      assert.equal(repairPosts[1], retryState.taskId);
+    } finally { f.conn.close(); }
+  }
+});
+
+test("administrator recovery reads only frozen successful layers and forbids repairs even when providers are gone", async () => {
+  const f = await fixture(); let calls = 0;
+  try {
+    for (const [name, char] of [["foreground", "f"], ["background", "e"]]) f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, name!, JSON.stringify({ status: "succeeded", imageUrl: `https://images.example/${name}.png`, imageSha256: char!.repeat(64) }));
+    f.store.finish("snapub", f.job.id, f.claim.leaseToken, { status: "failed" });
+    const restored = f.store.recover({ id: f.job.id, plugin: "snapub", owner: f.job.owner_key, operator: "admin", requestId: "recovery-one", mode: "recompose" });
+    const lease = f.store.claim("snapub", "worker", "new", true)!;
+    const run = createV2Layers({ providers: () => [], provider: () => null, fetch: async () => { calls++; throw Error("must not generate"); } });
+    for (const name of ["foreground", "background"] as const) assert.equal((await run(f.store, f.plugin, { ...restored, status: "running" }, lease.leaseToken, name)).status, "succeeded");
+    await assert.rejects(run(f.store, f.plugin, lease, lease.leaseToken, "repair"), /recovery_no_generation/);
+    assert.equal(calls, 0);
+  } finally { f.conn.close(); }
+});

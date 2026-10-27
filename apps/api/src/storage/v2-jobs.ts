@@ -4,6 +4,7 @@ import { db } from "./db.js";
 
 export interface V2Creation {
   prompt: string;
+  recovery?: { requestId: string; mode: "recompose" | "preview" | "adopt"; operator: string; startedAt: number; foregroundSha256: string; backgroundSha256: string };
   recomposition?: { sourceJobId: string; instruction: string; sourceImageUrl: string };
 }
 export interface V2Job {
@@ -11,6 +12,12 @@ export interface V2Job {
   status: string; stage: string; lease_hash: string | null; lease_until: number;
   deliveries: number; created_at: number; updated_at: number; image_url: string | null; pipeline_revision: string | null;
   source_sha256: string | null; code_sha256: string | null; error_code: string | null; geometry_json: string | null;
+}
+export interface V2Candidate {
+  kind: "admin-candidate-v1"; id: string; image_url: string;
+  geometry: { canvas_width: number; canvas_height: number; crop: { left: number; top: number; width: number; height: number }; stats_baked?: boolean };
+  plan: Record<string, unknown>; sourceSha256: string; codeSha256: string;
+  foregroundSha256: string; backgroundSha256: string; statsHash: string | null;
 }
 export class V2QueueError extends Error {
   constructor(public code: string, public status: 409 | 429 | 503) { super(code); }
@@ -83,6 +90,41 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
         creation: { prompt: "", recomposition: { sourceJobId: source.id, instruction: input.instruction, sourceImageUrl: source.image_url } } });
       for (const layer of frozen) conn.prepare("INSERT OR IGNORE INTO static_v2_layers(job_id,layer,state_json) VALUES(?,?,?)").run(job.id, layer.name, layer.state);
       return job;
+    }),
+    candidates(plugin: string, id: string): V2Candidate[] {
+      if (!get(plugin, id)) return [];
+      const fg = JSON.parse(store.layer(plugin, id, "foreground") ?? "null"), bg = JSON.parse(store.layer(plugin, id, "background") ?? "null");
+      return (conn.prepare("SELECT state_json FROM static_v2_layers WHERE job_id=? AND layer LIKE 'candidate-%' ORDER BY layer").all(id) as Array<{ state_json: string }>).map(row => JSON.parse(row.state_json) as V2Candidate)
+        .filter(item => item.kind === "admin-candidate-v1" && item.foregroundSha256 === fg?.imageSha256 && item.backgroundSha256 === bg?.imageSha256);
+    },
+    recover: conn.transaction((input: { id: string; plugin: string; owner: string; requestId: string; mode: "recompose" | "preview" | "adopt"; operator: string; candidateId?: string }): V2Job => {
+      const source = get(input.plugin, input.id);
+      if (!source || source.owner_key !== input.owner || source.input_kind !== "generated") throw new V2QueueError("recovery_source_unavailable", 409);
+      const eventName = `recovery-${input.requestId}`, requestHash = digest(JSON.stringify(input));
+      const event = JSON.parse(store.layer(input.plugin, input.id, eventName) ?? "null");
+      if (event) {
+        if (event.requestHash !== requestHash) throw new V2QueueError("idempotency_conflict", 409);
+        return source;
+      }
+      if (!["failed", "needs_review"].includes(source.status)) throw new V2QueueError("recovery_not_terminal", 409);
+      const fg = JSON.parse(store.layer(input.plugin, input.id, "foreground") ?? "null"), bg = JSON.parse(store.layer(input.plugin, input.id, "background") ?? "null");
+      if ([fg, bg].some(layer => layer?.status !== "succeeded" || !/^https:\/\//.test(layer.imageUrl ?? "") || !/^[a-f0-9]{64}$/.test(layer.imageSha256 ?? ""))) throw new V2QueueError("recovery_layers_missing", 409);
+      if (input.mode !== "adopt" && (conn.prepare("SELECT count(*) n FROM static_v2_jobs WHERE status IN ('queued','running')").get() as { n: number }).n >= 16) throw new V2QueueError("queue_full", 429);
+      const recovery = { requestId: input.requestId, mode: input.mode, operator: input.operator, startedAt: clock(), foregroundSha256: fg.imageSha256, backgroundSha256: bg.imageSha256 };
+      const creation: V2Creation = { ...JSON.parse(source.creation_json!), recovery };
+      let candidate: V2Candidate | undefined;
+      if (input.mode === "adopt") {
+        candidate = store.candidates(input.plugin, input.id).find(item => item.id === input.candidateId);
+        if (!candidate || candidate.statsHash !== (source.card_stats_json ? digest(JSON.stringify(JSON.parse(source.card_stats_json))) : null)) throw new V2QueueError("recovery_candidate_unavailable", 409);
+      }
+      conn.prepare("INSERT INTO static_v2_layers(job_id,layer,state_json) VALUES(?,?,?)").run(source.id, eventName, JSON.stringify({ requestHash, ...recovery, previousStatus: source.status, previousErrorCode: source.error_code, previousStage: source.stage, previousUpdatedAt: source.updated_at, previousDeliveries: source.deliveries, previousPipelineRevision: source.pipeline_revision, ...(candidate ? { candidateId: candidate.id } : {}) }));
+      if (candidate) {
+        conn.prepare("UPDATE static_v2_jobs SET status='succeeded',stage='succeeded',creation_json=?,image_url=?,geometry_json=?,source_sha256=?,code_sha256=?,error_code=NULL,lease_hash=NULL,lease_until=0,updated_at=? WHERE id=? AND plugin_id=?").run(JSON.stringify(creation), candidate.image_url, JSON.stringify(candidate.geometry), candidate.sourceSha256, candidate.codeSha256, clock(), source.id, input.plugin);
+        conn.prepare("INSERT INTO static_v2_layers(job_id,layer,state_json) VALUES(?,'composition',?) ON CONFLICT(job_id,layer) DO UPDATE SET state_json=excluded.state_json").run(source.id, JSON.stringify({ plan: candidate.plan }));
+      } else {
+        conn.prepare("UPDATE static_v2_jobs SET status='queued',stage='queued',creation_json=?,pipeline_revision=NULL,deliveries=0,lease_hash=NULL,lease_until=0,error_code=NULL,updated_at=? WHERE id=? AND plugin_id=?").run(JSON.stringify(creation), clock(), source.id, input.plugin);
+      }
+      return get(input.plugin, input.id)!;
     }),
     claim: conn.transaction((plugin: string, worker: string, revision: string, enabled: boolean, allowExisting = true, allowGenerated = true, excludeIds: string[] = []) => {
       if (!enabled) return null;

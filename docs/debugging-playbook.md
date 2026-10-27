@@ -293,3 +293,24 @@ ssh jdc "systemctl restart inkast-api && sleep 3 && curl -s http://127.0.0.1:878
 ## 3D前景拒绝与重写检查点（2026-10-27，已部署）
 
 3D前景走`v2-layers.ts`，不能仅凭普通插件的重写配置判断是否执行。新实现的`state_json.rewrite`保留round、history、results及pending调用预算；pending时仍为submitted，等文本重写保存后才允许下一轮生图。排查时先区分上游任务原ID是否已明确终态拒绝，再看当前轮promptHash／taskId与POST计数；网络回执未知不得当成内容拒绝。中文裸露／色情／情色防护文案已纳入明确拒绝分类，准备失败、容量失败及网络错误不触发重写。旧终态没有该状态时不恢复，背景／局部补画不扩展此策略；同日随4∶5前景版本上线，旧失败任务不自动重跑；局部补齐明确拒绝仍直接结束，不套用前景重写。详细恢复约束见`plugin-overlay.md`的“3D前景持久化重写”。
+
+
+2026-10-27本地新增材质／布局恢复候选，尚未部署：`repairRetry`仅在已知终态网络失败且没有结果时保存第一次任务ID和错误，再冻结第二次确定性编辑ID；postAttempts只表示同ID的接单尝试，不能据此统计生成次数。恢复时核对repairRetry、inputHash、providerHash、原createdAt和当前taskId；未知回执继续GET，拒绝、第二次错误及旧failed不新增图像任务。Worker新图增加`plan-alternative`检查点，沿用共享视觉预算与阶段冷却；传递报告时只带最多32个位置样本及12份简化placement／failures，不能把所有逐像素repairSeeds和12份完整多边形塞进96KB context。新错误`composition_validation_failed`保留实际程序检查和patch摘要，不再用classic失败遮盖根因。
+
+
+## 3D构图超时与上游流式状态（2026-10-27，只读定位，未修复）
+
+两张原生3D前景／背景已成功，构图多次失败。按Worker receipt.requestId对照Sub2API audit_logs和ops_error_logs，三次上游502明确来自请求ChatGPT Codex responses时的HTTP/2 `PROTOCOL_ERROR; received from peer`；Inkast将backend_unavailable包装成503。当前相关请求均命中账号8，网关失败切换日志为`pool=3, excluded=1 model_not_supported=2`，不能把“三个账号”当成此模型有三个可用兜底。是否上游服务或出口／代理具体引发HTTP/2错误，尚未查明。
+
+Inkast视觉硬期限480秒、Worker外层510秒；另两次Inkast已超时的请求在Sub2API存在后续非零输出用量／计费，不能将超时当成未执行或未计费。此部署usage_logs.request_id为`client:<audit_logs.extra.client_request_id>`，直接用网关audit.request_id查usage会误得空表；用量记录本身不证明已有可复用的合格构图JSON。HTTP200只说明流已开始，首个对应请求随后仍有`stream usage incomplete: http2: client connection lost`；其余200也须核对完成事件和usage。
+
+本次走Inkast的私有18318反向SSH到Mini8318，未经过Cloudflare公网；Mini本地health 4—12毫秒，而JDC经转发一次约4.9秒、多次5秒超时，存在额外传输延迟，根因仍未确认。仅做既有日志、只读数据库和health检查，未新发模型／生图请求、重启、部署或重跑旧单。证据在SNAP-UB `temp/3d-progress-20261027/upstream-investigation.json`。
+
+
+### 2026-10-27：构图502与同步超时的两类证据
+
+SNAP两张冻结前景／背景任务的构图失败沿私有18318链路追到Sub2API：上游Codex返回HTTP/2 `PROTOCOL_ERROR; received from peer`；另有上游持续执行并产生用量，但Inkast同步480秒期限先断开的记录。用量关联必须查审计`extra.client_request_id`对应的`usage_logs.request_id=client:<id>`，不能只用网关request_id判断是否执行或计费。账户无显式代理时，现有按代理键的HTTP2自动降级不能触发。
+
+处理分开验证：Sub2API现成`GATEWAY_OPENAI_HTTP2_ENABLED=false`只将OpenAI profile切至HTTP/1.1；Inkast构图改为固定ID持久后台任务和结果查询，缩小分析参考图。前者是针对已证协议错误的规避，不证明所有上游网络问题消失；后者避免HTTP断线丢结果，不承诺重启API可重接正在执行的上游请求。部署和原图层实测证据以SNAP-UB `temp/3d-durable-plan-20261027/` 为准，未有终态证据前不得宣称两图恢复成功。
+
+本轮还核实一条旧同步调用：Sub2API网关约621.7秒返回，原Inkast480秒先截止，`client:ae944be1-5089-4c71-86c3-f942f2f3c70b`有10922输出Token及high用量记录。切H1后真实试跑仍出现上游无新SSE数据触发默认180秒`stream data interval timeout`，应与HTTP2协议错误、Inkast总期限分别归因；不能宣称切H1修复了全部上游中断。持久任务将该真实失败落库，Worker仅重试构图；其中德古拉第二次构图已成功合成交付，未重画图层。

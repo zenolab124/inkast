@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import sharp from "sharp";
+import { encodeV2Artifact, V2ArtifactError } from "../../domain/v2-artifact.js";
 import { createV2Layers } from "../../domain/v2-layers.js";
 import { v2Store, V2QueueError, V2_BILLING_VERSION, V2_CONCURRENCY, type V2Job } from "../../storage/v2-jobs.js";
 import { validateVisionImage } from "../../domain/vision/index.js";
@@ -23,6 +23,7 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
   const layers = dependencies.layers ?? createV2Layers();
   const routes = new Hono();
   routes.onError((e, c) => {
+      if (e instanceof V2ArtifactError) return c.json({ error: { code: e.code } }, e.status);
       if (e instanceof V2QueueError) return c.json({ error: { code: e.code } }, e.status);
       if (e instanceof z.ZodError || e instanceof SyntaxError) return c.json({ error: { code: "invalid_input" } }, 400);
       console.warn("[static-v2] request did not complete", e instanceof Error ? e.name : "unknown");
@@ -64,6 +65,19 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     if (!enabled() && !store().get(plugin.id, input.id)) throw new V2QueueError("v2_disabled", 503);
     return c.json(publicJob(store().recompose({ id: input.id, plugin: plugin.id, owner: input.owner_key, sourceId: input.source_job_id, instruction: input.instruction })), 202);
   });
+  // Trusted cloud object authenticates administrators and supplies the original
+  // author's owner key. Mini Program clients never receive the plugin token.
+  routes.post("/recoveries", async c => {
+    const input = z.object({ task_id: id, owner_key: sha, request_id: id, operator: sha,
+      mode: z.enum(["recompose", "preview", "adopt"]), candidate_id: sha.optional() }).strict().parse(await c.req.json());
+    if ((input.mode === "adopt") !== !!input.candidate_id) return c.json({ error: { code: "invalid_input" } }, 400);
+    return c.json(publicJob(store().recover({ id: input.task_id, plugin: c.get("plugin").id, owner: input.owner_key, requestId: input.request_id, mode: input.mode, operator: input.operator, candidateId: input.candidate_id })), 202);
+  });
+  routes.get("/jobs/:id/candidates", c => {
+    const plugin = c.get("plugin"), jobId = id.parse(c.req.param("id")), job = store().get(plugin.id, jobId);
+    if (!job || job.owner_key !== sha.parse(c.req.header("x-v2-owner"))) return c.json({ error: { code: "not_found" } }, 404);
+    return c.json({ candidates: store().candidates(plugin.id, jobId).map(item => ({ id: item.id, image_url: item.image_url, geometry: item.geometry, stats_baked: !!item.geometry.stats_baked })) });
+  });
   routes.get("/jobs/:id", c => {
     const owner = sha.parse(c.req.header("x-v2-owner"));
     const job = store().get(c.get("plugin").id, id.parse(c.req.param("id")));
@@ -95,7 +109,7 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     const job = store().claim(c.get("plugin").id, input.worker_id, input.revision, enabled(), input.allow_existing, input.allow_generated, input.exclude_ids);
     const recomposition = job?.creation_json ? JSON.parse(job.creation_json).recomposition : undefined;
     const previous = recomposition ? store().layer(c.get("plugin").id, recomposition.sourceJobId, "composition") : undefined;
-    return c.json({ job: job ? { ...publicJob(job), ...(recomposition ? { recomposition: { ...recomposition, previousPlan: previous ? JSON.parse(previous).plan : null } } : {}), source_task_id: job.source_task_id, ...(job.card_stats_json ? { card_stats: JSON.parse(job.card_stats_json) } : {}), lease_token: job.leaseToken } : null });
+    return c.json({ job: job ? { ...publicJob(job), ...(recomposition ? { recomposition: { ...recomposition, previousPlan: previous ? JSON.parse(previous).plan : null } } : {}), source_task_id: job.source_task_id, ...(job.creation_json && JSON.parse(job.creation_json).recovery ? { recovery: JSON.parse(job.creation_json).recovery } : {}), ...(job.card_stats_json ? { card_stats: JSON.parse(job.card_stats_json) } : {}), lease_token: job.leaseToken } : null });
   });
   routes.post("/worker/:id/layers/:layer", async c => {
     const input = z.object({ lease_token: sha }).strict().parse(await c.req.json());
@@ -110,6 +124,29 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     const plugin = c.get("plugin");
     store().saveLayer(plugin.id, id.parse(c.req.param("id")), input.lease_token, "composition", JSON.stringify({ plan: input.plan }));
     return c.json({ ok: true });
+  });
+  routes.post("/worker/:id/candidates", async c => {
+    const input = z.object({ lease_token: sha, png_base64: z.string().min(1).max(11_184_812), source_sha256: sha, code_sha256: sha,
+      foreground_sha256: sha, background_sha256: sha, stats_sha256: sha.nullable(), plan: z.record(z.unknown()) }).strict().parse(await c.req.json());
+    const plugin = c.get("plugin"), jobId = id.parse(c.req.param("id")), queue = store(), job = queue.leased(plugin.id, jobId, input.lease_token);
+    if (job.input_kind !== "generated" || JSON.stringify(input.plan).length > 64000) throw new V2QueueError("invalid_composition", 409);
+    if (input.stats_sha256 !== (job.card_stats_json ? statsHash(JSON.parse(job.card_stats_json)) : null)) throw new V2QueueError("stats_mismatch", 409);
+    for (const [name, expected] of [["foreground", input.foreground_sha256], ["background", input.background_sha256]]) {
+      const layer = JSON.parse(queue.layer(plugin.id, jobId, name!) ?? "null");
+      if (layer?.status !== "succeeded" || layer.imageSha256 !== expected) throw new V2QueueError("recovery_layers_changed", 409);
+    }
+    const body = Buffer.from(input.png_base64, "base64"), candidateId = createHash("sha256").update(body).digest("hex");
+    const existing = queue.candidates(plugin.id, jobId).find(item => item.id === candidateId);
+    if (existing) return c.json({ id: existing.id });
+    const { delivered, geometry } = await encodeV2Artifact(body, !!job.card_stats_json);
+    const storage = plugin.imageStorage;
+    if (storage?.kind !== "r2") throw new V2QueueError("storage_unavailable", 503);
+    const key = `${storage.keyPrefix.replace(/\/$/, "")}/v2/${jobId}/candidates/${candidateId}.webp`;
+    await upload({ bucket: storage.bucket, key, body: delivered, contentType: "image/webp" });
+    queue.saveLayer(plugin.id, jobId, input.lease_token, `candidate-${candidateId}`, JSON.stringify({ kind: "admin-candidate-v1", id: candidateId,
+      image_url: `${storage.publicBase.replace(/\/$/, "")}/${key}`, geometry, plan: input.plan, sourceSha256: input.source_sha256, codeSha256: input.code_sha256,
+      foregroundSha256: input.foreground_sha256, backgroundSha256: input.background_sha256, statsHash: input.stats_sha256 }));
+    return c.json({ id: candidateId });
   });
   routes.post("/worker/:id/repair", async c => {
     const input = z.object({ lease_token: sha, foreground_sha256: sha,
@@ -145,25 +182,14 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     if (current.input_kind === "generated" && ["foreground", "background"].some(layer => JSON.parse(store().layer(plugin.id, jobId, layer) ?? "null")?.status !== "succeeded")) throw new V2QueueError("layers_incomplete", 409);
     const chunks: Uint8Array[] = []; let size = 0;
     if (c.req.raw.body) for await (const chunk of c.req.raw.body) { size += chunk.length; if (size > 8 * 1024 * 1024) return c.json({ error: { code: "image_too_large" } }, 413); chunks.push(chunk); }
-    const body = Buffer.concat(chunks), meta = await sharp(body, { limitInputPixels: 1280 * 1280 }).metadata();
-    if (meta.format !== "png" || meta.width !== 1280 || meta.height !== 1280 || !meta.hasAlpha || (meta.pages ?? 1) > 1) return c.json({ error: { code: "invalid_image" } }, 400);
+    const body = Buffer.concat(chunks);
     const storage = plugin.imageStorage;
     if (storage?.kind !== "r2") throw new V2QueueError("storage_unavailable", 503);
-    // Match native V2's fixed square and frame origin. Reject any visible
-    // overflow before extraction, including faint energy; never silently clip it.
-    const pixels = await sharp(body).ensureAlpha().raw().toBuffer();
-    const crop = { left: 128, top: 128, width: 1024, height: 1024 };
-    let visible = false;
-    for (let y = 0; y < 1280; y++) for (let x = 0; x < 1280; x++) if (pixels[(y * 1280 + x) * 4 + 3]! > 0) {
-      visible = true;
-      if (x < crop.left || y < crop.top || x >= crop.left + crop.width || y >= crop.top + crop.height) return c.json({ error: { code: "delivery_overflow" } }, 400);
-    }
-    if (!visible) return c.json({ error: { code: "empty_image" } }, 400);
-    const delivered = await sharp(body).extract(crop).webp({ lossless: true, effort: 6 }).toBuffer();
+    const { delivered, geometry } = await encodeV2Artifact(body, !!current.card_stats_json);
     const hash = createHash("sha256").update(delivered).digest("hex"), key = `${storage.keyPrefix.replace(/\/$/, "")}/v2/${jobId}/${hash}.webp`;
     await upload({ bucket: storage.bucket, key, body: delivered, contentType: "image/webp" });
     const imageUrl = `${storage.publicBase.replace(/\/$/, "")}/${key}`;
-    return c.json(publicJob(store().finish(plugin.id, jobId, lease, { status: "succeeded", imageUrl, geometry: { canvas_width: 1280, canvas_height: 1280, crop, ...(current.card_stats_json ? { stats_baked: true } : {}) }, sourceSha256: sourceSha, codeSha256: codeSha })));
+    return c.json(publicJob(store().finish(plugin.id, jobId, lease, { status: "succeeded", imageUrl, geometry, sourceSha256: sourceSha, codeSha256: codeSha })));
   });
   return routes;
 }

@@ -48,7 +48,7 @@ test("native 3D material policy is server-owned, retains high effort and leaves 
   await analyzeVision(v2Plugin, "v2_review", { ...input, context: { extraction: { mode: "generated-native-alpha-no-segmentation" } } }, undefined, fake);
   await analyzeVision(v2Plugin, "v2_review", input, undefined, fake);
   assert.ok(prompts[0]!.includes("不要请求SAM补分割"));
-  assert.ok(prompts[0]!.includes("实体头手衣物保持实心"));
+  assert.ok(prompts[0]!.includes("实体头手、手臂和硬物保持实心"));
   for (const prompt of prompts) {
     assert.ok(prompt.includes("少量半透明抗锯齿像素触边也不能单独判为source-cropped"));
     assert.ok(prompt.includes("整段框带压在该分支上"));
@@ -120,12 +120,15 @@ test("vision route is behind bearer auth and rejects client-selected schemas or 
 test("adaptive native composition returns bounded alternatives in one high-effort call; existing images retain single-plan schema", async () => {
   const v2Plugin = { ...plugin, visionTasks: { v2_plan: plugin.visionTasks!.compose! } };
   let calls = 0;
-  const candidate = { plan: { zoom: 1.2 }, fitness: .8, intent: "expressive", reason: "完整手势可出框", repair: { part: "", material: "solid" } };
+  const candidate = { plan: { zoom: 1.2, materialRegions: [] }, fitness: .8, intent: "expressive", reason: "完整手势可出框", repair: { part: "", material: "solid" } };
   await analyzeVision(v2Plugin, "v2_plan", { ...input, context: { composition_mode: "adaptive-v1", extraction: { mode: "generated-native-alpha-no-segmentation" } } }, undefined,
     async <T>(opts: CompleteJsonOptions) => {
       calls++; assert.ok(opts.systemPrompt.includes("不要固定选最保守"));
       assert.equal(opts.reasoningEffort, "high");
       const validate = compileVisionSchema(opts.schema!);
+      assert.equal(validate({ candidates: [{ ...candidate, plan: { zoom: 1.2 } }, candidate] }), false, "native layout must classify materials explicitly");
+      assert.equal(validate({ candidates: [{ ...candidate, plan: { zoom: 1.2, materialRegions: [{ name: "fan", kind: "rigid", polygon: [[0,0],[1,0],[1,1.2]] }] } }, candidate] }), false);
+      assert.match(opts.systemPrompt, /身体和实体道具区域优先/);
       assert.equal(validate({ candidates: [candidate] }), false);
       assert.equal(validate({ candidates: [candidate, candidate, candidate, candidate] }), false);
       return result({ candidates: [candidate, candidate] } as T);
@@ -145,13 +148,13 @@ test('independent native portrait overrides legacy source geometry only for boun
 
 test("recomposition uses one bounded high-effort planning call with frozen requirements and bounded local repair", async () => {
   const v2Plugin = { ...plugin, visionTasks: { v2_plan: plugin.visionTasks!.compose! } };
-  const candidate = { plan: { zoom: 1.2 }, fitness: .8, intent: "expressive", reason: "Left", repair: { part: "", material: "solid" } };
+  const candidate = { plan: { zoom: 1.2, materialRegions: [] }, fitness: .8, intent: "expressive", reason: "Left", repair: { part: "", material: "solid" } };
   let calls = 0;
   await analyzeVision(v2Plugin, "v2_plan", { ...input, context: {
     composition_mode: "adaptive-v1", extraction: { mode: "generated-native-alpha-no-segmentation" },
     recomposition: { instruction: "人物往左", previousPlan: { zoom: 1.1 } },
   } }, undefined, async <T>(opts: CompleteJsonOptions) => {
-    calls++; assert.equal(opts.reasoningEffort, "high"); assert.match(opts.systemPrompt, /允许一次必要的局部轮廓补齐/);
+    calls++; assert.equal(opts.reasoningEffort, "high"); assert.match(opts.systemPrompt, /允许必要的局部轮廓补齐/);
     assert.match(opts.systemPrompt, /不能靠省略目标宣称满足/); assert.match(opts.userPrompt, /人物往左/);
     return result({ requirements: { horizontal: "left", vertical: "none", breakouts: [] }, candidates: [candidate, candidate] } as T);
   });
