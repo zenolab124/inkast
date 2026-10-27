@@ -56,6 +56,14 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     const job = store().submit({ id: input.id, plugin: plugin.id, owner: input.owner_key, task: "", source: "", billingVersion: input.billing_version, creation: { prompt: input.prompt }, cardStats: input.card_stats });
     return c.json(publicJob(job), 202);
   });
+  routes.post("/recompositions", async c => {
+    // Administrator authorization belongs to the trusted cloud object; source
+    // ownership and immutable layers are checked again inside this transaction.
+    const input = z.object({ id, owner_key: sha, source_job_id: id, instruction: z.string().trim().max(1000).default("") }).strict().parse(await c.req.json());
+    const plugin = c.get("plugin");
+    if (!enabled() && !store().get(plugin.id, input.id)) throw new V2QueueError("v2_disabled", 503);
+    return c.json(publicJob(store().recompose({ id: input.id, plugin: plugin.id, owner: input.owner_key, sourceId: input.source_job_id, instruction: input.instruction })), 202);
+  });
   routes.get("/jobs/:id", c => {
     const owner = sha.parse(c.req.header("x-v2-owner"));
     const job = store().get(c.get("plugin").id, id.parse(c.req.param("id")));
@@ -85,7 +93,9 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     const input = workerIdentity.extend({ allow_existing: z.boolean().optional().default(true), allow_generated: z.boolean().optional().default(true), exclude_ids: z.array(id).max(6).optional().default([]) }).parse(await c.req.json());
     checkWorkerVersion(input.inkast_revision);
     const job = store().claim(c.get("plugin").id, input.worker_id, input.revision, enabled(), input.allow_existing, input.allow_generated, input.exclude_ids);
-    return c.json({ job: job ? { ...publicJob(job), source_task_id: job.source_task_id, ...(job.card_stats_json ? { card_stats: JSON.parse(job.card_stats_json) } : {}), lease_token: job.leaseToken } : null });
+    const recomposition = job?.creation_json ? JSON.parse(job.creation_json).recomposition : undefined;
+    const previous = recomposition ? store().layer(c.get("plugin").id, recomposition.sourceJobId, "composition") : undefined;
+    return c.json({ job: job ? { ...publicJob(job), ...(recomposition ? { recomposition: { ...recomposition, previousPlan: previous ? JSON.parse(previous).plan : null } } : {}), source_task_id: job.source_task_id, ...(job.card_stats_json ? { card_stats: JSON.parse(job.card_stats_json) } : {}), lease_token: job.leaseToken } : null });
   });
   routes.post("/worker/:id/layers/:layer", async c => {
     const input = z.object({ lease_token: sha }).strict().parse(await c.req.json());
@@ -93,6 +103,13 @@ export function createV2Routes(dependencies: { store?: typeof v2Store; upload?: 
     const plugin = c.get("plugin"), queue = store(), jobId = id.parse(c.req.param("id"));
     const job = queue.leased(plugin.id, jobId, input.lease_token);
     return c.json(await layers(queue, plugin, job, input.lease_token, layer));
+  });
+  routes.post("/worker/:id/composition", async c => {
+    const input = z.object({ lease_token: sha, plan: z.record(z.unknown()) }).strict().parse(await c.req.json());
+    if (JSON.stringify(input.plan).length > 64000 || !["zoom", "centerX", "centerY", "rotationDeg"].every(k => typeof input.plan[k] === "number" && Number.isFinite(input.plan[k]))) return c.json({ error: { code: "invalid_composition" } }, 400);
+    const plugin = c.get("plugin");
+    store().saveLayer(plugin.id, id.parse(c.req.param("id")), input.lease_token, "composition", JSON.stringify({ plan: input.plan }));
+    return c.json({ ok: true });
   });
   routes.post("/worker/:id/repair", async c => {
     const input = z.object({ lease_token: sha, foreground_sha256: sha,

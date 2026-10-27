@@ -215,3 +215,43 @@ test("resource-aware claim is worker-only, strictly typed and leaves protected c
     conn.close();
   }
 });
+
+test("recomposition HTTP route freezes server-side originals; claims carry prior composition; worker may request a bounded local repair", async () => {
+  const conn = new Database(":memory:"); conn.exec(readFileSync(new URL("../src/storage/schema.sql", import.meta.url), "utf8"));
+  const store = createV2Store(conn); store.heartbeat("snapub", "test-worker", "revision");
+  const oldEnabled = process.env.INKAST_V2_ENABLED;
+  process.env.INKAST_V2_ENABLED = "true";
+  const owner = "a".repeat(64), sourceId = "v2-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", nextId = "v2-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const headers = { authorization: "Bearer token", "content-type": "application/json" };
+  const worker = { ...headers, "x-v2-worker": createHmac("sha256", "token").update("static-v2-worker-v1").digest("hex") };
+  const plugin: InkastPlugin = { id: "snapub", name: "Test", imageDefaults: {} };
+  const app = new Hono(); app.use("*", async (c, next) => { c.set("plugin", plugin); await next(); });
+  let drawings = 0;
+  app.route("/v2", createV2Routes({ store: () => store, layers: async () => { drawings++; return { status: "failed", error_code: "repair_rejected" }; } }));
+  const post = (url: string, body: object, h = headers) => app.request(url, { method: "POST", headers: h, body: JSON.stringify(body) });
+  try {
+    store.submit({ id: sourceId, plugin: "snapub", owner, task: "", source: "", billingVersion: 1, creation: { prompt: "Original" } });
+    const first = store.claim("snapub", "test-worker", "revision", true)!;
+    for (const name of ["foreground", "background"]) store.saveLayer("snapub", sourceId, first.leaseToken, name, JSON.stringify({ status: "succeeded", imageUrl: `https://images.example/${name}.png`, imageSha256: "b".repeat(64) }));
+    const plan = { zoom: 1, centerX: .5, centerY: .5, rotationDeg: 0 };
+    assert.equal((await post(`/v2/worker/${sourceId}/composition`, { lease_token: first.leaseToken, plan })).status, 403);
+    assert.equal((await post(`/v2/worker/${sourceId}/composition`, { lease_token: first.leaseToken, plan }, worker)).status, 200);
+    store.finish("snapub", sourceId, first.leaseToken, { status: "succeeded", imageUrl: "https://images.example/final.webp" });
+    const input = { id: nextId, owner_key: owner, source_job_id: sourceId, instruction: "人物左移" };
+    assert.equal((await post("/v2/recompositions", { ...input, foreground_url: "https://evil.example/f.png" })).status, 400);
+    assert.equal((await post("/v2/recompositions", { ...input, owner_key: "c".repeat(64) })).status, 409);
+    assert.equal((await post("/v2/recompositions", input)).status, 202);
+    assert.equal((await post("/v2/recompositions", input)).status, 202);
+    const claimed = await (await post("/v2/worker/claim", { worker_id: "test-worker", revision: "d".repeat(64) }, worker)).json() as { job: { id: string; lease_token: string; recomposition: { previousPlan: unknown; instruction: string } } };
+    assert.equal(claimed.job.id, nextId); assert.deepEqual(claimed.job.recomposition.previousPlan, plan);
+    assert.equal(claimed.job.recomposition.instruction, "人物左移");
+    const repair = { lease_token: claimed.job.lease_token, foreground_sha256: "b".repeat(64), crop_png: "data", mask_png: "data", part: "sleeve", material: "solid" };
+    assert.equal((await post(`/v2/worker/${nextId}/repair`, repair)).status, 403);
+    assert.equal(drawings, 0);
+    assert.equal((await post(`/v2/worker/${nextId}/repair`, repair, worker)).status, 200);
+    assert.equal(drawings, 1);
+  } finally {
+    if (oldEnabled === undefined) delete process.env.INKAST_V2_ENABLED; else process.env.INKAST_V2_ENABLED = oldEnabled;
+    conn.close();
+  }
+});

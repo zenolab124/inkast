@@ -23,7 +23,7 @@
  *      `excludeProviderIds = [providers that blocked]`.
  */
 
-import { completeJsonWithFallover } from "../../drivers/llm/with-fallover.js";
+import { completeJsonWithFallover, type LlmCallPolicy } from "../../drivers/llm/with-fallover.js";
 
 const CARDS_CDN_BASE = "https://static.marvelsnap.pro/cards";
 const VARIANT_LIMIT = 5;
@@ -460,7 +460,11 @@ export async function rewriteBlockedPrompt(input: {
    */
   previousAnalysis: IdentityAnchors | null;
   signal?: AbortSignal;
-}): Promise<RewriteOutcome> {
+  /** Isolated 3D sources use their own geometry contract, without portrait UI safe zones. */
+  foregroundConstraints?: string;
+  llmPolicy?: LlmCallPolicy;
+}, completeJson: typeof completeJsonWithFallover = completeJsonWithFallover): Promise<RewriteOutcome> {
+  if (input.foregroundConstraints) return rewriteForeground(input, completeJson);
   const characterKey = extractCharacterKey(input.originalPromptText);
   let usedImageUrls: string[] = [];
   if (characterKey) {
@@ -554,7 +558,7 @@ character_archetype (允许泛化到更宽范畴): ${input.previousAnalysis.char
   // first, then by priority, claude-code tail). Same-backend invalid_json
   // retry-once is baked into the helper, so stochastic gpt-5.5 refusals
   // still get a second shot before fallover.
-  const result = await completeJsonWithFallover<{
+  const result = await completeJson<{
     rewritten: string;
     analysis?: {
       per_image?: string[];
@@ -661,4 +665,20 @@ character_archetype (允许泛化到更宽范畴): ${input.previousAnalysis.char
     llmDurationMs,
     analysis,
   };
+}
+
+
+/** Reuse the structured rewrite backend, but do not import classic-card cropping
+ * or assume that an upstream safety decision is a keyword false positive. */
+async function rewriteForeground(input: Parameters<typeof rewriteBlockedPrompt>[0], completeJson: typeof completeJsonWithFallover): Promise<RewriteOutcome> {
+  const started = Date.now();
+  const result = await completeJson<{ rewritten: string }>({
+    systemPrompt: `将原始创作需求调整为适合公开展示、符合内容安全要求的3D卡牌前景描述。上游拒绝可能有真实内容原因，不得假定为关键词误判；必要时实际调整服装覆盖、姿态或场景中的不适当内容，不得用同义词、暗语掩盖同一违规内容或要求模型忽略审核。保留可合规保留的主体身份、画风、配色与持物关系；动作由角色和主题决定，用户明确指定动作时按其要求保留，未指定时自由选择合适动作，不添加统一姿势模板。不得凭空改变年龄或捏造参考图。重写仅输出创作描述，以下透明前景与取景规则必须满足，且程序会再次附加：\n${input.foregroundConstraints}\n不得加入普通卡牌底部四分之一留白或强制全身要求。只输出JSON，rewritten为非空描述；无法给出合规版本时返回空字符串，停止生成。`,
+    userPrompt: JSON.stringify({ original: input.originalPromptText, round: input.round, previous: input.previousRewrittens }),
+    schema: { type: "object", additionalProperties: false, required: ["rewritten"], properties: { rewritten: { type: "string" } } },
+    timeoutMs: REWRITE_TIMEOUT_MS, reasoningEffort: "high", signal: input.signal,
+  }, `3d foreground rewrite r${input.round}`, undefined, { ...input.llmPolicy, apiOnly: true, maxCalls: 1 });
+  const rewritten = result.data.rewritten?.trim();
+  if (!rewritten || rewritten.length > 16000) throw Error("foreground_rewrite_unusable");
+  return { rewrittenPromptText: rewritten, characterKey: extractCharacterKey(input.originalPromptText), usedImageUrls: [], llmDurationMs: Date.now() - started, analysis: null };
 }

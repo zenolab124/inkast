@@ -2,6 +2,10 @@ import type Database from "better-sqlite3";
 import { randomBytes, createHash } from "node:crypto";
 import { db } from "./db.js";
 
+export interface V2Creation {
+  prompt: string;
+  recomposition?: { sourceJobId: string; instruction: string; sourceImageUrl: string };
+}
 export interface V2Job {
   id: string; plugin_id: string; owner_key: string; source_task_id: string; source_url: string; input_kind: "existing" | "generated"; creation_json: string | null; card_stats_json: string | null;
   status: string; stage: string; lease_hash: string | null; lease_until: number;
@@ -25,7 +29,7 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
   const heartbeat = (plugin: string, worker: string, revision: string) => {
     conn.prepare("INSERT INTO static_v2_workers(plugin_id,worker_id,revision,seen_at) VALUES(?,?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET worker_id=excluded.worker_id,revision=excluded.revision,seen_at=excluded.seen_at").run(plugin, worker, revision, clock());
   };
-  return {
+  const store = {
     get, online, leased, heartbeat,
     layer(plugin: string, id: string, name: string): string | undefined {
       if (!get(plugin, id)) return undefined;
@@ -35,6 +39,13 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
       leased(plugin, id, token);
       conn.prepare("INSERT INTO static_v2_layers(job_id,layer,state_json) VALUES(?,?,?) ON CONFLICT(job_id,layer) DO UPDATE SET state_json=excluded.state_json").run(id, name, state);
     },
+    compareAndSaveLayer: conn.transaction((plugin: string, id: string, token: string, name: string, expected: string | undefined, state: string) => {
+      leased(plugin, id, token);
+      const old = conn.prepare("SELECT state_json FROM static_v2_layers WHERE job_id=? AND layer=?").get(id, name) as { state_json: string } | undefined;
+      if (old?.state_json !== expected) return false;
+      conn.prepare("INSERT INTO static_v2_layers(job_id,layer,state_json) VALUES(?,?,?) ON CONFLICT(job_id,layer) DO UPDATE SET state_json=excluded.state_json").run(id, name, state);
+      return true;
+    }),
     list(plugin: string, owner: string, limit: number, before?: { time: number; id: string }) {
       const stamp = "CASE WHEN status='succeeded' THEN updated_at ELSE created_at END";
       const rows = conn.prepare(`SELECT * FROM static_v2_jobs WHERE plugin_id=? AND owner_key=? ${before ? `AND (${stamp}<? OR (${stamp}=? AND id<?))` : ""} ORDER BY ${stamp} DESC,id DESC LIMIT ?`).all(
@@ -43,7 +54,7 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
       const items = rows.slice(0, limit), last = items.at(-1);
       return { items, next: rows.length > limit && last ? { time: last.status === "succeeded" ? last.updated_at : last.created_at, id: last.id } : null };
     },
-    submit: conn.transaction((input: { id: string; plugin: string; owner: string; task: string; source: string; billingVersion?: number; creation?: { prompt: string }; cardStats?: object }) => {
+    submit: conn.transaction((input: { id: string; plugin: string; owner: string; task: string; source: string; billingVersion?: number; creation?: V2Creation; cardStats?: object }) => {
       const old = get(input.plugin, input.id);
       if (old) {
         if (old.card_stats_json !== (input.cardStats ? JSON.stringify(input.cardStats) : null) || old.owner_key !== input.owner || old.source_task_id !== input.task || old.source_url !== input.source || old.creation_json !== (input.creation ? JSON.stringify(input.creation) : null)) throw new V2QueueError("idempotency_conflict", 409);
@@ -54,6 +65,24 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
       if ((conn.prepare("SELECT count(*) n FROM static_v2_jobs WHERE status IN ('queued','running')").get() as { n: number }).n >= 16) throw new V2QueueError("queue_full", 429);
       conn.prepare("INSERT INTO static_v2_jobs(id,plugin_id,owner_key,source_task_id,source_url,input_kind,creation_json,card_stats_json,status,stage,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'queued','queued',?,?)").run(input.id, input.plugin, input.owner, input.task, input.source, input.creation ? "generated" : "existing", input.creation ? JSON.stringify(input.creation) : null, input.cardStats ? JSON.stringify(input.cardStats) : null, clock(), clock());
       return get(input.plugin, input.id)!;
+    }),
+    recompose: conn.transaction((input: { id: string; plugin: string; owner: string; sourceId: string; instruction: string }): V2Job => {
+      const source = get(input.plugin, input.sourceId);
+      if (!source || source.owner_key !== input.owner || source.input_kind !== "generated" || source.status !== "succeeded" || !source.image_url) throw new V2QueueError("recomposition_source_unavailable", 409);
+      if (input.id === input.sourceId) throw new V2QueueError("idempotency_conflict", 409);
+      const frozen = ["foreground", "background"].map(name => {
+        const raw = store.layer(input.plugin, source.id, name);
+        const layer = raw ? JSON.parse(raw) : null;
+        if (layer?.status !== "succeeded" || !/^https:\/\//.test(layer.imageUrl || "") || !/^[a-f0-9]{64}$/.test(layer.imageSha256 || "")) throw new V2QueueError("recomposition_layers_missing", 409);
+        // Freeze only delivered originals; never copy rewrite/pending/repair state.
+        return { name, state: JSON.stringify({ version: 1, status: "succeeded", taskId: layer.taskId,
+          imageUrl: layer.imageUrl, imageSha256: layer.imageSha256, outputSize: layer.outputSize }) };
+      });
+      const job = store.submit({ id: input.id, plugin: input.plugin, owner: input.owner, task: source.id, source: source.source_url,
+        billingVersion: V2_BILLING_VERSION, cardStats: source.card_stats_json ? JSON.parse(source.card_stats_json) : undefined,
+        creation: { prompt: "", recomposition: { sourceJobId: source.id, instruction: input.instruction, sourceImageUrl: source.image_url } } });
+      for (const layer of frozen) conn.prepare("INSERT OR IGNORE INTO static_v2_layers(job_id,layer,state_json) VALUES(?,?,?)").run(job.id, layer.name, layer.state);
+      return job;
     }),
     claim: conn.transaction((plugin: string, worker: string, revision: string, enabled: boolean, allowExisting = true, allowGenerated = true, excludeIds: string[] = []) => {
       if (!enabled) return null;
@@ -106,5 +135,6 @@ export function createV2Store(conn: Database.Database, clock = Date.now) {
       return get(plugin, id)!;
     },
   };
+  return store;
 }
 export const v2Store = () => createV2Store(db());

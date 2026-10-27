@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import sharp from "sharp";
-import { createV2Layers } from "../src/domain/v2-layers.js";
+import { rewriteBlockedPrompt } from "../src/domain/rewrite-prompt/index.js";
+import { LlmDriverError } from "../src/drivers/llm/types.js";
+import { createV2Layers, layerPrompt } from "../src/domain/v2-layers.js";
 import { createV2Store } from "../src/storage/v2-jobs.js";
 import type { InkastPlugin } from "../src/plugins/types.js";
 
@@ -16,8 +18,9 @@ async function fixture() {
   const entry = { provider: { id: "gpt", name: "GPT", baseUrl: "https://upstream.example/v1", createdAt: 1, updatedAt: 1, capabilities: [] }, capability: { kind: "image" as const, model: "gpt-image-2", priority: 0, disabled: false, extras: { mode: "c2i-tasks" } }, apiKey: "test-secret" };
   const plugin: InkastPlugin = { id: "snapub", name: "test", imageDefaults: {}, imageProviderIds: ["gpt"], sourceImageHosts: ["https://images.example"] };
   const subject = await sharp({ create: { width: 300, height: 600, channels: 4, background: "#cf7842" } }).png().toBuffer();
-  const png = await sharp({ create: { width: 1024, height: 1536, channels: 4, background: "transparent" } }).composite([{ input: subject, left: 360, top: 400 }]).png().toBuffer();
-  return { conn, store, input, job, claim, plugin, entry, png, advance: (ms: number) => { now += ms; } };
+  const png = await sharp({ create: { width: 1024, height: 1280, channels: 4, background: "transparent" } }).composite([{ input: subject, left: 360, top: 400 }]).png().toBuffer();
+  const backgroundPng = await sharp({ create: { width: 1024, height: 1536, channels: 4, background: "#184851" } }).png().toBuffer();
+  return { conn, store, input, job, claim, plugin, entry, png, backgroundPng, advance: (ms: number) => { now += ms; } };
 }
 
 test("native-layer submit survives a lost acknowledgement/restart and background reuses foreground/channel", async () => {
@@ -26,14 +29,15 @@ test("native-layer submit survives a lost acknowledgement/restart and background
   const request: typeof fetch = async (url, init) => {
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     requests.push({ url: String(url), body });
-    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png));
     if (init?.method === "POST") {
       upstreamId = body.client_task_id;
       if (loseAck) { loseAck = false; throw Error("ack lost after admission"); }
       return Response.json({ id: upstreamId, status: "queued" });
     }
     const taskId = new URL(String(url)).searchParams.get("ids");
-    return Response.json({ items: [{ id: taskId, status: "success", data: [{ url: "https://images.example/layer.png" }] }] });
+    const background = requests.some(r => r.body?.client_task_id === taskId && r.body?.background === "opaque");
+    return Response.json({ items: [{ id: taskId, status: "success", data: [{ url: background ? "https://images.example/background.png" : "https://images.example/layer.png" }] }] });
   };
   const make = () => createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: request });
   try {
@@ -49,6 +53,7 @@ test("native-layer submit survives a lost acknowledgement/restart and background
     assert.equal(posts.length, 2); assert.notEqual(posts[0]!.body!.client_task_id, posts[1]!.body!.client_task_id);
     assert.equal(posts[0]!.body!.background, "transparent"); assert.equal(posts[1]!.body!.background, "opaque");
     assert.equal(posts[0]!.body!.optimize_output, false);
+    assert.equal(posts[0]!.body!.size, "1024x1280"); assert.equal(posts[1]!.body!.size, "1024x1536");
     assert.deepEqual(posts[1]!.body!.images, [`data:image/png;base64,${f.png.toString("base64")}`]);
     assert.throws(() => f.store.submit({ ...f.input, creation: { prompt: "changed creative brief" } }), /idempotency_conflict/);
     f.advance(181000);
@@ -76,19 +81,19 @@ test("missing admission record keeps polling the original ID and fails only at t
   } finally { f.conn.close(); }
 });
 
-test("upstream content failure, corrupt PNG and timeout are durable terminal stages without regeneration", async () => {
+test("upstream execution failure, corrupt PNG and timeout are durable terminal stages without regeneration", async () => {
   for (const failure of ["error", "invalid", "timeout"] as const) {
     const f = await fixture(); let posts = 0;
     const run = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, now: () => failure === "timeout" && posts ? Date.now() + 46 * 60_000 : Date.now(), fetch: async (url, init) => {
       if (String(url).startsWith("https://images.example")) return new Response("not a png");
       if (init?.method === "POST") { posts++; const body = JSON.parse(String(init.body)); return Response.json({ id: body.client_task_id, status: "queued" }); }
-      return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: failure === "error" ? "error" : "success", error: "content rejection", data: [{ url: "https://images.example/bad.png" }] }] });
+      return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: failure === "error" ? "error" : "success", error_code: "generation_failed", error: "image execution failed", data: [{ url: "https://images.example/bad.png" }] }] });
     } });
     try {
       await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
       const failed = await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
       assert.equal(failed.status, "failed");
-      assert.equal(failed.error_code, failure === "error" ? "generation_rejected" : failure === "invalid" ? "invalid_generated_layer" : "generation_timeout");
+      assert.equal(failed.error_code, failure === "error" ? "generation_failed" : failure === "invalid" ? "invalid_generated_layer" : "generation_timeout");
       assert.equal((await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).status, "failed");
       assert.equal(posts, 1);
     } finally { f.conn.close(); }
@@ -100,7 +105,7 @@ test("delayed background admission after a lost POST acknowledgement reuses both
   const f = await fixture(); let foregroundId = "", backgroundId = "", misses = 0;
   const posts: string[] = [];
   const request: typeof fetch = async (url, init) => {
-    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png));
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body)); posts.push(body.client_task_id);
       if (body.background === "transparent") { foregroundId = body.client_task_id; return Response.json({id:foregroundId,status:"success",data:[{url:"https://images.example/foreground.png"}]}); }
@@ -124,7 +129,7 @@ test("delayed background admission after a lost POST acknowledgement reuses both
 test("durable admission permits bounded identical-ID resubmission only after confirmed missing", async () => {
   const f = await fixture(); let now = Date.now(), posts = 0; const bodies: unknown[] = [];
   const run = () => createV2Layers({ providers: () => [f.entry], provider: () => f.entry, now: () => now, fetch: async (url, init) => {
-    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png));
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body)); bodies.push(body); posts++;
       if (posts === 1) throw Error("POST did not reach admission");
@@ -199,7 +204,7 @@ test("explicit JSON refusal terminates; Cloudflare HTML errors remain transport 
 });
 
 test("durable preparation errors are distinguished from image-model rejection", async () => {
-  for (const [error_code, expected] of [["request_preparation_failed", "generation_submission_failed"], ["admission_capacity", "generation_queue_full"], ["request_rejected", "generation_rejected"], ["generation_failed", "generation_failed"]]) {
+  for (const [error_code, expected] of [["request_preparation_failed", "generation_submission_failed"], ["admission_capacity", "generation_queue_full"], ["generation_failed", "generation_failed"]]) {
     const f = await fixture();
     const run = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (_url, init) => Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code }) });
     try { assert.equal((await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).error_code, expected); }
@@ -210,7 +215,7 @@ test("durable preparation errors are distinguished from image-model rejection", 
 test("new admission protocol sends a compact foreground URL with the frozen byte hash", async () => {
   const f = await fixture(); let downloads = 0; const posts: Array<{body: any; headers: any; bytes: number}> = [];
   const run = createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>{
-    if(String(url).startsWith('https://images.example')) { downloads++; return new Response(new Uint8Array(f.png)); }
+    if(String(url).startsWith('https://images.example')) { downloads++; return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png)); }
     const body=JSON.parse(String(init?.body));posts.push({body,headers:init?.headers,bytes:Buffer.byteLength(String(init?.body))});
     return Response.json({id:body.client_task_id,status:body.background==='transparent'?'success':'queued',data:[{url:'https://images.example/frozen.png'}]}, {headers:{'x-image-task-admission':'durable-v1'}});
   }});
@@ -226,36 +231,15 @@ test("new admission protocol sends a compact foreground URL with the frozen byte
 });
 
 
-test("explicit model refusal with a generic upstream error remains terminal without resubmission", async () => {
-  for (const [error, expected] of [
-    ["非常抱歉，生成的图片可能违反了关于与第三方内容相似性的防护限制。", "generation_rejected"],
-    ["This may violate our guardrails concerning similarity to third-party content", "generation_rejected"],
-    ["HTTP 502 upstream connection failed", "generation_failed"],
-  ]) {
-    const f = await fixture(); let posts = 0;
-    const run = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (_url, init) => {
-      posts++;
-      return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code: "generation_failed", error });
-    } });
-    try {
-      const first = await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
-      assert.equal(first.error_code, expected);
-      assert.equal((await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).error_code, expected);
-      assert.equal(posts, 1);
-    } finally { f.conn.close(); }
-  }
-});
-
-
 test("small source margins do not reject valid foregrounds or prevent background generation", async () => {
-  for (const [left, top] of [[16, 400], [988, 400], [400, 16], [400, 1500]]) {
+  for (const [left, top] of [[16, 400], [988, 400], [400, 16], [400, 1240]]) {
     const f = await fixture(); let posts = 0;
     const cut = await sharp({ create: { width: 20, height: 20, channels: 4, background: "#cf7842" } }).png().toBuffer();
     const png = await sharp(f.png).composite([{ input: cut, left, top }]).png().toBuffer();
     const run = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (url, init) => {
-      if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(png));
+      if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : png));
       posts++;
-      return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "success", data: [{ url: "https://images.example/foreground.png" }] });
+      return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "success", data: [{ url: posts === 1 ? "https://images.example/foreground.png" : "https://images.example/background.png" }] });
     } });
     try {
       const result = await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
@@ -277,7 +261,7 @@ test("local repair binds frozen foreground and payload, survives lost acknowledg
   // First create the foreground through the real layer state to bind provider hash.
   f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "foreground", "null");
   const base = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (url, init) => {
-    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png));
     if (init?.method === "POST") return Response.json({ id: JSON.parse(String(init.body)).client_task_id, status: "queued" });
     return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: "success", data: [{ url: "https://images.example/layer.png" }] }] });
   } });
@@ -299,5 +283,317 @@ test("local repair binds frozen foreground and payload, survives lost acknowledg
     assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", input)).status, "failed");
     assert.equal(posts, 1);
     await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "repair", { ...input, part: "different part" }), /repair_input_changed/);
+  } finally { f.conn.close(); }
+});
+
+const refusal = "非常抱歉，生成的图片可能违反了关于裸露、色情或情色内容的防护限制。";
+const rewritten = (text: string) => ({ rewrittenPromptText: text, characterKey: null, usedImageUrls: [], llmDurationMs: 20, analysis: null });
+
+function foregroundHarness(f: Awaited<ReturnType<typeof fixture>>, rewrite: typeof rewriteBlockedPrompt, request: typeof fetch, now?: () => number) {
+  return () => createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: request, rewrite, now });
+}
+
+test("foreground rewrite uses the shared JSON backend without classic safe zones or cross-region reference lookup", async () => {
+  const calls: any[] = [];
+  const complete: any = async (opts: any, _label: any, _validation: any, policy: any) => {
+    calls.push({ opts, policy });
+    return { data: { rewritten: "An adult adventurer in a fully covering winter coat, holding a cup, waist-up." }, backend: "test" };
+  };
+  const input = { originalPromptText: "「ScarletWitch」. Style and theme: 「油画」. Winter holiday", round: 1 as const, previousRewrittens: [], previousAnalysis: null };
+  const result = await rewriteBlockedPrompt({ ...input, foregroundConstraints: "Genuine transparent RGBA. Keep the chosen silhouettes complete. Framing follows the creative brief.", llmPolicy: { providerIds: ["llm"] } }, complete);
+  assert.equal(result.rewrittenPromptText, "An adult adventurer in a fully covering winter coat, holding a cup, waist-up.");
+  assert.deepEqual(result.usedImageUrls, []);
+  assert.equal(calls[0].opts.images, undefined);
+  assert.deepEqual(calls[0].policy, { providerIds: ["llm"], apiOnly: true, maxCalls: 1 });
+  assert.match(calls[0].opts.systemPrompt, /实际调整服装覆盖/);
+  assert.match(calls[0].opts.systemPrompt, /transparent RGBA/);
+  assert.doesNotMatch(result.rewrittenPromptText, /safe zone|下 1\/4/);
+  const normal = await rewriteBlockedPrompt({ ...input, originalPromptText: "An adult adventurer in winter" }, complete);
+  assert.match(normal.rewrittenPromptText, /构图安全区/);
+  const empty: any = async () => ({ data: { rewritten: " " }, backend: "test" });
+  await assert.rejects(rewriteBlockedPrompt({ ...input, foregroundConstraints: "transparent" }, empty), /foreground_rewrite_unusable/);
+});
+
+test("a foreground refusal rewrites once, persists before POST, and resumes the rewritten task after acknowledgement loss", async () => {
+  const f = await fixture(); const posts: any[] = [], inputs: any[] = []; let lost = true;
+  const make = foregroundHarness(f, async input => { inputs.push(input); return rewritten("Adult gardener in a fully covering coat, holding a cup, waist-up watercolor."); }, async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png));
+    if (init?.method === "POST") {
+      const body = JSON.parse(String(init.body)); posts.push(body);
+      if (posts.length === 1) return Response.json({ id: body.client_task_id, status: "error", error_code: "generation_failed", error: refusal });
+      const saved = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!);
+      assert.equal(saved.taskId, body.client_task_id); assert.equal(saved.postAttempts, 1); assert.equal(saved.rewrite.round, 1);
+      if (lost) { lost = false; throw Error("rewritten POST admitted; acknowledgement lost"); }
+      return Response.json({ id: body.client_task_id, status: "queued" });
+    }
+    return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: "success", data: [{ url: "https://images.example/done.png" }] }] });
+  });
+  try {
+    assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).status, "submitted");
+    assert.equal(inputs.length, 0);
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    assert.equal(posts.length, 1, "rewriting persists an unsubmitted new round without generating an image");
+    assert.equal(inputs.length, 1); assert.equal(inputs[0].originalPromptText, f.input.creation.prompt);
+    await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"), /acknowledgement lost/);
+    assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).status, "succeeded");
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    assert.equal(inputs.length, 1); assert.equal(posts.length, 2); assert.notEqual(posts[0].client_task_id, posts[1].client_task_id);
+    const body = posts[1]; assert.equal(body.background, "transparent"); assert.equal(body.output_format, "png"); assert.equal(body.optimize_output, false);
+    assert.match(body.prompt, /genuine transparent RGBA/); assert.match(body.prompt, /solid opaque material/);
+    assert.match(body.prompt, /character and creative brief determine the pose/); assert.match(body.prompt, /visible contours/); assert.match(body.prompt, /natural torso crop/);
+    assert.doesNotMatch(body.prompt, /behind the head|raised arm|bent elbow|shoulder-to-elbow-to-hand/);
+    assert.doesNotMatch(body.prompt, /safe zone|上 3\/4|下 1\/4/);
+    const state = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!);
+    assert.equal(state.rewrite.history.length, 1); assert.equal(state.rewrite.history[0].taskId, posts[0].client_task_id);
+    assert.equal(state.rewrite.history[0].detail, refusal);
+  } finally { f.conn.close(); }
+});
+
+test("only explicit content rejection enters foreground rewriting; network, unknown and preparation failures do not", async () => {
+  for (const [error_code, error, expected] of [["generation_failed", "HTTP 502 connection failed", "generation_failed"], ["request_preparation_failed", refusal, "generation_submission_failed"], ["admission_capacity", refusal, "generation_queue_full"], [undefined, "Unknown failure", "generation_failed"]] as const) {
+    const f = await fixture(); let rewrites = 0, posts = 0;
+    const make = foregroundHarness(f, async () => { rewrites++; return rewritten("safe coat"); }, async (_url, init) => {
+      posts++; return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code, error });
+    });
+    try {
+      const result = await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+      assert.equal(result.error_code, expected); assert.equal(result.status, "failed");
+      await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); assert.equal(posts, 1); assert.equal(rewrites, 0);
+    } finally { f.conn.close(); }
+  }
+});
+
+test("foreground rewrite stops after three rounds and never reopens exhausted or legacy failed tasks", async () => {
+  const f = await fixture(); let rewrites = 0; const ids: string[] = [];
+  const make = foregroundHarness(f, async input => { rewrites++; return rewritten(`Safe adult adventurer wearing a coat, revision ${input.round}`); }, async (_url, init) => {
+    const body = JSON.parse(String(init!.body)); ids.push(body.client_task_id);
+    return Response.json({ id: body.client_task_id, status: "error", error_code: "generation_failed", error: refusal });
+  });
+  try {
+    let result;
+    for (let i = 0; i < 10; i++) { result = await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); if (result.status === "failed") break; }
+    assert.equal(result?.error_code, "generation_rejected"); assert.equal(rewrites, 3); assert.equal(ids.length, 4); assert.equal(new Set(ids).size, 4);
+    const state = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!); assert.equal(state.rewrite.history.length, 4);
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); assert.equal(ids.length, 4);
+    delete state.rewrite; f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "foreground", JSON.stringify(state));
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); assert.equal(rewrites, 3);
+  } finally { f.conn.close(); }
+});
+
+test("a transient rewrite timeout resumes the same rewrite round without resubmitting the rejected image", async () => {
+  const f = await fixture(); let clock = Date.now(), calls = 0, posts = 0;
+  const make = foregroundHarness(f, async () => { if (++calls === 1) throw new LlmDriverError("timeout", "LLM connection timeout"); return rewritten("Adult gardener wearing a fully covering coat"); }, async (_url, init) => {
+    posts++; return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code: "request_rejected" });
+  }, () => clock);
+  try {
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).status, "submitted");
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); assert.equal(calls, 1); assert.equal(posts, 1);
+    clock += 60001;
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    assert.equal(calls, 2); assert.equal(posts, 1); assert.equal(JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!).rewrite.round, 1);
+  } finally { f.conn.close(); }
+});
+
+test("concurrent/restarted rewrite polls cannot overwrite a newer saved prompt or double-submit images", async () => {
+  const f = await fixture(); let clock = Date.now(), calls = 0, posts = 0;
+  let release!: (value: ReturnType<typeof rewritten>) => void, entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const make = foregroundHarness(f, async () => {
+    calls++; if (calls === 1) { entered(); return new Promise(resolve => { release = resolve; }); }
+    return rewritten("New saved adult gardener in a coat");
+  }, async (_url, init) => { posts++; return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code: "request_rejected" }); }, () => clock);
+  try {
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    const old = make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); const fenced = assert.rejects(old, /generation_busy/);
+    await started;
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); assert.equal(calls, 1);
+    clock += 120001;
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); assert.equal(calls, 2);
+    release(rewritten("Stale adult gardener prompt")); await fenced;
+    const state = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!);
+    assert.equal(state.rewrite.prompt, "New saved adult gardener in a coat"); assert.equal(state.postAttempts, 0); assert.equal(posts, 1);
+  } finally { f.conn.close(); }
+});
+
+test("lease expiry during rewriting prevents the stale request from persisting or submitting a new image", async () => {
+  const f = await fixture(); let posts = 0;
+  const make = foregroundHarness(f, async () => { f.advance(181000); return rewritten("Adult gardener in a coat"); }, async (_url, init) => {
+    posts++; return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code: "request_rejected" });
+  });
+  try {
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"), /lease_lost/);
+    assert.equal(posts, 1); assert.equal(JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!).rewrite.round, 0);
+  } finally { f.conn.close(); }
+});
+
+test("changed source or saved rewrite prompt fails closed before another model or image request", async () => {
+  const f = await fixture(); let calls = 0;
+  const make = foregroundHarness(f, async () => { calls++; return rewritten("Adult gardener in a coat"); }, async (_url, init) => Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code: "request_rejected" }));
+  try {
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    await assert.rejects(make()(f.store, f.plugin, { ...f.job, creation_json: JSON.stringify({ prompt: "changed" }) }, f.claim.leaseToken, "foreground"), /generation_policy_changed/);
+    const state = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!); state.rewrite.prompt = "tampered";
+    f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "foreground", JSON.stringify(state));
+    await assert.rejects(make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"), /generation_policy_changed/);
+    assert.equal(calls, 0);
+  } finally { f.conn.close(); }
+});
+
+test("empty or previously refused rewrite output stops without generating the same content again", async () => {
+  for (const output of ["", "Original storm gardener with translucent magical ribbons"]) {
+    const f = await fixture(); let posts = 0;
+    const make = foregroundHarness(f, async () => rewritten(output), async (_url, init) => {
+      posts++; return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code: "request_rejected" });
+    });
+    try {
+      await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+      assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).error_code, "generation_rewrite_failed");
+      await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); assert.equal(posts, 1);
+    } finally { f.conn.close(); }
+  }
+});
+
+test("repeated rewrite connection failure consumes the saved LLM budget rather than restarting it", async () => {
+  const f = await fixture(); let clock = Date.now(), calls = 0, posts = 0;
+  const make = foregroundHarness(f, async () => { calls++; throw new LlmDriverError("timeout", "upstream timeout"); }, async (_url, init) => {
+    posts++; return Response.json({ id: JSON.parse(String(init!.body)).client_task_id, status: "error", error_code: "request_rejected" });
+  }, () => clock);
+  try {
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"); clock += 60001;
+    assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).error_code, "generation_rewrite_failed");
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    assert.equal(calls, 2); assert.equal(posts, 1); assert.equal(JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!).rewrite.pending.calls, 2);
+  } finally { f.conn.close(); }
+});
+
+test("background reuses the completed foreground and retains terminal rejection without calling the foreground rewriter", async () => {
+  const f = await fixture(); let calls = 0; const posts: any[] = [];
+  const make = foregroundHarness(f, async () => { calls++; return rewritten("unused"); }, async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png));
+    const body = JSON.parse(String(init!.body)); posts.push(body);
+    return Response.json(body.background === "transparent" ? { id: body.client_task_id, status: "success", data: [{ url: "https://images.example/final-foreground.png" }] } : { id: body.client_task_id, status: "error", error_code: "generation_failed", error: refusal });
+  });
+  try {
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    assert.equal((await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "background")).error_code, "generation_rejected");
+    await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "background"); assert.equal(calls, 0); assert.equal(posts.length, 2);
+    assert.deepEqual(posts[1].images, [`data:image/png;base64,${f.png.toString("base64")}`]);
+  } finally { f.conn.close(); }
+});
+
+
+test("foreground and rewrite constraints do not prescribe a pose while preserving an explicitly requested gesture", async () => {
+  const prompt = layerPrompt("Woodblock portrait of an adult character in a winter garden", "foreground");
+  assert.match(prompt, /character and creative brief determine the pose, gesture and framing/);
+  assert.match(prompt, /transparent RGBA/); assert.match(prompt, /visible contours/); assert.match(prompt, /top and side source edges/);
+  assert.doesNotMatch(prompt, /behind the head|raised arm|bent elbow|shoulder-to-elbow-to-hand|pin-up/);
+  const requested = layerPrompt("The character is reading a book with both hands", "foreground");
+  assert.match(requested, /reading a book with both hands/);
+  let system = "";
+  const complete: any = async (opts: any) => { system = opts.systemPrompt; return { data: { rewritten: "Adult character reading a book" }, backend: "test" }; };
+  await rewriteBlockedPrompt({ originalPromptText: "adult character", round: 1, previousRewrittens: [], previousAnalysis: null, foregroundConstraints: layerPrompt("", "foreground") }, complete);
+  assert.match(system, /动作由角色和主题决定/); assert.match(system, /未指定时自由选择合适动作/);
+  assert.doesNotMatch(system, /behind the head|raised arm|bent elbow|shoulder-to-elbow-to-hand/);
+});
+
+
+test("portrait foreground geometry is frozen across lost acknowledgements and all rewrite rounds", async () => {
+  const f = await fixture(); const posts: Array<Record<string, any>> = []; let lose = true;
+  const make = () => createV2Layers({ providers: () => [f.entry], provider: () => f.entry, rewrite: async () => ({ rewrittenPromptText: "A fully clothed adult storm gardener", llmDurationMs: 1 }) as any, fetch: async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (init?.method === "POST") { const body = JSON.parse(String(init.body)); posts.push(body); if (lose) { lose = false; throw Error("ack lost"); } return Response.json({ id: body.client_task_id, status: "success", data: [{ url: "https://images.example/foreground.png" }] }); }
+    return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: "error", error_code: "request_rejected" }] });
+  } });
+  try {
+    await assert.rejects(make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground"), /ack lost/);
+    await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");
+    await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");
+    assert.equal((await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground")).status,"succeeded");
+    assert.equal(posts.length,2); assert.ok(posts.every(p=>p.size==="1024x1280" && p.prompt.includes("Portrait 4:5")));
+    assert.equal(JSON.parse(f.store.layer("snapub",f.job.id,"foreground")!).outputSize,"1024x1280");
+  } finally { f.conn.close(); }
+});
+
+test("legacy in-flight 2:3 foreground resumes its original geometry and task ID without a second image submission", async () => {
+  const f=await fixture();let posts=0,gets=0;
+  const legacyPng=await sharp(f.png).extend({top:128,bottom:128,left:0,right:0,background:'transparent'}).png().toBuffer();
+  const run=createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>{
+    if(String(url).startsWith('https://images.example'))return new Response(new Uint8Array(legacyPng));
+    if(init?.method==='POST'){posts++;throw Error('lost acknowledgement')}
+    gets++;return Response.json({items:[{id:new URL(String(url)).searchParams.get('ids'),status:'success',data:[{url:'https://images.example/legacy.png'}]}]});
+  }});
+  try{
+    await assert.rejects(run(f.store,f.plugin,f.job,f.claim.leaseToken,'foreground'));
+    const state=JSON.parse(f.store.layer('snapub',f.job.id,'foreground')!),id=state.taskId;
+    const {createHash}=await import('node:crypto'),legacyHash=createHash('sha256').update(layerPrompt(f.input.creation.prompt,'foreground','1024x1536')).digest('hex');
+    delete state.outputSize;state.promptHash=legacyHash;state.rewrite.originalPromptHash=legacyHash;
+    f.store.saveLayer('snapub',f.job.id,f.claim.leaseToken,'foreground',JSON.stringify(state));
+    assert.equal((await run(f.store,f.plugin,f.job,f.claim.leaseToken,'foreground')).status,'succeeded');
+    assert.equal(posts,1);assert.equal(gets,1);assert.equal(JSON.parse(f.store.layer('snapub',f.job.id,'foreground')!).taskId,id);
+  }finally{f.conn.close()}
+});
+
+
+test("native foreground accepts generated 4:5 pixel rounding but refuses a materially different aspect ratio", async () => {
+  for(const [width,height,expected] of [[1122,1402,"succeeded"],[1024,1536,"failed"],[1280,1024,"failed"]] as const){
+    const f=await fixture(),png=await sharp(f.png).resize(width,height,{fit:'contain',background:'transparent'}).png().toBuffer();
+    const run=createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>String(url).startsWith('https://images.example')?new Response(new Uint8Array(png)):Response.json({id:JSON.parse(String(init!.body)).client_task_id,status:'success',data:[{url:'https://images.example/new.png'}]})});
+    try{assert.equal((await run(f.store,f.plugin,f.job,f.claim.leaseToken,'foreground')).status,expected)}finally{f.conn.close()}
+  }
+});
+
+test("frozen recomposition reads bypass provider lookup and never regenerate originals", async () => {
+  const f = await fixture(); let calls = 0;
+  try {
+    for (const name of ["foreground", "background"]) f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, name, JSON.stringify({ status: "succeeded", taskId: name, imageUrl: `https://images.example/${name}.png`, imageSha256: "a".repeat(64), outputSize: "1024x1536" }));
+    f.store.finish("snapub", f.job.id, f.claim.leaseToken, { status: "succeeded", imageUrl: "https://images.example/final.webp" });
+    const job = f.store.recompose({ id: "recomposed", plugin: "snapub", owner: f.job.owner_key, sourceId: f.job.id, instruction: "" });
+    const lease = f.store.claim("snapub", "worker", "revision", true)!;
+    const run = createV2Layers({ providers: () => { calls++; throw Error("no provider access"); }, provider: () => { calls++; throw Error("no provider access"); }, fetch: async () => { calls++; throw Error("no image request"); } });
+    assert.equal((await run(f.store, f.plugin, job, lease.leaseToken, "foreground")).status, "succeeded");
+    assert.equal((await run(f.store, f.plugin, job, lease.leaseToken, "background")).image_sha256, "a".repeat(64));
+    await assert.rejects(run(f.store, f.plugin, job, lease.leaseToken, "repair"), /invalid_repair/);
+    f.conn.prepare("DELETE FROM static_v2_layers WHERE job_id=? AND layer='foreground'").run(job.id);
+    await assert.rejects(run(f.store, f.plugin, job, lease.leaseToken, "foreground"), /layers_missing/);
+    assert.equal(calls, 0);
+  } finally { f.conn.close(); }
+});
+
+test("recomposition repairs use the original pinned provider across reused ancestors, with one durable edit and no regeneration", async () => {
+  const f = await fixture(); let phase = "original", edits = 0, id = "";
+  const patchPng = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: "transparent" } }).png().toBuffer();
+  const request: typeof fetch = async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(phase === "original" ? f.png : patchPng));
+    if (init?.method === "POST") {
+      const body = JSON.parse(String(init.body)); id = body.client_task_id;
+      if (phase === "repair") { assert.match(String(url), /\/edits$/); edits++; }
+      return Response.json({ id, status: "queued" });
+    }
+    return Response.json({ items: [{ id, status: "success", data: [{ url: "https://images.example/output.png" }] }] });
+  };
+  const run = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: request });
+  try {
+    await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
+    f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "background", f.store.layer("snapub", f.job.id, "foreground")!);
+    f.store.finish("snapub", f.job.id, f.claim.leaseToken, { status: "succeeded", imageUrl: "https://images.example/final.webp" });
+    const child = f.store.recompose({ id: "reuse", plugin: "snapub", owner: f.job.owner_key, sourceId: f.job.id, instruction: "" });
+    const childLease = f.store.claim("snapub", "worker", "revision", true)!;
+    f.store.finish("snapub", child.id, childLease.leaseToken, { status: "succeeded", imageUrl: "https://images.example/final.webp" });
+    const next = f.store.recompose({ id: "reuse-again", plugin: "snapub", owner: f.job.owner_key, sourceId: child.id, instruction: "左侧衣角出框" });
+    const lease = f.store.claim("snapub", "worker", "revision", true)!;
+    const frozen = f.store.layer("snapub", next.id, "foreground")!;
+    const input = { foreground_sha256: JSON.parse(frozen).imageSha256, crop_png: `data:image/png;base64,${patchPng.toString("base64")}`, mask_png: `data:image/png;base64,${patchPng.toString("base64")}`, part: "side terminal", material: "solid" as const };
+    phase = "repair";
+    await assert.rejects(run(f.store, f.plugin, next, lease.leaseToken, "repair", { ...input, foreground_sha256: "f".repeat(64) }), /source_mismatch/);
+    await run(f.store, f.plugin, next, lease.leaseToken, "repair", input);
+    assert.equal((await run(f.store, f.plugin, next, lease.leaseToken, "repair", input)).status, "succeeded");
+    await run(f.store, f.plugin, next, lease.leaseToken, "repair", input);
+    assert.equal(edits, 1);
+    assert.equal(f.store.layer("snapub", next.id, "foreground"), frozen);
+    await assert.rejects(run(f.store, f.plugin, next, lease.leaseToken, "repair", { ...input, part: "different" }), /input_changed/);
   } finally { f.conn.close(); }
 });

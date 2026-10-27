@@ -255,3 +255,34 @@ test("a worker never reclaims or exhausts a task still active locally after a te
     assert.equal(store.get("snapub",first.id)?.error_code,"recovery_limit");
   } finally {conn.close();}
 });
+
+test("recomposition atomically freezes original layers/stats, binds owner and intent, and never replaces source", () => {
+  const f = fixture();
+  try {
+    f.store.submit({ ...f.input("source"), creation: { prompt: "Original" }, cardStats: { cost: 3 } });
+    const source = f.store.claim("snapub", "worker-one", "revision", true)!;
+    for (const name of ["foreground", "background"]) f.store.saveLayer("snapub", source.id, source.leaseToken, name, JSON.stringify({ status: "succeeded", taskId: `old-${name}`, imageUrl: `https://images.example/${name}.png`, imageSha256: "a".repeat(64), outputSize: "1024x1536", rewrite: { round: 3 } }));
+    f.store.finish("snapub", source.id, source.leaseToken, { status: "succeeded", imageUrl: "https://images.example/final.webp" });
+    const before = f.store.get("snapub", source.id);
+    const input = { id: "recompose", plugin: "snapub", owner: "owner-one", sourceId: source.id, instruction: "Move left" };
+    assert.throws(() => f.store.recompose({ ...input, owner: "other" }), /source_unavailable/);
+    const job = f.store.recompose(input);
+    assert.equal(job.input_kind, "generated"); assert.equal(job.source_task_id, source.id);
+    assert.equal(job.card_stats_json, source.card_stats_json);
+    assert.equal(f.store.recompose(input).id, job.id);
+    assert.throws(() => f.store.recompose({ ...input, instruction: "Move right" }), /idempotency_conflict/);
+    assert.deepEqual(f.store.get("snapub", source.id), before);
+    for (const name of ["foreground", "background"]) {
+      const layer = JSON.parse(f.store.layer("snapub", job.id, name)!);
+      assert.equal(layer.imageUrl, `https://images.example/${name}.png`); assert.equal(layer.rewrite, undefined);
+    }
+    assert.equal(f.store.layer("snapub", job.id, "repair"), undefined);
+    assert.equal(f.store.claim("snapub", "worker-one", "revision", true, false)!.id, job.id);
+    // A failed/missing original is not silently regenerated and inserts nothing.
+    assert.throws(() => f.store.recompose({ ...input, id: "missing", sourceId: "unknown" }), /source_unavailable/);
+    assert.equal(f.store.get("snapub", "missing"), undefined);
+    f.conn.prepare("DELETE FROM static_v2_layers WHERE job_id=? AND layer='background'").run(source.id);
+    assert.throws(() => f.store.recompose({ ...input, id: "no-background" }), /layers_missing/);
+    assert.equal(f.store.get("snapub", "no-background"), undefined);
+  } finally { f.conn.close(); }
+});
