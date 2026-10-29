@@ -42,6 +42,8 @@ import {
 } from "../../storage/jobs.js";
 
 export interface GenerateInput {
+  /** Server-owned identity for recoverable upstream submissions. */
+  requestKey?: string;
   prompt: ImagePrompt;
   size?: ImageGenInput["size"];
   quality?: ImageGenInput["quality"];
@@ -92,6 +94,7 @@ export async function generate(input: GenerateInput): Promise<GenerateOutcome> {
   );
 
   const outcome = await driveWithRewriteFallback({
+    requestKey: input.requestKey,
     promptText: originalPromptText,
     size: input.size,
     quality: input.quality,
@@ -148,7 +151,7 @@ export async function runGenerationJob(
   markJobRunning(jobId);
   console.log(`[job] ▶ running ${jobId}`);
   try {
-    const outcome = await generate(input);
+    const outcome = await generate({ ...input, requestKey: jobId });
     updateJobAttempts(jobId, outcome.driver.attempts);
     markJobSucceeded(
       jobId,

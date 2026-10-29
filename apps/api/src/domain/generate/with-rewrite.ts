@@ -38,6 +38,7 @@ import {
   type IdentityAnchors,
   type RewriteRound,
 } from "../rewrite-prompt/index.js";
+import { C2iTaskPendingError } from "../../drivers/image/c2i-tasks.js";
 
 /** Error codes that mean "same prompt will keep failing this provider"; rewriting may help. */
 const REWRITE_TRIGGER_CODES: ReadonlySet<AttemptErrorCode> = new Set<AttemptErrorCode>([
@@ -256,6 +257,14 @@ export async function driveWithRewriteFallback(
       if (!(retryErr instanceof ImageGenError)) throw retryErr;
       cumulativeAttempts.push(...retryErr.attempts);
       lastErr = retryErr;
+      if (retryErr.cause instanceof C2iTaskPendingError) {
+        // A new rewrite changes the request fingerprint and would generate a
+        // replacement even though the original POST may have already executed.
+        throw new ImageGenError(
+          retryErr.code, retryErr.message, cumulativeAttempts,
+          retryErr.cause, [...rewritesHistory],
+        );
+      }
       // No early bail: keep stepping through rounds up to maxRound. Even if
       // this round's failures are non-content (network/server), the next
       // round's more aggressive prompt degradation might still get through

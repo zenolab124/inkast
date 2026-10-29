@@ -3,18 +3,21 @@ import type { InkastPlugin } from "../plugins/types.js";
 import { getProviderCapability, listEnabledCapabilities } from "../storage/providers.js";
 import { createV2Store, V2QueueError, type V2Job } from "../storage/v2-jobs.js";
 import { validateVisionImage } from "./vision/index.js";
-import { buildC2iPromptText } from "../drivers/image/c2i-tasks.js";
+import { buildC2iPromptText, isC2iCodexModel } from "../drivers/image/c2i-tasks.js";
 import { resolveExtraHeaders } from "../drivers/codex-header.js";
 import sharp from "sharp";
 import { rewriteBlockedPrompt, type RewriteRound } from "./rewrite-prompt/index.js";
 
 type Layer = "foreground" | "background" | "repair";
+type ForegroundFraming = "rounded-envelope-v1" | "neutral-framing-v2" | "neutral-framing-v3";
 export interface V2RepairInput { foreground_sha256: string; crop_png: string; mask_png: string; part: string; material: "solid" | "energy"; }
 const repairPrompt = (repair: V2RepairInput) => `Edit only the small missing terminal of ${JSON.stringify(repair.part)} on the isolated transparent foreground in image 1. Image 2 is an edit guide: white is the only editable region, black must remain unchanged. Reconstruct a short natural rounded ending continuing the local anatomy, garment or prop and matching exact texture, focus, lighting and color. Do not alter the pose, identity, face, existing detail or any other part. Keep the restored silhouette away from the guide outer boundary; finish it naturally with transparent space beyond it. Genuine transparent RGBA PNG, square. ${repair.material === "solid" ? "Solid material remains fully opaque; never dissolve or fade anatomy or clothing." : "Preserve only the physically translucent energy as translucent."} No frame, numbers, text, backdrop or extra objects.`;
 export interface V2LayerResult { status: "submitted" | "succeeded" | "failed"; image_url?: string; image_sha256?: string; error_code?: string; phase?: "awaiting_admission" | "preparing" | "queued" | "generating"; }
 type ProviderEntry = NonNullable<ReturnType<typeof getProviderCapability>>;
 interface LayerState {
   version: 1; taskId: string; providerId: string; providerHash: string; promptHash: string;
+  foregroundFraming?: ForegroundFraming;
+  codexDrawing?: { protocol: "explicit-images-v1"; sessionId: string; previousStepId?: string; previousImageSha256?: string };
   createdAt: number; status: "submitted" | "succeeded" | "failed";
   referenceMode?: "url-sha256" | "inline"; admissionProtocol?: "durable-v1"; postAttempts?: number; lastPostAt?: number; admittedAt?: number; lastHttpStatus?: number;
   upstreamStatus?: string; lastPolledAt?: number; completedAt?: number;
@@ -43,11 +46,32 @@ class InvalidGeneratedLayer extends Error {}
 const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const providerHash = ({ provider, capability }: ProviderEntry) => digest(JSON.stringify({ id: provider.id, base: provider.baseUrl, model: capability.model, extras: capability.extras }));
 const common = "Premium collectible-card artwork. ";
-export function layerPrompt(prompt: string, layer: Exclude<Layer, "repair">, size = layer === "foreground" ? "1024x1280" : "1024x1536", independent = size === "1024x1280"): string {
+const foregroundFraming = " Foreground composition priority: avoid cropping the subject at the TOP, LEFT and RIGHT source edges, especially the head, hair, headwear, hands, arms and held objects. Arrange the visible silhouette in a loose invisible circular or elliptical composition envelope, adapting its direction to the character's natural action rather than filling the canvas height from edge to edge. Keep useful transparent space beyond the upper and lateral extremities. The envelope is only a layout guide: do not draw a circle, circular backing, vignette or badge, and never clip the subject with a circular mask. Keep a useful subject scale without forcing a fixed pose or uniformly shrinking it. If space is tight, adjust framing to preserve the upper and side contours; a natural half-body or waist/torso crop at the BOTTOM is allowed. Do not require a full body, add legs merely for completeness, or impose equal margins on all four sides. Never fade intact anatomy or rigid objects to conceal a crop.";
+export function layerPrompt(prompt: string, layer: Exclude<Layer, "repair">, size = layer === "foreground" ? "1024x1280" : "1024x1536", independent = size === "1024x1280", framing: "legacy" | ForegroundFraming = "neutral-framing-v3"): string {
+  // Keep earlier policies byte-stable for durable submissions and rewrite recovery.
+  if (framing === "neutral-framing-v3" && layer === "foreground") return `请根据以下文字从零生成一张全新的插画，并直接输出新绘制的图片。
+
+创作描述：
+${prompt}
+
+输出规格与构图边界：
+1. ${size === "1024x1280" ? "4:5" : "2:3"}竖图，真正透明底的RGBA PNG。画面只包含角色及其衣物、头发、配饰、随身道具和效果元素，其余区域为透明。无文字、数字、水印、图框或辅助线。
+2. 动作、镜头、人物取景范围、朝向、表情、服装、色彩、光影及画法遵循创作描述；未指定的由角色和主题自由决定。
+3. 保留所选构图中完整的头部、发顶、头饰、手指和手持物。最高实体轮廓上方至少留6%画面高度的透明空白，最外侧实体轮廓的左右各至少留5%画面宽度的透明空白。
+4. 下方两角保持透明：画面底部15%高度内，左右各20%宽度区域不放实体。向两侧伸展的衣角、飘带、发梢和效果在到达该区域前自然结束或渐隐，不在左右边缘或底角形成平切断口。
+5. 需要下缘自然取景时，仅在画布底边中间50%宽度内连续结束，手和持物须完整。通过合理取景安排可见轮廓，不改变人体形状，不为完整性额外添加肢体。
+6. 头脸、身体、肢体和硬质道具保持不透明。轻纱、能量、烟雾保持符合材质的透明度；衣物柔软末端可局部渐隐，不能让主体整体或实体肢体半透明。`;
   const brief = `Creative brief (subject, scene, style and lighting): ${JSON.stringify(prompt)}. `;
+  if (framing === "neutral-framing-v2" || framing === "neutral-framing-v3") {
+    const dimensions = `Canvas width x height: ${size}. `;
+    const intent = "Honor all explicit creative requirements. Where unspecified, let the subject and theme determine the pose, gesture, camera, framing, orientation, expression, clothing, color, lighting and rendering style. Do not add a default pose, framing, geometric silhouette template or aesthetic treatment. ";
+    return dimensions + brief + intent + (layer === "foreground"
+      ? "Create only an isolated foreground with genuine transparent RGBA alpha, without a backdrop or painted transparency pattern. Keep the subject, hair, clothing, accessories, hands and held objects in this layer. Anatomy and rigid objects remain opaque; actual translucent materials, energy, smoke and antialiased contour edges may retain their natural alpha. For a single subject, preserve the complete head contour and features. Avoid cutting visible subject contours at the top, left and right source edges; leave sufficient transparent space beyond the contours that may cross the later card frame, without a fixed margin quota. The bottom may end at a natural framing boundary chosen for the brief; do not add or remove body parts to enforce a predefined framing. Lower contours must allow a continuous return into the later card window before its closed bottom; avoid carrying an outward branch to a truncated exterior ending. Never cut an intact contour in the middle, flatten it against an image edge or fade anatomy or rigid objects to simulate completeness. This layer will be composed with a separate background and fixed card frame later; do not draw text, logos, numbers, watermarks, card borders or layout guides."
+      : "Create only the separate environment background for the attached foreground. Match the foreground's existing style, perspective and lighting and the scene specified in the brief. Do not duplicate the foreground subject, anatomy, clothing, held objects or its main effects. Foreground and background will be positioned independently; match their scene rather than their canvas edges. Do not draw text, logos, numbers, watermarks, card borders or layout guides.");
+  }
   return buildC2iPromptText({ promptText: common + (size === "1024x1280" ? "Portrait 4:5 (width:height), 1024x1280. Keep the subject at a useful portrait scale; use the extra lateral space for the natural silhouette, gesture, clothing and held objects without shrinking the subject into a small centered figure or imposing any pose. " : "Portrait 2:3, 1024x1536. ") + "No text, logo, watermark, numbers or card frame. " + brief + (layer === "foreground"
     ? "Create ONLY the foreground on genuine transparent RGBA alpha, no checkerboard, painted backing, ground or sky. Keep the subject, hair, accessories, clothing, hands and held objects as foreground with solid opaque material. Only actual energy, smoke, translucent materials and antialiased silhouette edges may use partial alpha. Let the character and creative brief determine the pose, gesture and framing; when no action is specified, choose a fitting action without a fixed pose template. This is an isolated source layer for later card composition. For a single-person composition, the entire head including the crown, both sides, facial features and jaw must be present; a torso crop is allowed but a head crop is not. Keep the visible contours of the subject and held objects complete inside the top and side source edges, with transparent space around their outermost silhouettes. Fit those contours by adjusting the framing only as needed while honoring the brief. Preserve the requested framing: full-body completeness is not required, and a natural torso crop at the bottom is allowed. Do not solve overflow by cutting off a visible part, flattening its contour against the canvas edge, or fading solid material. Space around important silhouettes is not a uniform border or fixed margin quota. Final frame-break placement is decided later during card composition. Light the subject for the scene in the brief."
-    : "Create ONLY the separate environment background for the attached foreground. Match its painting style, camera, direction and color of light. Use the scene from the brief; leave a natural central staging area, include local light spill from its luminous effects. No person, face, silhouette, clothing, hands, held objects or duplicated main energy ribbons. " + (independent ? "The attached foreground is a separate 4:5 portrait source; this background remains a 2:3 portrait. Match perspective and light, not its canvas boundaries. Foreground and background will be independently positioned during composition." : "The attached foreground will overlay this background unchanged.")), size });
+    : "Create ONLY the separate environment background for the attached foreground. Match its painting style, camera, direction and color of light. Use the scene from the brief; leave a natural central staging area, include local light spill from its luminous effects. No person, face, silhouette, clothing, hands, held objects or duplicated main energy ribbons. " + (independent ? "The attached foreground is a separate 4:5 portrait source; this background remains a 2:3 portrait. Match perspective and light, not its canvas boundaries. Foreground and background will be independently positioned during composition." : "The attached foreground will overlay this background unchanged.")) + (layer === "foreground" && framing === "rounded-envelope-v1" ? foregroundFraming : ""), size });
 }
 
 /** One bounded upstream exchange per worker poll. No in-memory generation job
@@ -61,8 +85,10 @@ export function createV2Layers(deps: {
   const active = new Set<string>();
   const candidates = deps.providers ?? ((ids: readonly string[]) => listEnabledCapabilities("image", { providerIds: ids }));
   const lookup = deps.provider ?? (id => getProviderCapability(id, "image"));
-  const allowed = (plugin: InkastPlugin, entry: ProviderEntry) =>
-    plugin.imageProviderIds?.includes(entry.provider.id) && !entry.capability.disabled && entry.capability.extras?.mode === "c2i-tasks";
+  const layerProviders = (plugin: InkastPlugin) => plugin.v2ImageProviderIds ?? plugin.imageProviderIds ?? [];
+  const allowed = (plugin: InkastPlugin, entry: ProviderEntry, pinned = false) =>
+    (layerProviders(plugin).includes(entry.provider.id) || (pinned && plugin.imageProviderIds?.includes(entry.provider.id))) &&
+    !entry.capability.disabled && entry.capability.extras?.mode === "c2i-tasks";
   const readImage = async (url: string, plugin: InkastPlugin, repair = false, foregroundSize?: string) => {
     try { await validateVisionImage(url, plugin); } catch { throw new InvalidGeneratedLayer("Invalid layer URL"); }
     if (!url.startsWith("https://")) throw new InvalidGeneratedLayer("Invalid layer URL");
@@ -132,8 +158,12 @@ export function createV2Layers(deps: {
       let stored = store.layer(plugin.id, job.id, layer);
       let state = JSON.parse(stored ?? "null") as LayerState | null;
       const outputSize = repair ? "1024x1024" : layer === "foreground" ? (state ? state.outputSize ?? "1024x1536" : "1024x1280") : "1024x1536";
-      const foregroundPrompt = (value: string) => layerPrompt(value, "foreground", outputSize);
-      const originalPrompt = repair ? repairPrompt(repair) : layerPrompt(brief, layer as Exclude<Layer, "repair">, outputSize, layer === "foreground" ? outputSize === "1024x1280" : previous?.outputSize === "1024x1280");
+      // Missing policy denotes a previously submitted layer. Its original prompt
+      // and rewrite rounds must keep the same hash after prompt-only upgrades.
+      const framing = state ? state.foregroundFraming ?? "legacy" : previous?.foregroundFraming ?? (layer === "foreground" ? "neutral-framing-v3" : "legacy");
+      if (!["legacy", "rounded-envelope-v1", "neutral-framing-v2", "neutral-framing-v3"].includes(framing)) throw new V2QueueError("generation_policy_changed", 409);
+      const foregroundPrompt = (value: string) => layerPrompt(value, "foreground", outputSize, outputSize === "1024x1280", framing);
+      const originalPrompt = repair ? repairPrompt(repair) : layerPrompt(brief, layer as Exclude<Layer, "repair">, outputSize, layer === "foreground" ? outputSize === "1024x1280" : previous?.outputSize === "1024x1280", framing);
       const save = () => {
         const next = JSON.stringify(state);
         if (!store.compareAndSaveLayer(plugin.id, job.id, token, layer, stored, next)) throw new V2QueueError("generation_busy", 409);
@@ -150,9 +180,9 @@ export function createV2Layers(deps: {
       }
       // Explicit configured allowlist only. Pin the same channel for both layers;
       // foreground rewrite rounds stay on that channel and preserve durable IDs.
-      const entry = state ? lookup(state.providerId) : previous ? lookup(previous.providerId) : candidates(plugin.imageProviderIds ?? [])
-        .filter(item => allowed(plugin, item)).sort((a, b) => plugin.imageProviderIds!.indexOf(a.provider.id) - plugin.imageProviderIds!.indexOf(b.provider.id))[0];
-      if (!entry || !allowed(plugin, entry)) throw new V2QueueError("generation_provider_unavailable", 503);
+      const entry = state ? lookup(state.providerId) : previous ? lookup(previous.providerId) : candidates(layerProviders(plugin))
+        .filter(item => allowed(plugin, item)).sort((a, b) => layerProviders(plugin).indexOf(a.provider.id) - layerProviders(plugin).indexOf(b.provider.id))[0];
+      if (!entry || !allowed(plugin, entry, !!state || !!previous)) throw new V2QueueError("generation_provider_unavailable", 503);
       if ((state && (state.providerHash !== providerHash(entry) || state.promptHash !== digest(prompt))) || (previous && previous.providerHash !== providerHash(entry))) throw new V2QueueError("generation_policy_changed", 409);
       if (state?.rewrite && (layer !== "foreground" || state.rewrite.originalPromptHash !== digest(originalPrompt) || state.rewrite.round < 0 || state.rewrite.round > MAX_FOREGROUND_REWRITES)) throw new V2QueueError("generation_policy_changed", 409);
       if (state?.rewrite?.pending) {
@@ -188,6 +218,7 @@ export function createV2Layers(deps: {
         state.rewrite.round = round; state.rewrite.prompt = rewritten; delete state.rewrite.pending;
         prompt = foregroundPrompt(rewritten);
         state.taskId = `inkast-3d-${digest(`${plugin.id}:${job.id}:${layer}:rewrite:${round}`).slice(0, 40)}`;
+        if (state.codexDrawing) state.codexDrawing.sessionId = `d3-${digest(`${plugin.id}:${job.owner_key}:${job.id}:${state.taskId}`).slice(0, 48)}`;
         state.promptHash = digest(prompt); state.status = "submitted";
         for (const name of ["postAttempts", "lastPostAt", "admittedAt", "lastHttpStatus", "upstreamStatus", "lastPolledAt", "completedAt", "errorCode", "admissionProtocol"] as const) delete state[name];
         state.postAttempts = 0;
@@ -198,25 +229,41 @@ export function createV2Layers(deps: {
       const headers: Record<string, string> = { Authorization: `Bearer ${entry.apiKey}`, "Content-Type": "application/json", ...(resolveExtraHeaders(entry.capability) ?? {}) };
       // Retry only after a successful GET explicitly advertises durable admission
       // and confirms absence. The same owner/ID/payload is deduplicated upstream.
+      const initialTaskId = `inkast-3d-${digest(`${plugin.id}:${job.id}:${layer}`).slice(0, 40)}`;
+      const drawing: LayerState["codexDrawing"] = layer === "repair" ? undefined : state?.codexDrawing ?? (!state
+        ? layer === "foreground" && isC2iCodexModel(entry.capability.model)
+          ? { protocol: "explicit-images-v1", sessionId: `d3-${digest(`${plugin.id}:${job.owner_key}:${job.id}:${initialTaskId}`).slice(0, 48)}` }
+          : previous?.codexDrawing ? { protocol: "explicit-images-v1", sessionId: previous.codexDrawing.sessionId, previousStepId: previous.taskId, previousImageSha256: previous.imageSha256 } : undefined
+        : undefined);
+      if (drawing && (!isC2iCodexModel(entry.capability.model) || (layer === "background" &&
+        (drawing.sessionId !== previous?.codexDrawing?.sessionId || drawing.previousStepId !== previous?.taskId || drawing.previousImageSha256 !== previous?.imageSha256)))) throw new V2QueueError("generation_session_changed", 409);
+      if (!state && drawing) {
+        // Negotiate before the first POST. Older servers silently ignore extra
+        // JSON fields; never accidentally generate an unrelated single image.
+        const probe = await request(`${root}/api/image-tasks?ids=${encodeURIComponent(initialTaskId)}`, { headers, signal: AbortSignal.timeout(8000) });
+        if (!probe.ok || probe.headers.get("x-codex-drawing-session") !== "explicit-images-v1") throw new V2QueueError("generation_session_unavailable", 503);
+      }
       const first = !state;
       const submit = !state || state.postAttempts === 0 || (state.upstreamStatus === "awaiting_admission" &&
         state.admissionProtocol === "durable-v1" && !state.admittedAt &&
         (state.postAttempts ?? 1) < 3 && now() - (state.lastPostAt ?? state.createdAt) >= 10_000);
       let foreground: Buffer | undefined;
       const referenceMode = repair ? "inline" : state?.referenceMode ?? (first && previous?.admissionProtocol === "durable-v1" ? "url-sha256" : "inline");
-      if (submit && !repair && previous?.imageUrl && referenceMode === "inline") {
+      if (submit && !drawing && !repair && previous?.imageUrl && referenceMode === "inline") {
         foreground = await readImage(previous.imageUrl, plugin, false, previous.outputSize);
         if (digest(foreground) !== previous.imageSha256) throw new V2QueueError("invalid_generated_layer", 409);
       }
       if (!state) {
-        state = { version: 1, taskId: `inkast-3d-${digest(`${plugin.id}:${job.id}:${layer}`).slice(0, 40)}`, providerId: entry.provider.id,
+        state = { version: 1, taskId: initialTaskId, providerId: entry.provider.id,
           outputSize, inputHash, providerHash: providerHash(entry), promptHash: digest(prompt), referenceMode, createdAt: now(), status: "submitted",
+          ...(framing !== "legacy" ? { foregroundFraming: framing } : {}),
+          ...(drawing ? { codexDrawing: drawing } : {}),
           ...(layer === "foreground" ? { rewrite: { originalPromptHash: digest(originalPrompt), round: 0, prompt: brief, history: [] } } : {}) };
         // Reserve BEFORE the POST. A lost response is recovered by GET of the
         // deterministic ID; never blindly submit again after uncertain delivery.
         save();
       }
-      if (submit && previous?.imageUrl && referenceMode === "url-sha256") {
+      if (submit && !drawing && previous?.imageUrl && referenceMode === "url-sha256") {
         if (!/^[a-f0-9]{64}$/.test(previous.imageSha256 ?? "")) throw new V2QueueError("invalid_generated_layer", 409);
         headers["X-Reference-Image-Sha256"] = previous.imageSha256!;
       }
@@ -226,10 +273,11 @@ export function createV2Layers(deps: {
         save();
       }
       const res = submit
-        ? await request(`${root}/api/image-tasks/${layer === "foreground" ? "generations" : "edits"}`, { method: "POST", headers, signal: AbortSignal.timeout(previous && referenceMode === "inline" ? 25_000 : 8000), body: JSON.stringify({
+        ? await request(`${root}/api/image-tasks/${drawing || layer === "foreground" ? "generations" : "edits"}`, { method: "POST", headers, signal: AbortSignal.timeout(!drawing && previous && referenceMode === "inline" ? 25_000 : 8000), body: JSON.stringify({
           client_task_id: state.taskId, prompt, model: entry.capability.model, size: outputSize, quality: "high", output_format: "png",
           background: layer !== "background" ? "transparent" : "opaque", response_format: "url", url_source: "r2", optimize_output: false,
-          ...(repair ? { images: [repair.crop_png, repair.mask_png] } : previous?.imageUrl ? { images: [referenceMode === "url-sha256" ? previous.imageUrl : `data:image/png;base64,${foreground!.toString("base64")}`] } : {}),
+          ...(drawing ? { drawing_session_id: drawing.sessionId, ...(drawing.previousStepId ? { drawing_previous_step_id: drawing.previousStepId, drawing_previous_image_sha256: drawing.previousImageSha256 } : {}) } : {}),
+          ...(repair ? { images: [repair.crop_png, repair.mask_png] } : !drawing && previous?.imageUrl ? { images: [referenceMode === "url-sha256" ? previous.imageUrl : `data:image/png;base64,${foreground!.toString("base64")}`] } : {}),
         }) })
         : await request(`${root}/api/image-tasks?ids=${encodeURIComponent(state.taskId)}`, { headers, signal: AbortSignal.timeout(8000) });
       if (!res.ok) {
@@ -248,7 +296,8 @@ export function createV2Layers(deps: {
         throw new V2QueueError("generation_connection_pending", 503);
       }
       if (res.headers.get("x-image-task-admission") === "durable-v1") state.admissionProtocol = "durable-v1";
-      const data = await res.json() as { id?: string; status?: string; progress?: string; error_code?: string; error?: string; items?: Array<{ id: string; status: string; progress?: string; error_code?: string; error?: string; data?: Array<{ url?: string }> }>; missing_ids?: string[] };
+      type DrawingReceipt = { drawing_session_id?: string; drawing_context_status?: string; drawing_image_sha256?: string };
+      const data = await res.json() as DrawingReceipt & { id?: string; status?: string; progress?: string; error_code?: string; error?: string; items?: Array<DrawingReceipt & { id: string; status: string; progress?: string; error_code?: string; error?: string; data?: Array<{ url?: string }> }>; missing_ids?: string[] };
       const task = submit ? data : data.items?.find(item => item.id === state!.taskId);
       if (task?.id && task.id !== state.taskId) throw Error("Unexpected upstream task ID");
       state.lastPolledAt = now();
@@ -267,6 +316,23 @@ export function createV2Layers(deps: {
         const code = task.error_code;
         const detail = typeof task.error === "string" ? task.error.slice(0, 2000) : "";
         const rejected = contentRejected(code, detail);
+        const incomplete = task as DrawingReceipt & { data?: Array<{ url?: string }> };
+        if (drawing && code === "CODEX_CONTEXT_INCOMPLETE") {
+          state.errorCode = "generation_context_incomplete";
+          const url = incomplete.data?.[0]?.url;
+          if (url && incomplete.drawing_session_id === drawing.sessionId && incomplete.drawing_context_status === "incomplete" && /^[a-f0-9]{64}$/.test(incomplete.drawing_image_sha256 ?? "")) {
+            try {
+              const bytes = await readImage(url, plugin, false, layer === "foreground" ? outputSize : "background-portrait");
+              if (digest(bytes) !== incomplete.drawing_image_sha256) throw new InvalidGeneratedLayer("Incomplete-context image hash changed");
+              state.imageUrl = url; state.imageSha256 = digest(bytes);
+            } catch (error) {
+              if (!(error instanceof InvalidGeneratedLayer)) throw error;
+              state.errorCode = "invalid_generated_layer";
+            }
+          }
+          state.completedAt = now(); save();
+          return { status: "failed", image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode };
+        }
         state.errorCode = code === "request_preparation_failed" ? "generation_submission_failed" :
           code === "admission_capacity" ? "generation_queue_full" :
           rejected ? "generation_rejected" : "generation_failed";
@@ -296,10 +362,16 @@ export function createV2Layers(deps: {
         }
       } else if (task?.status === "success") {
         state.upstreamStatus = "success";
+        const receipt = task as DrawingReceipt;
+        if (drawing && (receipt.drawing_session_id !== drawing.sessionId || receipt.drawing_context_status !== "ready" || !/^[a-f0-9]{64}$/.test(receipt.drawing_image_sha256 ?? ""))) {
+          state.status = "failed"; state.errorCode = "generation_context_incomplete"; state.completedAt = now(); save();
+          return { status: "failed", error_code: state.errorCode };
+        }
         const result = task as { data?: Array<{ url?: string }> }, url = result.data?.[0]?.url;
         if (!url) throw Error("Missing generated layer URL");
         try {
           const bytes = await readImage(url, plugin, !!repair, layer === "foreground" ? outputSize : layer === "background" && previous?.outputSize === "1024x1280" ? "background-portrait" : undefined); // Freeze bytes before publishing any layer URL.
+          if (drawing && digest(bytes) !== receipt.drawing_image_sha256) throw new InvalidGeneratedLayer("Drawing result PNG hash changed");
           state.status = "succeeded"; state.imageUrl = url; state.imageSha256 = digest(bytes);
         } catch (error) {
           if (!(error instanceof InvalidGeneratedLayer)) throw error;

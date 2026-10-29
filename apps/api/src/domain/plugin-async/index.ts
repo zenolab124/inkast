@@ -337,6 +337,7 @@ async function runImageStage(item: PreparedPluginTask): Promise<void> {
         : plugin.imageDefaults.size;
       imageOutcome = await driveWithRewriteFallback(
         {
+          requestKey: taskId,
           promptText,
           size: effectiveSize,
           quality: plugin.imageDefaults.quality,

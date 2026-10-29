@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadPluginConfigsFromDir } from "../src/plugins/loader.js";
+import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { rewriteBlockedPrompt } from "../src/domain/rewrite-prompt/index.js";
 import { LlmDriverError } from "../src/drivers/llm/types.js";
@@ -339,8 +343,11 @@ test("a foreground refusal rewrites once, persists before POST, and resumes the 
     await make()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground");
     assert.equal(inputs.length, 1); assert.equal(posts.length, 2); assert.notEqual(posts[0].client_task_id, posts[1].client_task_id);
     const body = posts[1]; assert.equal(body.background, "transparent"); assert.equal(body.output_format, "png"); assert.equal(body.optimize_output, false);
-    assert.match(body.prompt, /genuine transparent RGBA/); assert.match(body.prompt, /solid opaque material/);
-    assert.match(body.prompt, /character and creative brief determine the pose/); assert.match(body.prompt, /visible contours/); assert.match(body.prompt, /natural torso crop/);
+    assert.match(body.prompt, /真正透明底的RGBA PNG/); assert.match(body.prompt, /头脸、身体、肢体和硬质道具保持不透明/);
+    assert.match(body.prompt, /未指定的由角色和主题自由决定/); assert.match(body.prompt, /完整的头部/); assert.match(body.prompt, /需要下缘自然取景时/);
+    assert.match(inputs[0].foregroundConstraints, /最外侧实体轮廓的左右/);
+    assert.doesNotMatch(body.prompt.replace("Adult gardener in a fully covering coat, holding a cup, waist-up watercolor.", "USER_BRIEF"), /circular|elliptical|waist-up|half-body|portrait scale|细节克制/);
+    assert.match(body.prompt, /不在左右边缘或底角形成平切断口/);
     assert.doesNotMatch(body.prompt, /behind the head|raised arm|bent elbow|shoulder-to-elbow-to-hand/);
     assert.doesNotMatch(body.prompt, /safe zone|上 3\/4|下 1\/4/);
     const state = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!);
@@ -487,8 +494,8 @@ test("background reuses the completed foreground and retains terminal rejection 
 
 test("foreground and rewrite constraints do not prescribe a pose while preserving an explicitly requested gesture", async () => {
   const prompt = layerPrompt("Woodblock portrait of an adult character in a winter garden", "foreground");
-  assert.match(prompt, /character and creative brief determine the pose, gesture and framing/);
-  assert.match(prompt, /transparent RGBA/); assert.match(prompt, /visible contours/); assert.match(prompt, /top and side source edges/);
+  assert.match(prompt, /动作、镜头、人物取景范围、朝向、表情、服装、色彩、光影及画法遵循创作描述/);
+  assert.match(prompt, /透明底的RGBA PNG/); assert.match(prompt, /完整的头部、发顶、头饰、手指和手持物/); assert.match(prompt, /最高实体轮廓上方/);
   assert.doesNotMatch(prompt, /behind the head|raised arm|bent elbow|shoulder-to-elbow-to-hand|pin-up/);
   const requested = layerPrompt("The character is reading a book with both hands", "foreground");
   assert.match(requested, /reading a book with both hands/);
@@ -496,7 +503,24 @@ test("foreground and rewrite constraints do not prescribe a pose while preservin
   const complete: any = async (opts: any) => { system = opts.systemPrompt; return { data: { rewritten: "Adult character reading a book" }, backend: "test" }; };
   await rewriteBlockedPrompt({ originalPromptText: "adult character", round: 1, previousRewrittens: [], previousAnalysis: null, foregroundConstraints: layerPrompt("", "foreground") }, complete);
   assert.match(system, /动作由角色和主题决定/); assert.match(system, /未指定时自由选择合适动作/);
+  assert.match(system, /最外侧实体轮廓的左右/);
+  assert.match(system, /未指定的维度保持开放/);
+  assert.match(system, /需要下缘自然取景时/);
   assert.doesNotMatch(system, /behind the head|raised arm|bent elbow|shoulder-to-elbow-to-hand/);
+});
+
+test("neutral layer instructions leave unspecified art direction open and retain explicit user choices", () => {
+  for (const brief of ["Adult character", "Full-body action, low-angle camera, back view, angular woodblock print", "Waist-up portrait, seated reading, muted colors and rough brushwork"]) {
+    const generated = layerPrompt(brief, "foreground");
+    assert.ok(generated.includes(brief), "the creative brief must not be silently neutralized");
+    const constraints = generated.replace(brief, "USER_BRIEF");
+    assert.doesNotMatch(constraints, /waist-up|half-body|portrait scale|circular|elliptical|centered|Premium collectible|平滑自然|细节克制/);
+    assert.match(constraints, /完整的头部、发顶、头饰、手指和手持物/);
+    assert.match(constraints, /下方两角保持透明/);
+    assert.match(constraints, /不在左右边缘或底角形成平切断口/);
+    assert.match(constraints, /衣物柔软末端可局部渐隐，不能让主体整体或实体肢体半透明/);
+  }
+  assert.doesNotMatch(layerPrompt("Moonlit observatory", "background"), /natural central staging|平滑自然|细节克制|Premium collectible/);
 });
 
 
@@ -512,7 +536,7 @@ test("portrait foreground geometry is frozen across lost acknowledgements and al
     await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");
     await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");
     assert.equal((await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground")).status,"succeeded");
-    assert.equal(posts.length,2); assert.ok(posts.every(p=>p.size==="1024x1280" && p.prompt.includes("Portrait 4:5")));
+    assert.equal(posts.length,2); assert.ok(posts.every(p=>p.size==="1024x1280" && p.prompt.includes("4:5竖图")));
     assert.equal(JSON.parse(f.store.layer("snapub",f.job.id,"foreground")!).outputSize,"1024x1280");
   } finally { f.conn.close(); }
 });
@@ -528,12 +552,61 @@ test("legacy in-flight 2:3 foreground resumes its original geometry and task ID 
   try{
     await assert.rejects(run(f.store,f.plugin,f.job,f.claim.leaseToken,'foreground'));
     const state=JSON.parse(f.store.layer('snapub',f.job.id,'foreground')!),id=state.taskId;
-    const {createHash}=await import('node:crypto'),legacyHash=createHash('sha256').update(layerPrompt(f.input.creation.prompt,'foreground','1024x1536')).digest('hex');
-    delete state.outputSize;state.promptHash=legacyHash;state.rewrite.originalPromptHash=legacyHash;
+    const {createHash}=await import('node:crypto'),legacyHash=createHash('sha256').update(layerPrompt(f.input.creation.prompt,'foreground','1024x1536',false,'legacy')).digest('hex');
+    delete state.outputSize;delete state.foregroundFraming;state.promptHash=legacyHash;state.rewrite.originalPromptHash=legacyHash;
     f.store.saveLayer('snapub',f.job.id,f.claim.leaseToken,'foreground',JSON.stringify(state));
     assert.equal((await run(f.store,f.plugin,f.job,f.claim.leaseToken,'foreground')).status,'succeeded');
     assert.equal(posts,1);assert.equal(gets,1);assert.equal(JSON.parse(f.store.layer('snapub',f.job.id,'foreground')!).taskId,id);
   }finally{f.conn.close()}
+});
+
+test("an already rewritten 4:5 layer keeps its legacy prompt and upstream ID across a framing-policy upgrade", async () => {
+  const f = await fixture(); let posts = 0, gets = 0;
+  const run = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (init?.method === "POST") { posts++; throw Error("lost acknowledgement"); }
+    gets++; return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: "success", data: [{ url: "https://images.example/legacy.png" }] }] });
+  } });
+  try {
+    await assert.rejects(run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"), /lost acknowledgement/);
+    const state = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!);
+    assert.equal(state.foregroundFraming, "neutral-framing-v3");
+    const { createHash } = await import("node:crypto");
+    const hash = (prompt: string) => createHash("sha256").update(layerPrompt(prompt, "foreground", "1024x1280", true, "legacy")).digest("hex");
+    delete state.foregroundFraming;
+    state.rewrite.round = 1; state.rewrite.prompt = "An adult gardener with a cup in winter";
+    state.rewrite.originalPromptHash = hash(f.input.creation.prompt); state.promptHash = hash(state.rewrite.prompt);
+    const id = state.taskId;
+    f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "foreground", JSON.stringify(state));
+    assert.equal((await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).status, "succeeded");
+    assert.equal(posts, 1); assert.equal(gets, 1);
+    assert.equal(JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!).taskId, id);
+  } finally { f.conn.close(); }
+});
+
+for (const policy of ["rounded-envelope-v1", "neutral-framing-v2"] as const) test(`${policy} in-flight layers retain their frozen prompt instead of resubmitting the new neutral policy`, async () => {
+  const f = await fixture(); let posts = 0;
+  const run = createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (init?.method === "POST") { posts++; throw Error("lost acknowledgement"); }
+    return Response.json({ items: [{ id: new URL(String(url)).searchParams.get("ids"), status: "success", data: [{ url: "https://images.example/frozen.png" }] }] });
+  } });
+  try {
+    await assert.rejects(run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground"), /lost acknowledgement/);
+    const state = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!);
+    const { createHash } = await import("node:crypto");
+    const frozen = layerPrompt(f.input.creation.prompt, "foreground", "1024x1280", true, policy);
+    const hash = createHash("sha256").update(frozen).digest("hex");
+    state.foregroundFraming = policy; state.rewrite.originalPromptHash = hash;
+    state.rewrite.round = 1; state.rewrite.prompt = "An adult gardener holding a cup";
+    const rewrittenHash = createHash("sha256").update(layerPrompt(state.rewrite.prompt, "foreground", "1024x1280", true, policy)).digest("hex");
+    state.promptHash = rewrittenHash;
+    f.store.saveLayer("snapub", f.job.id, f.claim.leaseToken, "foreground", JSON.stringify(state));
+    assert.equal((await run(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).status, "succeeded");
+    assert.equal(posts, 1);
+    const saved = JSON.parse(f.store.layer("snapub", f.job.id, "foreground")!);
+    assert.equal(saved.taskId, state.taskId); assert.equal(saved.promptHash, rewrittenHash);
+  } finally { f.conn.close(); }
 });
 
 
@@ -662,4 +735,160 @@ test("administrator recovery reads only frozen successful layers and forbids rep
     await assert.rejects(run(f.store, f.plugin, lease, lease.leaseToken, "repair"), /recovery_no_generation/);
     assert.equal(calls, 0);
   } finally { f.conn.close(); }
+});
+
+const drawingHeaders = { "x-image-task-admission": "durable-v1", "x-codex-drawing-session": "explicit-images-v1" };
+const pngDigest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+test("Codex 3D shares a durable project and original foreground hash without re-uploading PNG/history", async () => {
+  const f = await fixture(); f.entry.capability.model = "pro-codex-gpt-image-2.5";
+  const posts: Record<string, any>[] = []; let reads = 0;
+  const run = () => createV2Layers({ providers: () => [f.entry], provider: () => f.entry, fetch: async (url, init) => {
+    if (String(url).startsWith("https://images.example")) { reads++; return new Response(new Uint8Array(String(url).endsWith("background.png") ? f.backgroundPng : f.png)); }
+    if (init?.method !== "POST") return Response.json({ missing_ids: [new URL(String(url)).searchParams.get("ids")] }, { headers: drawingHeaders });
+    const body = JSON.parse(String(init.body)); posts.push(body);
+    assert.equal(new URL(String(url)).pathname, "/api/image-tasks/generations");
+    const foreground = body.background === "transparent";
+    return Response.json({ id: body.client_task_id, status: "success", drawing_session_id: body.drawing_session_id, drawing_context_status: "ready", drawing_image_sha256: pngDigest(foreground ? f.png : f.backgroundPng), data: [{ url: `https://images.example/${foreground ? "foreground" : "background"}.png` }] }, { headers: drawingHeaders });
+  } });
+  try {
+    assert.equal((await run()(f.store, f.plugin, f.job, f.claim.leaseToken, "foreground")).status, "succeeded");
+    assert.equal((await run()(f.store, f.plugin, f.job, f.claim.leaseToken, "background")).status, "succeeded");
+    assert.equal(posts.length, 2); assert.equal(reads, 2, "download each result only; no foreground re-download for the next request");
+    assert.equal(posts[0]!.drawing_session_id, posts[1]!.drawing_session_id);
+    assert.equal(posts[1]!.drawing_previous_step_id, posts[0]!.client_task_id);
+    assert.equal(posts[1]!.drawing_previous_image_sha256, pngDigest(f.png));
+    assert.ok(posts.every(p => !p.images && !p.context_items && !p.provider_account_identity));
+    assert.equal(posts[0]!.size, "1024x1280"); assert.equal(posts[1]!.size, "1024x1536");
+    assert.ok(posts.every(p => p.optimize_output === false && p.output_format === "png"));
+    await run()(f.store, f.plugin, f.job, f.claim.leaseToken, "background"); assert.equal(posts.length, 2);
+  } finally { f.conn.close(); }
+});
+
+test("Codex lost acknowledgement resumes the original session step and never submits a new generation", async () => {
+  const f = await fixture(); f.entry.capability.model = "pro-codex-gpt-image-2.5";
+  let body: any; let posts = 0;
+  const run = () => createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>{
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(f.png));
+    if (init?.method==="POST") { posts++;body=JSON.parse(String(init.body));throw Error("ack lost after accepted session step"); }
+    if (!body) return Response.json({items:[]},{headers:drawingHeaders});
+    return Response.json({items:[{id:body.client_task_id,status:"success",drawing_session_id:body.drawing_session_id,drawing_context_status:"ready",drawing_image_sha256:pngDigest(f.png),data:[{url:"https://images.example/fg.png"}]}]},{headers:drawingHeaders});
+  }});
+  try {
+    await assert.rejects(run()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground"),/ack lost/);
+    const frozen=JSON.parse(f.store.layer(f.plugin.id,f.job.id,"foreground")!);
+    assert.equal(frozen.codexDrawing.sessionId,body.drawing_session_id);
+    assert.equal((await run()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground")).status,"succeeded");assert.equal(posts,1);
+  }finally{f.conn.close();}
+});
+
+test("Codex session negotiation fails before generation on an old upstream",async()=>{
+  const f=await fixture();f.entry.capability.model="pro-codex-gpt-image-2.5";let posts=0;
+  const run=createV2Layers({providers:()=>[f.entry],fetch:async(_,init)=>{if(init?.method==="POST")posts++;return Response.json({items:[]});}});
+  try{await assert.rejects(run(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground"),/generation_session_unavailable/);assert.equal(posts,0);assert.equal(f.store.layer(f.plugin.id,f.job.id,"foreground"),undefined);}finally{f.conn.close();}
+});
+
+for(const defect of ["context","hash","session"] as const)test(`Codex ${defect} mismatch cannot publish a layer or start background`,async()=>{
+  const f=await fixture();f.entry.capability.model="pro-codex-gpt-image-2.5";let posts=0;
+  const run=createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>{
+    if(String(url).startsWith("https://images.example"))return new Response(new Uint8Array(f.png));
+    if(init?.method!=="POST")return Response.json({items:[]},{headers:drawingHeaders});
+    posts++;const b=JSON.parse(String(init.body));return Response.json({id:b.client_task_id,status:"success",drawing_session_id:defect==="session"?"different":b.drawing_session_id,drawing_context_status:defect==="context"?"unknown":"ready",drawing_image_sha256:defect==="hash"?"a".repeat(64):pngDigest(f.png),data:[{url:"https://images.example/fg.png"}]},{headers:drawingHeaders});
+  }});
+  try{const result=await run(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");assert.equal(result.status,"failed");await assert.rejects(run(f.store,f.plugin,f.job,f.claim.leaseToken,"background"),/foreground_required/);assert.equal(posts,1);}finally{f.conn.close();}
+});
+
+test("old Codex foreground retains original reference-edit path instead of inventing a new session",async()=>{
+  const f=await fixture();f.entry.capability.model="pro-codex-gpt-image-2.5";let post:any;
+  const hash=pngDigest(f.png);
+  // Frozen pre-session state from an earlier accepted foreground.
+  const run=createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>{
+    if(String(url).startsWith("https://images.example"))return new Response(new Uint8Array(f.png));
+    if(init?.method==="POST"){post=JSON.parse(String(init.body));return Response.json({id:post.client_task_id,status:"queued"});}
+    return Response.json({items:[]});
+  }});
+  try{
+    // Produce a legitimate state with the legacy model, then freeze its pinned
+    // Codex provider fingerprint as if it predated session support.
+    f.entry.capability.model="gpt-image-2";
+    await run(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");
+    const raw=JSON.parse(f.store.layer(f.plugin.id,f.job.id,"foreground")!);
+    raw.status="succeeded";raw.imageUrl="https://images.example/fg.png";raw.imageSha256=hash;
+    f.entry.capability.model="pro-codex-gpt-image-2.5";
+    raw.providerHash=pngDigest(Buffer.from(JSON.stringify({id:f.entry.provider.id,base:f.entry.provider.baseUrl,model:f.entry.capability.model,extras:f.entry.capability.extras})));
+    f.store.saveLayer(f.plugin.id,f.job.id,f.claim.leaseToken,"foreground",JSON.stringify(raw));
+    await run(f.store,f.plugin,f.job,f.claim.leaseToken,"background");
+    assert.equal(post.drawing_session_id,undefined);assert.equal(post.images.length,1);
+  }finally{f.conn.close();}
+});
+
+test("Codex explicit foreground rejection rewrites into a fresh isolated session; unknown outcomes never rewrite",async()=>{
+  for(const unknown of [false,true]){
+    const f=await fixture();f.entry.capability.model="pro-codex-gpt-image-2.5";const posts:any[]=[];let rewrites=0;
+    const make=()=>createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,rewrite:async()=>{rewrites++;return rewritten("An original adult gardener in a practical fully covering coat");},fetch:async(url,init)=>{
+      if(init?.method!=="POST")return Response.json({items:[]},{headers:drawingHeaders});
+      const body=JSON.parse(String(init.body));posts.push(body);
+      return Response.json(posts.length===1?{id:body.client_task_id,status:"error",error_code:unknown?"CODEX_OUTCOME_UNKNOWN":"content_policy_violation"}:{id:body.client_task_id,status:"queued"},{headers:drawingHeaders});
+    }});
+    try{
+      const first=await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");
+      if(unknown){assert.equal(first.status,"failed");await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");assert.equal(rewrites,0);assert.equal(posts.length,1);}
+      else{await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");await make()(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");assert.equal(rewrites,1);assert.equal(posts.length,2);assert.notEqual(posts[0].client_task_id,posts[1].client_task_id);assert.notEqual(posts[0].drawing_session_id,posts[1].drawing_session_id);assert.equal(posts[1].background,"transparent");assert.equal(posts[1].drawing_previous_step_id,undefined);}
+    }finally{f.conn.close();}
+  }
+});
+
+test("3D has a separate configured provider route without changing the ordinary plugin pool",async()=>{
+  const f=await fixture();const codex={...f.entry,provider:{...f.entry.provider,id:"codex"},capability:{...f.entry.capability,model:"pro-codex-gpt-image-2.5"}};
+  const plugin={...f.plugin,v2ImageProviderIds:["codex"]};let model="";
+  const selected:string[][]=[];
+  const run=createV2Layers({providers:ids=>{selected.push([...ids]);return [f.entry,codex];},provider:id=>id==="codex"?codex:f.entry,fetch:async(_url,init)=>{
+    if(init?.method!=="POST")return Response.json({items:[]},{headers:drawingHeaders});model=JSON.parse(String(init.body)).model;return Response.json({status:"queued"},{headers:drawingHeaders});
+  }});
+  try{
+    await run(f.store,plugin,f.job,f.claim.leaseToken,"foreground");
+    assert.deepEqual(selected,[["codex"]]);assert.equal(model,"pro-codex-gpt-image-2.5");assert.deepEqual(plugin.imageProviderIds,["gpt"]);
+  }finally{f.conn.close();}
+});
+
+test("overlay retains the separate 3D route and rejects duplicate provider IDs",()=>{
+  const dir=mkdtempSync(join(tmpdir(),"inkast-drawing-overlay-"));
+  try{
+    for(const ids of [["codex"],[],["codex","codex"]]){
+      writeFileSync(join(dir,"test.json"),JSON.stringify({id:"snapub",name:"test",imageDefaults:{},imageProviderIds:["web"],v2ImageProviderIds:ids}));
+      const plugins=loadPluginConfigsFromDir(dir);
+      if(ids.length===2)assert.equal(plugins.length,0);
+      else{assert.deepEqual(plugins[0]!.v2ImageProviderIds,ids);assert.deepEqual(plugins[0]!.imageProviderIds,["web"]);}
+    }
+  }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test("a complete PNG with interrupted drawing context stays recoverable but cannot start background",async()=>{
+  const f=await fixture();f.entry.capability.model="pro-codex-gpt-image-2.5";let posts=0;
+  const run=createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>{
+    if(String(url).startsWith("https://images.example"))return new Response(new Uint8Array(f.png));
+    if(init?.method!=="POST")return Response.json({items:[]},{headers:drawingHeaders});
+    posts++;const body=JSON.parse(String(init.body));return Response.json({id:body.client_task_id,status:"error",error_code:"CODEX_CONTEXT_INCOMPLETE",drawing_context_status:"incomplete",drawing_session_id:body.drawing_session_id,drawing_image_sha256:pngDigest(f.png),data:[{url:"https://images.example/saved.png"}]},{headers:drawingHeaders});
+  }});
+  try{
+    const result=await run(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");
+    assert.equal(result.status,"failed");assert.equal(result.error_code,"generation_context_incomplete");assert.equal(result.image_url,"https://images.example/saved.png");assert.equal(result.image_sha256,pngDigest(f.png));
+    await assert.rejects(run(f.store,f.plugin,f.job,f.claim.leaseToken,"background"),/foreground_required/);
+    assert.deepEqual(await run(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground"),result);assert.equal(posts,1);
+  }finally{f.conn.close();}
+});
+
+test("incomplete-context preview must match the project and original PNG hash",async()=>{
+  for(const mismatch of ["session","hash","status"] as const){
+    const f=await fixture();f.entry.capability.model="pro-codex-gpt-image-2.5";let posts=0;
+    const run=createV2Layers({providers:()=>[f.entry],provider:()=>f.entry,fetch:async(url,init)=>{
+      if(String(url).startsWith("https://images.example"))return new Response(new Uint8Array(f.png));
+      if(init?.method!=="POST")return Response.json({items:[]},{headers:drawingHeaders});
+      posts++;const b=JSON.parse(String(init.body));return Response.json({id:b.client_task_id,status:"error",error_code:"CODEX_CONTEXT_INCOMPLETE",drawing_context_status:mismatch==="status"?"ready":"incomplete",drawing_session_id:mismatch==="session"?"other":b.drawing_session_id,drawing_image_sha256:mismatch==="hash"?"a".repeat(64):pngDigest(f.png),data:[{url:"https://images.example/saved.png"}]},{headers:drawingHeaders});
+    }});
+    try{
+      const result=await run(f.store,f.plugin,f.job,f.claim.leaseToken,"foreground");assert.equal(result.status,"failed");assert.equal(result.image_url,undefined);assert.equal(result.image_sha256,undefined);
+      await assert.rejects(run(f.store,f.plugin,f.job,f.claim.leaseToken,"background"),/foreground_required/);assert.equal(posts,1);
+    }finally{f.conn.close();}
+  }
 });

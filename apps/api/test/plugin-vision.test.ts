@@ -56,6 +56,26 @@ test("native 3D material policy is server-owned, retains high effort and leaves 
   assert.ok(!prompts[1]!.includes("本任务使用原生透明前景"));
 });
 
+test("native composition does not inherit legacy artistic defaults or couple pose categories to breakout strength", async () => {
+  const oldPrompt = "自然的小幅出框；有角优先向上；默认居中";
+  const v2Plugin = { ...plugin, visionTasks: { v2_plan: { ...plugin.visionTasks!.compose!, systemPrompt: oldPrompt } } };
+  const candidate = { plan: { zoom: 1.2, materialRegions: [] }, fitness: .8, intent: "expressive", reason: "根据实际素材", repair: { part: "", material: "solid" } };
+  await analyzeVision(v2Plugin, "v2_plan", { ...input, context: { composition_mode: "adaptive-v1", extraction: { mode: "generated-native-alpha-no-segmentation" } } }, undefined,
+    async <T>(opts: CompleteJsonOptions) => {
+      assert.ok(!opts.systemPrompt.includes(oldPrompt));
+      assert.doesNotMatch(opts.systemPrompt, /先以zoom=1|通常zoom=1\.\.1\.08|安静胸像可自然|原生前景允许半身/);
+      assert.match(opts.systemPrompt, /不默认偏好任何强度或方向/);
+      assert.match(opts.systemPrompt, /不能在框外横切再出现/);
+      assert.match(opts.systemPrompt, /materialRegions/);
+      assert.equal(opts.reasoningEffort, "high");
+      return result({ candidates: [candidate, candidate] } as T);
+    });
+  await analyzeVision(v2Plugin, "v2_plan", input, undefined, async <T>(opts: CompleteJsonOptions) => {
+    assert.ok(opts.systemPrompt.startsWith(oldPrompt), "existing-image segmentation keeps its own configured contract");
+    return result({ zoom: 1.2 } as T);
+  });
+});
+
 test("vision rejects unavailable tasks, missing images, unknown origins and invalid model geometry", async () => {
   await assert.rejects(() => analyzeVision(plugin, "other", input, undefined, goodComplete), /not enabled/);
   await assert.rejects(() => analyzeVision(plugin, "toString", input, undefined, goodComplete), /not enabled/);
@@ -123,7 +143,7 @@ test("adaptive native composition returns bounded alternatives in one high-effor
   const candidate = { plan: { zoom: 1.2, materialRegions: [] }, fitness: .8, intent: "expressive", reason: "完整手势可出框", repair: { part: "", material: "solid" } };
   await analyzeVision(v2Plugin, "v2_plan", { ...input, context: { composition_mode: "adaptive-v1", extraction: { mode: "generated-native-alpha-no-segmentation" } } }, undefined,
     async <T>(opts: CompleteJsonOptions) => {
-      calls++; assert.ok(opts.systemPrompt.includes("不要固定选最保守"));
+      calls++; assert.ok(opts.systemPrompt.includes("不默认偏好任何强度或方向"));
       assert.equal(opts.reasoningEffort, "high");
       const validate = compileVisionSchema(opts.schema!);
       assert.equal(validate({ candidates: [{ ...candidate, plan: { zoom: 1.2 } }, candidate] }), false, "native layout must classify materials explicitly");

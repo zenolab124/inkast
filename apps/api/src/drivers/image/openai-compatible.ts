@@ -18,7 +18,7 @@ import {
 } from "../../storage/providers.js";
 import { acquireProviderSlot } from "../../lib/throttle.js";
 import { resolveExtraHeaders } from "../codex-header.js";
-import { buildC2iPromptText, callC2iTasksApi } from "./c2i-tasks.js";
+import { buildC2iPromptText, callC2iTasksApi, C2iTaskPendingError } from "./c2i-tasks.js";
 import {
   buildCloudBasePrompt,
   callCloudBaseApi,
@@ -301,11 +301,16 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           errorMessage: classified.message,
           durationMs: Date.now() - started,
           httpStatus: classified.httpStatus,
-          requestId: classified.requestId,
+          requestId: err instanceof C2iTaskPendingError ? err.taskId : classified.requestId,
           errorBody: truncateErrorBody(classified.body),
         };
         attempts.push(failAttempt);
         input.onAttempt?.(failAttempt);
+        if (err instanceof C2iTaskPendingError) {
+          // Receipt ID is retained in the persisted attempt. Never retry a new
+          // generation or fall over while the original upstream result is unknown.
+          throw new ImageGenError("unknown", err.message, attempts, err);
+        }
         console.log(
           `[image] ✗ ${provider.name} failed (${classified.code}) in ${Date.now() - started}ms`,
         );

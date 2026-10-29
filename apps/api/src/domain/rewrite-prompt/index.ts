@@ -673,7 +673,7 @@ character_archetype (允许泛化到更宽范畴): ${input.previousAnalysis.char
 async function rewriteForeground(input: Parameters<typeof rewriteBlockedPrompt>[0], completeJson: typeof completeJsonWithFallover): Promise<RewriteOutcome> {
   const started = Date.now();
   const result = await completeJson<{ rewritten: string }>({
-    systemPrompt: `将原始创作需求调整为适合公开展示、符合内容安全要求的3D卡牌前景描述。上游拒绝可能有真实内容原因，不得假定为关键词误判；必要时实际调整服装覆盖、姿态或场景中的不适当内容，不得用同义词、暗语掩盖同一违规内容或要求模型忽略审核。保留可合规保留的主体身份、画风、配色与持物关系；动作由角色和主题决定，用户明确指定动作时按其要求保留，未指定时自由选择合适动作，不添加统一姿势模板。不得凭空改变年龄或捏造参考图。重写仅输出创作描述，以下透明前景与取景规则必须满足，且程序会再次附加：\n${input.foregroundConstraints}\n不得加入普通卡牌底部四分之一留白或强制全身要求。只输出JSON，rewritten为非空描述；无法给出合规版本时返回空字符串，停止生成。`,
+    systemPrompt: `将原始创作需求调整为适合公开展示、符合内容安全要求的3D卡牌前景描述。上游拒绝可能有真实内容原因，不得假定为关键词误判；必要时实际调整服装覆盖、姿态或场景中的不适当内容，不得用同义词、暗语掩盖同一违规内容或要求模型忽略审核。保留可合规保留的主体身份、画风、配色与持物关系；动作由角色和主题决定，用户明确指定动作时按其要求保留，未指定时自由选择合适动作，不添加统一姿势模板。镜头、取景范围、构图方向、表情、服饰、画风、光影与配色也只保留用户明确指定的要求；未指定的维度保持开放，不自行补充统一偏好，不把技术输出约束改写成艺术风格要求。不得凭空改变年龄或捏造参考图。重写仅输出创作描述，以下透明前景与取景规则必须满足，且程序会再次附加：\n${input.foregroundConstraints}\n不得加入普通卡牌底部四分之一留白或任何默认人物取景模板。只输出JSON，rewritten为非空描述；无法给出合规版本时返回空字符串，停止生成。`,
     userPrompt: JSON.stringify({ original: input.originalPromptText, round: input.round, previous: input.previousRewrittens }),
     schema: { type: "object", additionalProperties: false, required: ["rewritten"], properties: { rewritten: { type: "string" } } },
     timeoutMs: REWRITE_TIMEOUT_MS, reasoningEffort: "high", signal: input.signal,

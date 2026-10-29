@@ -35,6 +35,8 @@ export type ImageBackground = "transparent" | "opaque" | "auto";
 export type ImageDeliveryIntent = "bytes" | "persistent-url";
 
 export interface ImageGenInput {
+  /** Internal durable job identity; c2i binds its task ID to this key and the exact request. */
+  requestKey?: string;
   /** Prompt text the provider sees. We typically pass JSON.stringify(prompt). */
   promptText: string;
   size?: ImageSize;

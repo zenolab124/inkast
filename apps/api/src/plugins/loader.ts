@@ -96,6 +96,8 @@ const InkastPluginSchema = z.object({
     .max(32)
     .refine(ids => new Set(ids).size === ids.length, "provider ids must be unique")
     .optional(),
+  v2ImageProviderIds: z.array(z.string().trim().min(1)).max(32)
+    .refine(ids => new Set(ids).size === ids.length, "3D provider ids must be unique").optional(),
   imageProviderOrder: z.literal("allowlist").optional(),
   imageProviderProfiles: z
     .record(

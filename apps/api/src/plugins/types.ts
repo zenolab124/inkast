@@ -73,15 +73,18 @@ export interface InkastPlugin {
     background?: "transparent" | "opaque" | "auto";
   };
   /**
-   * Restrict every image-provider dispatch made for this plugin to these
+   * Restrict ordinary image-provider dispatch made for this plugin to these
    * provider IDs. The restriction is enforced inside the image driver, so it
-   * survives prompt-rewrite retries and post-review edits.
+   * survives prompt-rewrite retries and post-review edits. Native 3D layers
+   * may use the separate v2ImageProviderIds policy.
    *
    * `undefined` preserves the legacy full-pool behavior for existing plugins.
    * An explicit empty array is intentionally fail-closed and disables image
    * dispatch for the plugin until at least one enabled provider ID is listed.
    */
   readonly imageProviderIds?: readonly string[];
+  /** Native 3D layer route only. Omitted uses imageProviderIds; [] stops new 3D submissions. */
+  readonly v2ImageProviderIds?: readonly string[];
   /**
    * Optional plugin-local provider ordering. Omit to retain global DB priority;
    * `"allowlist"` makes `imageProviderIds` order the fallback sequence.

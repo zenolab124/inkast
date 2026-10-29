@@ -397,3 +397,35 @@ test("maxRound 0 failure explains that caller policy disabled rewrite", async ()
   );
   assert.equal(rewriteCalls, 0);
 });
+
+test("an unknown Codex result stops rewritten rounds and retains all original receipts", async () => {
+  const { C2iTaskPendingError } = await import("../src/drivers/image/c2i-tasks.js");
+  for (const skipOriginal of [false, true]) {
+    let generations = 0, rewrites = 0;
+    const receipt = new C2iTaskPendingError("original-codex-task", "stream interrupted");
+    const dependencies: RewriteDependencies = {
+      generateImage: async () => {
+        generations++;
+        if (!skipOriginal && generations === 1) {
+          throw new ImageGenError("all_providers_failed", "blocked", [{ providerId: "web", providerName: "web", ok: false, errorCode: "moderation", durationMs: 1 }]);
+        }
+        throw new ImageGenError("unknown", receipt.message, [{ providerId: "codex", providerName: "Codex", ok: false, errorCode: "unknown", durationMs: 1, requestId: receipt.taskId }], receipt);
+      },
+      rewriteBlockedPrompt: async () => {
+        rewrites++;
+        return { rewrittenPromptText: "rewritten", characterKey: null, usedImageUrls: [], llmDurationMs: 1, analysis: null };
+      },
+    };
+    await assert.rejects(driveWithRewriteFallback({ promptText: "original" }, { maxRound: 3, skipOriginal }, undefined, dependencies), error => {
+      assert.ok(error instanceof ImageGenError);
+      assert.equal(error.code, "unknown");
+      assert.equal(error.cause, receipt);
+      assert.equal(error.attempts.at(-1)?.requestId, receipt.taskId);
+      assert.equal(error.attempts.length, skipOriginal ? 1 : 2);
+      assert.deepEqual(error.rewrittenPromptHistory, ["rewritten"]);
+      return true;
+    });
+    assert.equal(generations, skipOriginal ? 1 : 2);
+    assert.equal(rewrites, 1);
+  }
+});

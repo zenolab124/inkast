@@ -93,6 +93,21 @@ token → plugin id 映射就绪
 
 zod 校验定义在 [apps/api/src/plugins/loader.ts](../apps/api/src/plugins/loader.ts)。
 
+## Codex 图片通道（2026-10-29，本地适配与隔离试验）
+
+ChatGPT2API 的 Codex 图像能力沿用 `c2i-tasks`，使用独立 provider，模型可选 `pro-codex-gpt-image-2.5`；普通 `gpt-image-2.5` 仍是网页别名。新 provider 建议设 `extras.explicitAllowlistOnly=true`，只放入测试调用方的 `imageProviderIds`，名单中不混入网页渠道，避免测试失败后悄悄换回旧通道。模型别名仅证明请求选择，实际图片引擎仍以上游证据为准。
+
+- Codex 不调用网页 `resume-poll`；超过五分钟继续查询原任务。普通网页保留原续轮询行为。
+- Codex 默认 `optimize_output=false`，保留原图、不由上游追加精确裁切或有损压缩；原网页默认仍为 true。能力可用布尔 `extras.optimizeOutput` 显式覆盖。尺寸与 high 属于请求要求，必须解码实际结果核验，不能靠参数回显判定。
+- 字节请求用 Base64，不写上游 R2；持久链接显式使用 R2。透明 PNG、参考图编辑、3D 图层和最终构图分别验收，不随普通生图一并放行。
+- Web Job 与普通插件向驱动传内部持久任务身份，c2i ID绑定调用身份、provider和实际请求指纹；重试先查原ID，只有上游明确声明durable-v1且确认该ID不存在时才允许同ID提交。提交回执丢失继续查询原ID；结果未知保留ID到失败attempt/message并停止图片池重试与切换，不新建替代图片。普通任务的既有重启失败回调策略未改，不宣称新增自动恢复入口；3D沿用自身冻结图层检查点。
+
+本地已新增独立`ChatGPT2API Codex Pro` provider，显式白名单准入，原渠道配置保持；145项API测试及源码／测试类型检查通过。真实隔离试验复用维纳斯正式任务创作描述：普通插画在301.941秒因上游`IncompleteRead(2883045 bytes read)`失败；透明前景在377.809秒生成成功、端到端391.235秒，原PNG为1122×1402、带Alpha、约1.82MB，R2回读及完整解码通过。日志核实Codex/Pro，主请求`gpt-6.1-sol`、工具请求`gpt-image-2.5-sunburst`；实际图片引擎版本仍未证实。新图比此前样本多了现有全局清洁度尾句，不能当作只换模型的严格A/B。顶部装饰触边、留白不足，未验收完整3D构图；背景编辑和业务回调待实测。两次任务未重发。证据在本地忽略目录`data/codex-upgrade-20261029/`；未构建、部署或提交，线上provider与默认选择未改。
+
+2026-10-29同任务只读排查：普通插画的`IncompleteRead`已在ChatGPT2API原任务及日志中确认，Inkast未到600秒期限、未触发网页续轮询。上游Codex读流配置1200秒，但`_iter_codex_response_events`在完整`raw.read()`后才解析SSE；HTTP分块提前结束会阻断所有事件交付。提取线上同一函数离线复现：即使接收块已有完整`response.completed`，后续HTTP分块截断仍导致零事件交付。此为确定的抗断流缺陷，不证明该失败请求本身已有完整图片，也未确定最初断连来自远端还是中间代理。应优先增量解析、保留已验证终态及结构化断流证据，再考虑扩大渠道；未新增生图或修改／重启线上服务。证据`data/codex-upgrade-20261029/incomplete-read-investigation.json`。
+
+2026-10-29稳定性修复已在本地实现，尚未上线：ChatGPT2API改为有界增量读取，在完成图片事件中严格校验Base64及图片解码后立即保存，避免完整成品随HTTP尾段截断丢失；不把partial预览或损坏图片当成功。`CODEX_OUTCOME_UNKNOWN`、`codex_invalid_image`、`codex_result_delivery_failed`由Inkast保留原任务ID并停止渠道切换；重写轮次也遇到原任务待恢复标记时立即停止，不能改提示词后另发一张。ChatGPT2API本地494项及24项子测试通过，16项真实探针跳过；Inkast 147项API测试及类型检查通过；响应ID与阶段持久保存用于定位，因`store:false`且无Codex续取协议，不承诺远端恢复。此次没有新增生图、重启、构建或部署。
+
 ## 结构化视觉接口（2026-10-24，JDC 已部署）
 
 `POST /plugins/v1/vision/{任务名}` 复用调用方 Bearer Token，只能调用本 plugin 的 `visionTasks`，不接受原始 plugin ID、自定义提示词、Schema、模型或思考强度。使用现有专用域名时，Nginx 的既有 rewrite 对应 `/vision/{任务名}`。它是供后台 Worker 使用的同步原语，不创建生图任务、不调用图片 Provider，也不替代业务端的持久化队列。
@@ -322,3 +337,25 @@ Worker在发请求前保存固定ID，短提交后查询原ID，丢回执／断�
 2026-10-27 已完成构建部署及两张原图层恢复：API `23b88f54d6fa3926b83fb6e420388ebb4651c64b6546f68561a9e2440e6d7345`，Mini runtime `f9ea33daadd99b63a9e3236744fcd3db788f1362a0968731a8d2125ce1dfb8a3`。JDC实际发布包75项、Mini安装后112项（0跳过）、69份API／22份Worker源码回读、SQLite quick_check、匹配心跳及双公网config通过，原3252份work与原任务图层在部署前后保持。env与Worker配置仅改发布身份，overlay和ChatGPT2API四源码保持；两机回退`releases/20261027-durable-plan/`须协调身份。
 
 两张均复用原PNG和原上游图层ID，未重新生图或局部补齐，最终1024方形透明无损WebP；德古拉恢复总耗时1302.409秒（21分42秒），尚气1929.287秒（32分09秒），各两次构图。德古拉首次因上游180秒无新数据失败，第二次405.764秒成功；尚气首次触发20分钟构图总期限，第二次473.064秒成功。四个后台视觉任务均持久化终态并清除大图输入；两张原用户作品已回写succeeded，原退款字段、对应流水与首次免费资格哈希保持，未新建订单或扣能量。真实图片浏览器尺寸／视觉核对通过，手机交互未重新验收；未发布正式小程序、提交或推送。上游慢响应和偶发无数据中断仍然存在，不把可恢复流程称为上游性能问题已消失。证据SNAP-UB `temp/3d-durable-plan-20261027/verification.json`。
+
+
+2026-10-29上线补记：以上Codex适配及断流停止重试已部署JDC，API发布`66d6b8c3943b`，69份运行文件回读及98项发布包测试通过；Mini只配对Worker身份，原渠道/provider/overlay保持。ChatGPT2API增量读流补丁随后上线，Mini493项及24项子测试通过、17项跳过，健康与原两任务查询正常。独立Codex provider仍只在本地隔离测试库，生产默认未切换；本次未新增真实生图或提交。回退、保留期清理与部署证据见cc对应服务记录及本机`data/codex-stability-deploy-20261029/`。
+
+
+2026-10-29连续绘画隔离原型：ChatGPT2API新增本地会话日志，尚无HTTP入口，Inkast业务任务未接入。订阅Codex不接受previous_response_id；客户端保留同一账号的文字历史、原始输出及PNG，图片工具记录本身不等同于下一轮可见原图，另提供显式图片引用试验模式。同一步指纹固定，未知结果停止重发，已存PNG不随上下文尾段失败丢失。六次隔离图片调用取得三张PNG，其中前景与参考图edit背景完整完成、原会话edit背景终态未知。显式两图文字核验295.160秒通过，纯文字对照6.822秒；最后一次显式历史背景edit在362.915秒发生IncompleteRead，无完整图或终态，未重发。图片可见性有实证，仍不能宣称连续生图更稳定或成品视觉更一致；此次直连订阅后端不经过Inkast，断连最初来源未定位。本地514项及24子测试、Mini会话核心19项通过；未改变生产provider、3D路由或小程序。可见图片和脱敏证据位于本地忽略目录`data/codex-session-trial-20261029/`，生产接入须继续独立验收。
+
+
+### 2026-10-30：Codex 连续绘画接入 3D（后端已部署）
+
+新建原生 3D 任务选用 Codex provider 时，前景和背景使用同一个显式图片上下文项目。`v2ImageProviderIds` 可单独配置 3D 生图来源，省略时沿用 `imageProviderIds`，显式空数组停止新建图层；普通插画仍用原 `imageProviderIds`。已有状态继续绑定原 provider，配置更新不能把在途单图任务中途改成连续绘画。重新构图／管理员恢复继续复用原 PNG，不开启新项目；局部补画沿用已有独立编辑路径。
+
+Inkast 在首次提交前通过 GET 确认上游声明 `X-Codex-Drawing-Session: explicit-images-v1`；原图层状态冻结项目标识、原任务 ID 及前景 SHA-256。背景提交只传项目标识、前景步骤和哈希，由 ChatGPT2API 在同一账号内加载原 PNG、创作历史及不透明 reasoning；不再从 R2 下载后重复编码上传前景。每层成功必须有匹配项目的 `drawing_context_status=ready`，下载 PNG 的哈希须与会话回执一致。透明 PNG、前景 4∶5／背景 2∶3、原提示词及固定边框／角标合成保持。
+
+提交回执丢失仍查询同一确定性 ID；只有 durable-v1 明确确认未接单，才允许同 ID 同内容有限补交。上下文未知时停止，不换账号、渠道或重写生图；前景明确内容拒绝后的原重写规则保留，新的修订轮次使用独立项目。已存完整图但上下文尾段未知时保留图，不能自动生成背景。完整上下文已落盘而 R2 交付失败／服务重启时，只恢复原图交付；交付结果单独缓存，恢复有预算和冷却，等待恢复时不提前暴露失败终态。
+
+上线顺序为 ChatGPT2API → Inkast API → 私有 overlay 的 3D provider 选择；先验收协议和两图共享上下文，再接真实用户任务。用户随后授权构建部署，生产API发布`7217217f9ea6`，新3D已选择专属Codex provider；普通生图overlay、profile、顺序和原provider配置核对保持。协议探测／健康／心跳已通过，真实维纳斯验收另记；这不保证2.5实际引擎或high参数严格执行，旧网页路径和已接单状态不自动迁移。
+
+
+2026-10-30聚焦审查修复：若合法完整 PNG 已落盘而会话尾段断开，ChatGPT2API 保持错误终态 `CODEX_CONTEXT_INCOMPLETE`，同时在 `data` 中提供经哈希核对的原图交付，并标记 `drawing_context_status=incomplete`。R2 失败及重启仍只从原 PNG 恢复交付；Inkast 校验项目、上下文状态和 PNG SHA 后，把链接／哈希留在失败图层中用于取回，不能将其当作 `ready` 或自动启动背景。明确的上游拒绝不交付预览。手动停止后查询／重启不得再次恢复交付；执行队列暂满属于等待，不计入真实交付尝试、不提前返回失败。这是恢复与诊断契约，不是新增小程序管理员按钮或自动采用成品。
+
+维纳斯完整生产式验收已成功：独立测试任务`v2-0583e6fd-c937-43b1-ba69-e4fb7ade2b5f`，提交到成品381.594秒（约6分22秒）；Codex前景59.127秒、同项目背景40.338秒，原high构图174.437秒，其余排队／交付／轮询／合成107.692秒。两图各一次提交，前景未重写；同一绘画项目／账号、背景前景SHA绑定和两步completed已核对。最终1024方形透明无损WebP，951,822字节，SHA `901d1fe227d2d576c65f0bea6e8f3e47de995ab599467cc0304e20c765e2c165`。原图层和中性底显示已目视：右手、头发、裙纱及水花出框，底部闭合，框／3-3角标固定；无手调、局部补生图或成品模型终审。请求两图high，上游工具实际回报前景medium／背景low；2.5为请求别名，不能据此保证实际引擎或high严格执行。此次是一张新任务完整验收，不代表全部角色或并发稳定性。原用户作品、账务保持；未提交或发布小程序。脱敏证据与图片见Inkast忽略目录`data/codex-drawing-deploy-20261030/verification.json`。
