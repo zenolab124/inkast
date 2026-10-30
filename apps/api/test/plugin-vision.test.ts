@@ -180,3 +180,29 @@ test("recomposition uses one bounded high-effort planning call with frozen requi
   });
   assert.equal(calls, 1);
 });
+
+test("balanced composition requires whole-card evidence while legacy adaptive responses retain their frozen schema",async()=>{
+ const v2Plugin={...plugin,visionTasks:{v2_plan:plugin.visionTasks!.compose!}};
+ const b={subjectAnchor:[.5,.4],backgroundAnchor:[.2,.3],mode:"counterweight",score:.9,counterweight:"左侧真实可见的柱廊",reason:"平衡人物与环境的重心"};
+ const candidate={plan:{zoom:1,materialRegions:[],compositionBalance:b},fitness:.9,intent:"natural",reason:"整体成立",repair:{part:"",material:"solid"}};
+ await analyzeVision(v2Plugin,"v2_plan",{...input,context:{composition_mode:"adaptive-balanced-v1",extraction:{mode:"generated-native-alpha-no-segmentation"}}},undefined,async<T>(opts:CompleteJsonOptions)=>{
+  assert.match(opts.systemPrompt,/整张卡牌的视觉平衡/);assert.match(opts.systemPrompt,/主体小幅偏左或偏右/);assert.match(opts.systemPrompt,/3%至8%/);const validate=compileVisionSchema(opts.schema!);
+  assert.equal(validate({candidates:[candidate,candidate]}),true);
+  assert.equal(validate({candidates:[{...candidate,plan:{zoom:1,materialRegions:[]}},candidate]}),false);
+  return result({candidates:[candidate,candidate]} as T);
+ });
+});
+test("background preplanning uses its short schema and the configured high-effort vision channel",async()=>{
+ const v2Plugin={...plugin,visionTasks:{v2_plan:plugin.visionTasks!.compose!}};
+ const value={placement:{centerX:.5,centerY:.5,zoom:1,rotationDeg:0},subjectAnchor:[.5,.4],backgroundFocus:[.2,.3],backgroundIntent:"用场景本身的环境光呼应",reason:"不靠偏移强造出框"};
+ await analyzeVision(v2Plugin,"v2_plan",{...input,context:{composition_mode:"scene-layout-v1",sourceWidth:1024,sourceHeight:1280}},undefined,async<T>(opts:CompleteJsonOptions)=>{
+  assert.match(opts.systemPrompt,/背景尚未生成/);assert.equal(opts.reasoningEffort,"high");assert.equal(compileVisionSchema(opts.schema!)(value),true);return result(value as T);
+ });
+});
+
+test("whole-card planning rejects an unclosed half-head protection polygon before accepting its result",async()=>{
+ const v2Plugin={...plugin,visionTasks:{v2_plan:plugin.visionTasks!.compose!}};
+ const plan={zoom:1,centerX:.5,centerY:.5,rotationDeg:0,materialRegions:[],compositionBalance:{subjectAnchor:[.5,.4],backgroundAnchor:[],mode:"centered",score:.9,counterweight:"",reason:"保留自然重心"},subjectParts:[{name:"完整头部",kind:"body",segmentation:"complete",anchor:[.5,.15]}],protectedRegions:[{polygon:[[.7,.1],[.9,.1],[.9,.3],[.7,.3]]}]};
+ const value={candidates:[{plan,fitness:.9,intent:"natural",reason:"整卡平衡",repair:{part:"",material:"solid"}},{plan,fitness:.9,intent:"natural",reason:"整卡平衡",repair:{part:"",material:"solid"}}]};
+ await assert.rejects(analyzeVision(v2Plugin,"v2_plan",{...input,context:{composition_mode:"adaptive-balanced-v1",extraction:{mode:"generated-native-alpha-no-segmentation",sourcePlacement:{width:1024,height:1280}}}},undefined,async<T>(opts:CompleteJsonOptions)=>result(value as T)),/Invalid vision result/);
+});

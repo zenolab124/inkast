@@ -6,17 +6,20 @@ import { validateVisionImage } from "./vision/index.js";
 import { buildC2iPromptText, isC2iCodexModel } from "../drivers/image/c2i-tasks.js";
 import { resolveExtraHeaders } from "../drivers/codex-header.js";
 import sharp from "sharp";
+import { pollV2Scene } from "./v2-scene.js";
+import { backgroundLayoutPrompt, type SceneLayout } from "./vision/scene-layout.js";
 import { rewriteBlockedPrompt, type RewriteRound } from "./rewrite-prompt/index.js";
 
 type Layer = "foreground" | "background" | "repair";
 type ForegroundFraming = "rounded-envelope-v1" | "neutral-framing-v2" | "neutral-framing-v3";
 export interface V2RepairInput { foreground_sha256: string; crop_png: string; mask_png: string; part: string; material: "solid" | "energy"; }
 const repairPrompt = (repair: V2RepairInput) => `Edit only the small missing terminal of ${JSON.stringify(repair.part)} on the isolated transparent foreground in image 1. Image 2 is an edit guide: white is the only editable region, black must remain unchanged. Reconstruct a short natural rounded ending continuing the local anatomy, garment or prop and matching exact texture, focus, lighting and color. Do not alter the pose, identity, face, existing detail or any other part. Keep the restored silhouette away from the guide outer boundary; finish it naturally with transparent space beyond it. Genuine transparent RGBA PNG, square. ${repair.material === "solid" ? "Solid material remains fully opaque; never dissolve or fade anatomy or clothing." : "Preserve only the physically translucent energy as translucent."} No frame, numbers, text, backdrop or extra objects.`;
-export interface V2LayerResult { status: "submitted" | "succeeded" | "failed"; image_url?: string; image_sha256?: string; error_code?: string; phase?: "awaiting_admission" | "preparing" | "queued" | "generating"; }
+export interface V2LayerResult { scene_layout?: SceneLayout; status: "submitted" | "succeeded" | "failed"; image_url?: string; image_sha256?: string; error_code?: string; phase?: "awaiting_admission" | "preparing" | "queued" | "generating"; }
 type ProviderEntry = NonNullable<ReturnType<typeof getProviderCapability>>;
 interface LayerState {
   version: 1; taskId: string; providerId: string; providerHash: string; promptHash: string;
   foregroundFraming?: ForegroundFraming;
+  scenePolicy?: "balanced-scene-v1"; sceneLayout?: SceneLayout;
   codexDrawing?: { protocol: "explicit-images-v1"; sessionId: string; previousStepId?: string; previousImageSha256?: string };
   createdAt: number; status: "submitted" | "succeeded" | "failed";
   referenceMode?: "url-sha256" | "inline"; admissionProtocol?: "durable-v1"; postAttempts?: number; lastPostAt?: number; admittedAt?: number; lastHttpStatus?: number;
@@ -78,7 +81,7 @@ ${prompt}
  * or callback is needed to recover after either server restarts. */
 export function createV2Layers(deps: {
   providers?: (ids: readonly string[]) => ProviderEntry[]; provider?: (id: string) => ProviderEntry | null;
-  fetch?: typeof fetch; now?: () => number; rewrite?: typeof rewriteBlockedPrompt;
+  fetch?: typeof fetch; now?: () => number; rewrite?: typeof rewriteBlockedPrompt; scene?: typeof pollV2Scene;
 } = {}) {
   const request = deps.fetch ?? fetch, now = deps.now ?? Date.now;
   const rewrite = deps.rewrite ?? rewriteBlockedPrompt;
@@ -162,8 +165,14 @@ export function createV2Layers(deps: {
       // and rewrite rounds must keep the same hash after prompt-only upgrades.
       const framing = state ? state.foregroundFraming ?? "legacy" : previous?.foregroundFraming ?? (layer === "foreground" ? "neutral-framing-v3" : "legacy");
       if (!["legacy", "rounded-envelope-v1", "neutral-framing-v2", "neutral-framing-v3"].includes(framing)) throw new V2QueueError("generation_policy_changed", 409);
+      let sceneLayout = state?.sceneLayout;
+      if (layer === "background" && !state && previous?.scenePolicy === "balanced-scene-v1") {
+        const scene = await (deps.scene ?? pollV2Scene)({ store, plugin, job, token, sha: previous.imageSha256!, read: () => readImage(previous!.imageUrl!, plugin, false, previous!.outputSize), brief });
+        if (scene.status !== "succeeded") return scene.status === "pending" ? { status: "submitted", phase: "preparing" } : { status: "failed", error_code: scene.errorCode };
+        sceneLayout = scene.layout!;
+      }
       const foregroundPrompt = (value: string) => layerPrompt(value, "foreground", outputSize, outputSize === "1024x1280", framing);
-      const originalPrompt = repair ? repairPrompt(repair) : layerPrompt(brief, layer as Exclude<Layer, "repair">, outputSize, layer === "foreground" ? outputSize === "1024x1280" : previous?.outputSize === "1024x1280", framing);
+      const originalPrompt = repair ? repairPrompt(repair) : layerPrompt(brief, layer as Exclude<Layer, "repair">, outputSize, layer === "foreground" ? outputSize === "1024x1280" : previous?.outputSize === "1024x1280", framing) + (sceneLayout ? backgroundLayoutPrompt(sceneLayout) : "");
       const save = () => {
         const next = JSON.stringify(state);
         if (!store.compareAndSaveLayer(plugin.id, job.id, token, layer, stored, next)) throw new V2QueueError("generation_busy", 409);
@@ -171,12 +180,12 @@ export function createV2Layers(deps: {
       };
       let prompt = state?.rewrite ? foregroundPrompt(state.rewrite.prompt) : originalPrompt;
       if (state && state.inputHash !== inputHash) throw new V2QueueError("repair_input_changed", 409);
-      if (state?.status === "succeeded" || state?.status === "failed") return { status: state.status, image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode };
+      if (state?.status === "succeeded" || state?.status === "failed") return { status: state.status, image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode, ...(state.sceneLayout ? { scene_layout: state.sceneLayout } : {}) };
       if (state && now() - state.createdAt > 45 * 60_000) {
         state.status = "failed"; state.completedAt = now();
         state.errorCode = state.upstreamStatus === "awaiting_admission" ? "generation_task_missing" : "generation_timeout";
         save();
-        return { status: state.status, error_code: state.errorCode };
+        return { status: state.status, error_code: state.errorCode, ...(state.sceneLayout ? { scene_layout: state.sceneLayout } : {}) };
       }
       // Explicit configured allowlist only. Pin the same channel for both layers;
       // foreground rewrite rounds stay on that channel and preserve durable IDs.
@@ -257,6 +266,8 @@ export function createV2Layers(deps: {
         state = { version: 1, taskId: initialTaskId, providerId: entry.provider.id,
           outputSize, inputHash, providerHash: providerHash(entry), promptHash: digest(prompt), referenceMode, createdAt: now(), status: "submitted",
           ...(framing !== "legacy" ? { foregroundFraming: framing } : {}),
+          ...(layer === "foreground" && typeof plugin.visionTasks?.v2_plan?.maxImages === "number" ? { scenePolicy: "balanced-scene-v1" as const } : {}),
+          ...(sceneLayout ? { sceneLayout } : {}),
           ...(drawing ? { codexDrawing: drawing } : {}),
           ...(layer === "foreground" ? { rewrite: { originalPromptHash: digest(originalPrompt), round: 0, prompt: brief, history: [] } } : {}) };
         // Reserve BEFORE the POST. A lost response is recovered by GET of the
@@ -290,7 +301,7 @@ export function createV2Layers(deps: {
           state.errorCode = res.status === 401 || res.status === 403 ? "generation_auth_failed" :
             res.status === 409 ? "generation_submission_conflict" : "generation_submission_failed";
           save();
-          return { status: "failed", error_code: state.errorCode };
+          return { status: "failed", error_code: state.errorCode, ...(state.sceneLayout ? { scene_layout: state.sceneLayout } : {}) };
         }
         save();
         throw new V2QueueError("generation_connection_pending", 503);
@@ -331,7 +342,7 @@ export function createV2Layers(deps: {
             }
           }
           state.completedAt = now(); save();
-          return { status: "failed", image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode };
+          return { status: "failed", image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode, ...(state.sceneLayout ? { scene_layout: state.sceneLayout } : {}) };
         }
         state.errorCode = code === "request_preparation_failed" ? "generation_submission_failed" :
           code === "admission_capacity" ? "generation_queue_full" :
@@ -365,7 +376,7 @@ export function createV2Layers(deps: {
         const receipt = task as DrawingReceipt;
         if (drawing && (receipt.drawing_session_id !== drawing.sessionId || receipt.drawing_context_status !== "ready" || !/^[a-f0-9]{64}$/.test(receipt.drawing_image_sha256 ?? ""))) {
           state.status = "failed"; state.errorCode = "generation_context_incomplete"; state.completedAt = now(); save();
-          return { status: "failed", error_code: state.errorCode };
+          return { status: "failed", error_code: state.errorCode, ...(state.sceneLayout ? { scene_layout: state.sceneLayout } : {}) };
         }
         const result = task as { data?: Array<{ url?: string }> }, url = result.data?.[0]?.url;
         if (!url) throw Error("Missing generated layer URL");
@@ -387,7 +398,7 @@ export function createV2Layers(deps: {
       const phase = state.upstreamStatus === "awaiting_admission" ? "awaiting_admission" :
         progress === "checking_request" || progress === "reading_references" ? "preparing" :
         state.upstreamStatus === "queued" ? "queued" : "generating";
-      return { status: state.status, image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode, phase };
+      return { status: state.status, image_url: state.imageUrl, image_sha256: state.imageSha256, error_code: state.errorCode, phase, ...(state.sceneLayout ? { scene_layout: state.sceneLayout } : {}) };
     } finally { active.delete(key); }
   };
 }

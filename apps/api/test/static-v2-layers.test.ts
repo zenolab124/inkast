@@ -892,3 +892,26 @@ test("incomplete-context preview must match the project and original PNG hash",a
     }finally{f.conn.close();}
   }
 });
+
+test("new native jobs plan the background around a frozen subject placement; pending/recovery never repost either image", async () => {
+  const f = await fixture();
+  const plugin: InkastPlugin = { ...f.plugin, visionTasks: { v2_plan: { providerIds: ["llm"], maxImages: 4, systemPrompt: "", outputSchema: {} } } };
+  const layout = { version: 1 as const, foregroundSha256: createHash("sha256").update(f.png).digest("hex"), sourceWidth: 1024, sourceHeight: 1280,
+    placement: { centerX: .48, centerY: .5, zoom: 1, rotationDeg: 0 }, subjectAnchor: [.5,.4] as [number,number], backgroundFocus: [.2,.3] as [number,number], backgroundIntent: "场景左侧环境结构承接人物的偏置", reason: "保留动作同时照顾整体画面" };
+  let scenes = 0; const posts: any[] = [];
+  const request: typeof fetch = async (url, init) => {
+    if (String(url).startsWith("https://images.example")) return new Response(new Uint8Array(String(url).endsWith("bg.png") ? f.backgroundPng : f.png));
+    const body = JSON.parse(String(init!.body)); posts.push(body);
+    return Response.json({id:body.client_task_id,status:"success",data:[{url:body.background === "opaque" ? "https://images.example/bg.png" : "https://images.example/fg.png"}]});
+  };
+  const run = createV2Layers({ providers:()=>[f.entry],provider:()=>f.entry,fetch:request, scene:async()=>{
+    scenes++;return scenes === 1 ? {status:"pending"} : {status:"succeeded",layout};
+  }});
+  try {
+    assert.equal((await run(f.store,plugin,f.job,f.claim.leaseToken,"foreground")).status,"succeeded");
+    assert.equal((await run(f.store,plugin,f.job,f.claim.leaseToken,"background")).status,"submitted");assert.equal(posts.length,1);
+    const bg=await run(f.store,plugin,f.job,f.claim.leaseToken,"background");assert.equal(bg.status,"succeeded");assert.deepEqual(bg.scene_layout,layout);assert.equal(posts.length,2);
+    assert.match(posts[1].prompt,/subjectCoreInSquareCard/);assert.match(posts[1].prompt,/环境结构承接/);
+    await run(f.store,plugin,f.job,f.claim.leaseToken,"background");assert.equal(scenes,2);assert.equal(posts.length,2);
+  } finally { f.conn.close(); }
+});
