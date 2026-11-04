@@ -105,3 +105,23 @@ test("images smaller than a block are skipped instead of reading out of bounds",
   assert.equal(result.hitCount, 0);
   assert.equal(result.isCheckerboard, false);
 });
+
+test("dark gray checkerboard (observed ~130/195 tiles) is detected", () => {
+  const result = detectPaintedCheckerboard(render(1063, 1479, checker(13, 195, 130)), 1063, 1479, 3);
+  assert.equal(result.isCheckerboard, true);
+  assert.equal(result.hitCount, 7);
+});
+
+test("grayscale line-art hatching with irregular strokes is not a checkerboard", () => {
+  const rand = mulberry32(7);
+  // Irregular vertical strokes plus a few horizontal ones: two gray levels and
+  // plenty of flips, but run lengths vary widely unlike square tiles.
+  const xs: number[] = [];
+  for (let x = 0; x < 512; ) { const w = 1 + Math.floor(rand() * 9); xs.push(...Array(w).fill(rand() < 0.5 ? 60 : 235)); x += w; }
+  const pixel: Pixel = (x, y) => {
+    const v = y % 37 < 2 ? 60 : xs[x]!;
+    return [v, v, v];
+  };
+  const result = detectPaintedCheckerboard(render(512, 512, pixel), 512, 512, 3);
+  assert.equal(result.isCheckerboard, false);
+});

@@ -3,8 +3,13 @@
  * opaque RGB image (gray/white tiles along corners and edges, no real alpha).
  *
  * Pure function over raw pixels so it can be unit-tested without sharp.
- * Thresholds were validated on 495 real plugin outputs: the 4 known
- * checkerboard images hit 3–6 blocks, every ordinary image hit 0.
+ * Level-agnostic: the painted tiles come in different grays (light ~204/255 and
+ * dark ~130/195 have both been observed), so a block qualifies when it holds two
+ * neutral gray levels that alternate in regular square runs along rows AND
+ * columns. Validated on 2026-11-04 against 5 real checkerboards (light/dark,
+ * delivered size and full provider size: all >= 2 blocks) and 631 ordinary
+ * outputs from snapub / snapub_art_director / mpinkast (all 0 blocks, including
+ * a grayscale line-art image whose hatching the run-regularity rule excludes).
  */
 
 export const PAINTED_CHECKERBOARD_ERROR_CODE = "painted_transparency_checkerboard" as const;
@@ -13,14 +18,16 @@ const BLOCK = 48;
 const EDGE_INSET = 4;
 const NEUTRAL_MAX_SPREAD = 12;
 const NEUTRAL_MIN_RATIO = 0.9;
-const BRIGHT_MIN_LUM = 238;
-const GRAY_MIN_LUM = 175;
-const GRAY_MAX_LUM = 232; // exclusive
-const BRIGHT_MIN_RATIO = 0.2;
-const GRAY_MIN_RATIO = 0.2;
-const STATE_HIGH_LUM = 235;
-const STATE_LOW_LUM = 232; // lum < this → low state
-const MIN_FLIPS_PER_ROW = 2;
+const MIN_LEVEL_GAP = 35; // p90 - p10 luminance
+const LEVEL_BAND = 0.2; // fraction of the gap counted as "near" a level
+const LEVEL_MIN_RATIO = 0.2; // each level
+const LEVELS_MIN_RATIO = 0.55; // both levels together (tile edges blur under webp)
+const MIN_FLIPS_PER_LINE = 2;
+const MIN_RUNS = 8;
+const RUN_MIN = 4;
+const RUN_MAX = 40;
+const RUN_TOLERANCE = 0.35;
+const RUN_REGULAR_RATIO = 0.7;
 const MIN_HIT_BLOCKS = 2;
 
 export interface PaintedCheckerboardResult {
@@ -74,31 +81,75 @@ function isCheckerboardBlock(
   x0: number,
   y0: number,
 ): boolean {
+  const total = BLOCK * BLOCK;
+  const lum = new Float64Array(total);
   let neutral = 0;
-  let bright = 0;
-  let gray = 0;
-  let flips = 0;
-  for (let y = y0; y < y0 + BLOCK; y += 1) {
-    let state: 0 | 1 | null = null;
-    for (let x = x0; x < x0 + BLOCK; x += 1) {
-      const offset = (y * width + x) * channels;
+  for (let y = 0; y < BLOCK; y += 1) {
+    for (let x = 0; x < BLOCK; x += 1) {
+      const offset = ((y0 + y) * width + (x0 + x)) * channels;
       const r = data[offset]!;
       const g = data[offset + 1]!;
       const b = data[offset + 2]!;
       if (Math.max(r, g, b) - Math.min(r, g, b) < NEUTRAL_MAX_SPREAD) neutral += 1;
-      const lum = (r + g + b) / 3;
-      if (lum >= BRIGHT_MIN_LUM) bright += 1;
-      else if (lum >= GRAY_MIN_LUM && lum < GRAY_MAX_LUM) gray += 1;
-      const next: 0 | 1 | null = lum >= STATE_HIGH_LUM ? 1 : lum < STATE_LOW_LUM ? 0 : state;
-      if (state !== null && next !== state) flips += 1;
-      state = next;
+      lum[y * BLOCK + x] = (r + g + b) / 3;
     }
   }
-  const total = BLOCK * BLOCK;
-  return (
-    neutral / total >= NEUTRAL_MIN_RATIO &&
-    bright / total >= BRIGHT_MIN_RATIO &&
-    gray / total >= GRAY_MIN_RATIO &&
-    flips / BLOCK >= MIN_FLIPS_PER_ROW
-  );
+  if (neutral / total < NEUTRAL_MIN_RATIO) return false;
+
+  const sorted = Float64Array.from(lum).sort();
+  const lo = sorted[Math.floor(total * 0.1)]!;
+  const hi = sorted[Math.floor(total * 0.9)]!;
+  if (hi - lo < MIN_LEVEL_GAP) return false;
+  const band = (hi - lo) * LEVEL_BAND;
+  let nearLo = 0;
+  let nearHi = 0;
+  for (const v of lum) {
+    if (v <= lo + band) nearLo += 1;
+    if (v >= hi - band) nearHi += 1;
+  }
+  if (nearLo / total < LEVEL_MIN_RATIO || nearHi / total < LEVEL_MIN_RATIO) return false;
+  if ((nearLo + nearHi) / total < LEVELS_MIN_RATIO) return false;
+
+  const mid = (lo + hi) / 2;
+  const rowRuns: number[] = [];
+  const colRuns: number[] = [];
+  let rowFlips = 0;
+  let colFlips = 0;
+  for (let i = 0; i < BLOCK; i += 1) {
+    rowFlips += collectRuns(j => lum[i * BLOCK + j]! >= mid, rowRuns);
+    colFlips += collectRuns(j => lum[j * BLOCK + i]! >= mid, colRuns);
+  }
+  if (rowFlips / BLOCK < MIN_FLIPS_PER_LINE || colFlips / BLOCK < MIN_FLIPS_PER_LINE) return false;
+  return isRegular(rowRuns) && isRegular(colRuns);
+}
+
+/** Appends interior run lengths (edge-truncated runs dropped); returns flip count. */
+function collectRuns(high: (j: number) => boolean, out: number[]): number {
+  let flips = 0;
+  let state = high(0);
+  let length = 1;
+  let first = true;
+  for (let j = 1; j < BLOCK; j += 1) {
+    const next = high(j);
+    if (next === state) {
+      length += 1;
+      continue;
+    }
+    flips += 1;
+    if (!first) out.push(length);
+    first = false;
+    state = next;
+    length = 1;
+  }
+  return flips;
+}
+
+/** Painted tiles are squares: most runs share one length; line-art hatching does not. */
+function isRegular(runs: number[]): boolean {
+  if (runs.length < MIN_RUNS) return false;
+  const median = [...runs].sort((a, b) => a - b)[Math.floor(runs.length / 2)]!;
+  if (median < RUN_MIN || median > RUN_MAX) return false;
+  const tolerance = Math.max(1.5, median * RUN_TOLERANCE);
+  const regular = runs.filter(length => Math.abs(length - median) <= tolerance).length;
+  return regular / runs.length >= RUN_REGULAR_RATIO;
 }
