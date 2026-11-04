@@ -115,6 +115,38 @@ export interface ImageGenInput {
    * it. Implementations must not throw.
    */
   onAttempt?: (attempt: ImageGenAttempt) => void;
+  /**
+   * Optional caller-owned output gate, run inside the provider pool walk right
+   * after a provider returns an artifact and before it counts as success.
+   * Throw `ImageOutputRejectedError` to treat that artifact as this
+   * provider's failure: the attempt is recorded with the rejection code and
+   * the pool falls over to the next provider (no same-provider retry). Any
+   * other throw is classified like a driver error, so validators that only
+   * want to reject on a positive finding must swallow their own I/O errors.
+   */
+  validateOutput?: (candidate: ImageOutputCandidate) => Promise<void>;
+}
+
+export interface ImageOutputCandidate {
+  /** Base64 bytes; empty when the provider only returned a persistent URL. */
+  imageB64: string;
+  imageUrl?: string;
+  providerId: string;
+  providerName: string;
+  signal?: AbortSignal;
+}
+
+export type ImageOutputRejectionCode = "painted_transparency_checkerboard";
+
+/** Thrown by an `ImageGenInput.validateOutput` gate to reject one provider's artifact. */
+export class ImageOutputRejectedError extends Error {
+  override readonly name = "ImageOutputRejectedError";
+  constructor(
+    public readonly code: ImageOutputRejectionCode,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export type AttemptErrorCode =
@@ -127,6 +159,7 @@ export type AttemptErrorCode =
   | "server"
   | "quota_exhausted"
   | "aborted"
+  | ImageOutputRejectionCode
   | "unknown";
 
 export interface ImageGenAttempt {

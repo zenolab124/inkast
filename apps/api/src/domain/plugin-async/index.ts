@@ -5,7 +5,11 @@ import { makeRatioSize } from "@inkast/shared";
 import { draftPrompt } from "../prompt-engine/index.js";
 import { driveWithRewriteFallback } from "../generate/with-rewrite.js";
 import { reviewAndMaybeEdit } from "../post-review-edit/index.js";
-import { ImageGenError, type ImageGenInput } from "../../drivers/image/types.js";
+import {
+  ImageGenError,
+  ImageOutputRejectedError,
+  type ImageGenInput,
+} from "../../drivers/image/types.js";
 import { putImage, R2UploadError } from "../../drivers/storage/r2.js";
 import { isAllowedUpstreamImageUrl } from "./upstream-url.js";
 import {
@@ -34,6 +38,10 @@ import {
 import { backfillPluginGalleryFromTasks } from "../../storage/plugin-gallery.js";
 import { redactUrl } from "./url-redaction.js";
 import { StageQueue } from "./stage-queue.js";
+import {
+  detectPaintedCheckerboard,
+  PAINTED_CHECKERBOARD_ERROR_CODE,
+} from "./painted-checkerboard.js";
 
 /**
  * v2 异步协议的核心。负责:
@@ -329,6 +337,7 @@ async function runImageStage(item: PreparedPluginTask): Promise<void> {
     // moderation)触发 LLM 改写后重试。policy.skipOriginal 跳过 round 0,
     // policy.maxRound 控制最高轮次。
     const callerPolicy = taskPolicies.get(taskId);
+    const validateOutput = createPaintedCheckerboardGate(plugin, taskId);
     const imageStart = Date.now();
     let imageOutcome;
     try {
@@ -351,6 +360,7 @@ async function runImageStage(item: PreparedPluginTask): Promise<void> {
           referenceImages,
           allowedProviderIds,
           providerOrder,
+          validateOutput,
         },
         {
           skipOriginal: callerPolicy?.skipOriginal,
@@ -389,6 +399,9 @@ async function runImageStage(item: PreparedPluginTask): Promise<void> {
           background: plugin.imageDefaults.background,
           allowedProviderIds,
           providerOrder,
+          // A checkerboard edit result is rejected like any failed edit, so
+          // post-review keeps the already-validated original image.
+          validateOutput,
         },
       });
       if (reviewOutcome.editApplied) {
@@ -588,6 +601,80 @@ async function runImageStage(item: PreparedPluginTask): Promise<void> {
   }
 
   void deliverCallback(taskId, 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Painted transparency checkerboard gate
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * True when this plugin's deliverable must carry real alpha: the
+ * contain-alpha output path (normalizeTransparentAsset) or an explicit
+ * transparent background request. Those assets are validated by alpha checks
+ * instead and must never be rejected for having gray/white edges.
+ */
+export function pluginRequiresTransparentOutput(plugin: InkastPlugin): boolean {
+  return (
+    plugin.outputDimensions?.fit === "contain-alpha" ||
+    plugin.imageDefaults.background === "transparent"
+  );
+}
+
+/**
+ * Build the per-task output gate passed to the image driver. Ordinary opaque
+ * plugin assets reject a painted checkerboard as that provider's failure, so
+ * the existing pool walk falls over to the next provider (and the rewrite
+ * rounds keep the same gate). Returns undefined for transparent assets.
+ *
+ * Fail-open on decode/download problems: the gate only rejects on a positive
+ * detection, never turns its own I/O hiccup into a provider failure.
+ */
+export function createPaintedCheckerboardGate(
+  plugin: InkastPlugin,
+  taskId: string,
+  download: typeof fetch = fetch,
+): ImageGenInput["validateOutput"] {
+  if (pluginRequiresTransparentOutput(plugin)) return undefined;
+  return async candidate => {
+    let bytes: Buffer;
+    let width: number;
+    let height: number;
+    let channels: number;
+    let data: Buffer;
+    try {
+      if (candidate.imageB64) {
+        bytes = Buffer.from(candidate.imageB64, "base64");
+      } else if (candidate.imageUrl) {
+        const res = await download(candidate.imageUrl, { signal: candidate.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        bytes = Buffer.from(await res.arrayBuffer());
+      } else {
+        return;
+      }
+      const raw = await sharp(bytes)
+        .removeAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      data = raw.data;
+      width = raw.info.width;
+      height = raw.info.height;
+      channels = raw.info.channels;
+    } catch (err) {
+      console.warn(
+        `[plugin-async]   checkerboard check skipped task=${taskId} provider=${candidate.providerName}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    const result = detectPaintedCheckerboard(data, width, height, channels);
+    if (!result.isCheckerboard) return;
+    console.warn(
+      `[plugin-async] ✗ ${PAINTED_CHECKERBOARD_ERROR_CODE} task=${taskId} plugin=${plugin.id} provider=${candidate.providerId}(${candidate.providerName}) hits=${result.hitCount}/7 [${result.hits.join(",")}] — rejecting this provider output`,
+    );
+    throw new ImageOutputRejectedError(
+      PAINTED_CHECKERBOARD_ERROR_CODE,
+      `provider ${candidate.providerName} returned an opaque image with a painted transparency checkerboard (${result.hitCount}/7 edge blocks: ${result.hits.join(", ")})`,
+    );
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

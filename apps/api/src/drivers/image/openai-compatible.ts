@@ -35,6 +35,7 @@ import { buildZhipuPrompt, callZhipuApi } from "./zhipu.js";
 import { appendImageCleanlinessInstruction } from "./prompt-cleanliness.js";
 import {
   ImageGenError,
+  ImageOutputRejectedError,
   type AttemptErrorCode,
   type ImageGenAttempt,
   type ImageGenInput,
@@ -267,6 +268,15 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
           b64 = result.b64;
           imageUrl = result.url;
         }
+        // Caller-owned output gate (e.g. plugin painted-checkerboard check).
+        // A rejection lands in the catch below as this provider's failure.
+        await input.validateOutput?.({
+          imageB64: b64,
+          imageUrl,
+          providerId: provider.id,
+          providerName: provider.name,
+          signal: input.signal,
+        });
         clearInterval(heartbeat);
         const okAttempt = {
           providerId: provider.id,
@@ -339,6 +349,13 @@ export async function generateImage(input: ImageGenInput): Promise<ImageGenOutco
         }
         if (classified.code === "auth") {
           // Wrong API key won't get better on retry. Fall over to next provider.
+          break;
+        }
+        if (classified.code === "painted_transparency_checkerboard") {
+          // Output rejected by the caller's gate. Never retry the same
+          // provider: c2i-tasks binds client_task_id to requestKey + body, so
+          // an identical retry would just return the same rejected artifact.
+          // Fall over to the next provider instead.
           break;
         }
         if (classified.code === "provider_blocked_content") {
@@ -684,6 +701,10 @@ function isQuotaExhausted(
 function classifyError(err: unknown): ClassifiedError {
   if (err instanceof Error && err.name === "AbortError") {
     return { code: "aborted", message: err.message };
+  }
+
+  if (err instanceof ImageOutputRejectedError) {
+    return { code: err.code, message: `${err.code}: ${err.message}` };
   }
 
   if (err instanceof CloudBaseImageError) {
